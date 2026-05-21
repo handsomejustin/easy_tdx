@@ -98,6 +98,12 @@
       "type": "file"
     },
     {
+      "path": "README.md",
+      "accessCount": 16,
+      "lastAccessed": 1779394894399,
+      "type": "file"
+    },
+    {
       "path": "src\\easy_tdx\\_df.py",
       "accessCount": 12,
       "lastAccessed": 1779391749202,
@@ -306,12 +312,6 @@
       "accessCount": 2,
       "lastAccessed": 1779389346769,
       "type": "directory"
-    },
-    {
-      "path": "README.md",
-      "accessCount": 2,
-      "lastAccessed": 1779394525974,
-      "type": "file"
     },
     {
       "path": "src\\xmtdx\\__init__.py",

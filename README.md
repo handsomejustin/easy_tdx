@@ -45,11 +45,10 @@ with TdxClient("180.153.18.170") as c:
 
 # 自动优选最低延迟服务器
 with TdxClient.from_best_host() as c:
-    bars = c.get_security_bars(Market.SH, "600000", KlineCategory.DAY, 0, 5)
-    for b in bars:
-        print(f"{b.year}-{b.month:02d}-{b.day:02d} "
-              f"开:{b.open:.2f} 高:{b.high:.2f} "
-              f"低:{b.low:.2f} 收:{b.close:.2f}")
+    df = c.get_security_bars(Market.SH, "600000", KlineCategory.DAY, 0, 5)
+    print(df.to_string(index=False))
+    #        date   open  close   high    low         vol       amount
+    # 2025-01-02  10.25  10.12  10.25  10.08  108154752.0 1.078280e+09
 ```
 
 ### asyncio
@@ -60,13 +59,10 @@ from easy_tdx import AsyncTdxClient, Market, KlineCategory
 
 async def main():
     async with AsyncTdxClient.from_best_host() as c:
-        bars = await c.get_security_bars(
+        df = await c.get_security_bars(
             Market.SH, "600000", KlineCategory.DAY, 0, 5
         )
-        for bar in bars:
-            print(f"{bar.year}-{bar.month:02d}-{bar.day:02d} "
-                  f"开:{bar.open:.2f} 高:{bar.high:.2f} "
-                  f"低:{bar.low:.2f} 收:{bar.close:.2f}")
+        print(df.to_string(index=False))
 
 asyncio.run(main())
 ```
@@ -143,7 +139,7 @@ KlineCategory.MIN_1  MIN_5  MIN_15  MIN_30  MIN_60
 KlineCategory.DAY    WEEK   MONTH   YEAR
 ```
 
-K 线字段：`open` `close` `high` `low` `vol` `amount` `year` `month` `day` `hour` `minute` `_raw`
+K 线字段：`date`（日线及以上）或 `datetime`（分钟线） `open` `close` `high` `low` `vol` `amount`
 
 ### 分时数据
 
@@ -156,7 +152,7 @@ with TdxClient.from_best_host() as c:
     bars = c.get_history_minute_time_data(Market.SH, "600000", 20250110)
 ```
 
-分时字段：`price` `vol` `unknown_1`（原 pytdx 丢弃字段，保留供分析）`_raw`
+分时字段：`datetime` `price` `vol`
 
 ### 逐笔成交
 
@@ -169,7 +165,7 @@ with TdxClient.from_best_host() as c:
     records = c.get_history_transaction_data(Market.SH, "600000", 20250110, 0, 20)
 ```
 
-成交字段：`hour` `minute` `price` `vol` `buyorsell`（0=买, 1=卖, 2=中性, 8=集合竞价）`unknown_last` `_raw`
+成交字段：`datetime` `price` `vol` `buyorsell`（0=买, 1=卖, 2=中性, 8=集合竞价）
 
 ### 财务与公司信息
 
@@ -225,7 +221,7 @@ with TdxClient.from_best_host() as c:
 
     # 历史日线资金流向序列
     flows = c.get_history_fund_flow(Market.SH, "600519", 0, 10)
-    # flows[0].year / .month / .day / .super_in / .main_net_inflow
+    # flows[0].date / .super_in / .main_net_inflow
 ```
 
 ### 文件下载
@@ -475,9 +471,8 @@ vipdoc/
 ### SecurityBar（K 线）
 
 ```
+date（日线及以上）或 datetime（分钟线）
 open  close  high  low  vol  amount
-year  month  day  hour  minute
-_raw
 ```
 
 ### SecurityQuote（实时行情）
@@ -503,19 +498,19 @@ industry_tdx  industry_sw
 ### MinuteBar（分时）
 
 ```
-price  vol  unknown_1  _raw
+datetime  price  vol
 ```
 
 ### TransactionRecord（逐笔成交）
 
 ```
-hour  minute  price  vol  buyorsell  unknown_last  _raw
+datetime  price  vol  buyorsell
 ```
 
 ### XdxrRecord（除权除息）
 
 ```
-market  code  year  month  day  category  name
+date  market  code  category  name
 fenhong  peigujia  songzhuangu  peigu  suogu
 xingquanjia  fenshu
 panqian_liutong  panhou_liutong      # 万股
