@@ -125,6 +125,20 @@ class UnifiedTdxClient:
     ) -> pd.DataFrame:
         return self._ensure_mac().get_stock_kline(market, code, period, start, count, times, adjust)
 
+    def get_stock_kline_with_indicators(
+        self,
+        market: int,
+        code: str,
+        indicators: list[str],
+        period: Period = Period.DAILY,
+        count: int = 30,
+        adjust: Adjust = Adjust.QFQ,
+        params: dict[str, dict[str, int | float]] | None = None,
+    ) -> pd.DataFrame:
+        return self._ensure_mac().get_stock_kline_with_indicators(
+            market, code, indicators, period, count, adjust, params,
+        )
+
     def get_tick_chart(
         self,
         market: int,
@@ -396,6 +410,21 @@ class AsyncUnifiedTdxClient:
     ) -> pd.DataFrame:
         mac = await self._ensure_mac()
         return await mac.get_stock_kline(market, code, period, start, count, times, adjust)
+
+    async def get_stock_kline_with_indicators(
+        self,
+        market: int,
+        code: str,
+        indicators: list[str],
+        period: Period = Period.DAILY,
+        count: int = 30,
+        adjust: Adjust = Adjust.QFQ,
+        params: dict[str, dict[str, int | float]] | None = None,
+    ) -> pd.DataFrame:
+        mac = await self._ensure_mac()
+        return await mac.get_stock_kline_with_indicators(
+            market, code, indicators, period, count, adjust, params,
+        )
 
     async def get_tick_chart(
         self,

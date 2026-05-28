@@ -85,6 +85,36 @@ easy-tdx server-info --table
 easy-tdx symbol-info SZ 000001 --table
 ```
 
+### 技术指标
+
+```bash
+easy-tdx indicator-list --table                       # 列出所有可用指标
+easy-tdx indicator MACD -m SH -c 600519 --table       # MACD
+easy-tdx indicator KDJ -m SZ -c 000001 --table        # KDJ
+easy-tdx indicator RSI -m SH -c 600519 --table        # RSI
+easy-tdx indicator BOLL -m SH -c 600519 --table       # BOLL 布林带
+easy-tdx indicator DMI -m SH -c 600519 --table        # DMI 动向指标
+easy-tdx indicator ATR -m SH -c 600519 --table        # ATR 真实波幅
+easy-tdx indicator WR -m SH -c 600519 --table         # WR 威廉指标
+easy-tdx indicator CCI -m SH -c 600519 --table        # CCI 顺势指标
+easy-tdx indicator BIAS -m SZ -c 000001 --table       # BIAS 乖离率
+easy-tdx indicator OBV -m SZ -c 000001 --table        # OBV 能量潮
+
+# 多指标同时计算
+easy-tdx indicator MACD,KDJ,RSI,BOLL -m SH -c 600519 --count 10 --table
+
+# 自定义参数
+easy-tdx indicator MACD -m SH -c 600519 --params SHORT=10,LONG=22
+
+# 分钟线指标
+easy-tdx indicator MACD -m SH -c 600519 --period 5MIN --count 50
+
+# 仅输出指标值（不含 OHLCV）
+easy-tdx indicator RSI -m SZ -c 000001 --no-ohlcv
+```
+
+支持 30 个指标：MACD, KDJ, RSI, BOLL, DMI, ATR, WR, CCI, BIAS, OBV, VR, EMV, MFI, BRAR, ASI, TRIX, DPO, MTM, ROC, EXPMA, BBI, PSY, DFMA, CR, KTN, XSII, MASS, TAQ。
+
 ### 财务
 
 ```bash
@@ -125,6 +155,8 @@ easy-tdx ex tick HK_MAIN_BOARD 00700 --table               # 港股分时
 | `market-stat` | 全市场涨跌统计 |
 | `server-info` | 服务器交易时段 |
 | `symbol-info` | 个股特征快照 |
+| `indicator` | 技术指标计算（30 个：MACD/KDJ/RSI/BOLL/DMI/ATR...） |
+| `indicator-list` | 列出可用技术指标 |
 | `f10` | F10 公司信息 |
 | `fund-flow` | 历史资金流向 |
 | `ex kline` | 扩展市场 K 线 |
@@ -187,6 +219,74 @@ with MacClient.from_best_host() as c:
 ```
 
 返回列：`datetime, open, close, high, low, vol, amount`。
+
+#### 技术指标
+
+自动获取 200+ 条历史数据预热 EMA，返回最后 `count` 条带指标的结果：
+
+```python
+from easy_tdx import MacClient, Market, Period, Adjust
+from easy_tdx.indicator import compute_indicators, list_indicators
+
+with MacClient.from_best_host() as c:
+    # 便捷方法：获取 K 线 + 计算指标一步完成（默认前复权）
+    df = c.get_stock_kline_with_indicators(
+        Market.SH, "600519",
+        indicators=["MACD", "KDJ", "RSI", "BOLL"],
+        count=30,
+    )
+    # df 包含: datetime, open, close, high, low, vol, amount
+    #         + MACD_DIF, MACD_DEA, MACD_HIST, KDJ_K, KDJ_D, KDJ_J, RSI,
+    #           BOLL_UPPER, BOLL_MID, BOLL_LOWER
+
+    # 自定义指标参数
+    df = c.get_stock_kline_with_indicators(
+        Market.SH, "600519",
+        indicators=["MACD"],
+        params={"MACD": {"SHORT": 10, "LONG": 22}},
+    )
+
+    # 独立使用：对已有 DataFrame 计算指标
+    raw = c.get_stock_kline(Market.SH, "600519", Period.DAILY, count=200, adjust=Adjust.QFQ)
+    result = compute_indicators(raw, ["ATR", "CCI", "WR"], tail=30)
+
+    # 查看所有可用指标
+    for info in list_indicators():
+        print(info["name"], info["description"], info["outputs"])
+```
+
+支持 30 个技术指标：
+
+| 指标 | 输入 | 输出列 |
+|------|------|--------|
+| MACD | close | MACD_DIF, MACD_DEA, MACD_HIST |
+| KDJ | close, high, low | KDJ_K, KDJ_D, KDJ_J |
+| RSI | close | RSI |
+| BOLL | close | BOLL_UPPER, BOLL_MID, BOLL_LOWER |
+| DMI | close, high, low | DMI_PDI, DMI_MDI, DMI_ADX, DMI_ADXR |
+| ATR | close, high, low | ATR |
+| WR | close, high, low | WR1, WR2 |
+| CCI | close, high, low | CCI |
+| BIAS | close | BIAS1, BIAS2, BIAS3 |
+| OBV | close, vol | OBV |
+| VR | close, vol | VR |
+| EMV | high, low, vol | EMV, EMV_MA |
+| MFI | close, high, low, vol | MFI |
+| BRAR | open, close, high, low | AR, BR |
+| ASI | open, close, high, low | ASI, ASI_MA |
+| TRIX | close | TRIX, TRIX_MA |
+| DPO | close | DPO, DPO_MA |
+| MTM | close | MTM, MTM_MA |
+| ROC | close | ROC, ROC_MA |
+| EXPMA | close | EXPMA_12, EXPMA_50 |
+| BBI | close | BBI |
+| PSY | close | PSY, PSY_MA |
+| DFMA | close | DFMA_DIF, DFMA_DMA |
+| CR | close, high, low | CR |
+| KTN | close, high, low | KTN_UPPER, KTN_MID, KTN_LOWER |
+| XSII | close, high, low | XSII_TD1, XSII_TD2, XSII_TD3, XSII_TD4 |
+| MASS | high, low | MASS, MASS_MA |
+| TAQ | high, low | TAQ_UP, TAQ_MID, TAQ_DOWN |
 
 #### 分时
 
@@ -303,6 +403,26 @@ with TdxClient.from_best_host() as c:
 
 `AsyncTdxClient` 提供对应的 `async def` 方法，接口一一对应。
 
+### SecurityQuote 字段说明
+
+`get_security_quotes()` 返回的 DataFrame 包含以下特殊字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `trading_status` | int | 交易状态标志。`0x8020`(32800) = 停牌，其余值表示正常交易或集合竞价 |
+| `open_amount` | float | 集合竞价成交金额（元）。仅个股有效，指数该字段无意义 |
+| `server_time` | str | 服务器时间，格式 `HH:MM:SS.mmm` |
+| `unknown_2` | int | 指数: 集合竞价成交金额/100；个股: 舍入残差≈0 |
+| `unknown_3` | int | 个股: 集合竞价成交金额/100；指数: 负值/无意义 |
+| `unknown_5-8` | int | 保留字段，恒为 0 |
+
+检测停牌：
+
+```python
+df = c.get_security_quotes([(Market.SH, "600000")])
+is_suspended = df.iloc[0]["trading_status"] == 0x8020
+```
+
 ### 离线数据读取
 
 无需网络，从本地通达信安装目录直接读取：
@@ -407,6 +527,7 @@ bars = read_daily_bars(filepath)
 | `get_stock_quotes(stocks, fields)` | 批量实时报价 |
 | `get_stock_quotes_list(category, ...)` | 市场分类排序报价 |
 | `get_stock_kline(market, code, period, ...)` | K 线（支持复权） |
+| `get_stock_kline_with_indicators(market, code, indicators, ...)` | K 线 + 技术指标 |
 | `get_tick_chart(market, code, date)` | 单日分时图 |
 | `get_tick_charts(market, code, days)` | 多日分时图 |
 | `get_chart_sampling(market, code)` | 分时缩略采样 |
@@ -469,6 +590,8 @@ src/easy_tdx/
 ├── client.py          # TdxClient / AsyncTdxClient（标准协议）
 ├── unified.py         # UnifiedTdxClient（统一入口）
 ├── config.py          # 服务器地址、端口、超时配置
+├── indicator.py       # 技术指标计算（30 个，基于 MyTT）
+├── MyTT.py            # 麦语言技术指标算法库
 ├── mac/
 │   ├── client.py      # MacClient / AsyncMacClient（MAC 协议）
 │   ├── enums.py       # Period, Adjust, Category, ExMarket, SortType, ...
@@ -505,5 +628,44 @@ ruff format --check src/ tests/                              # format check
 - [pytdx](https://github.com/rainx/pytdx) -- 离线数据读取模块借鉴自 pytdx 项目，感谢 rainx 及所有贡献者
 - [xmtdx](https://github.com/minionszyw/xmtdx) -- 本项目初始原型
 - [mootdx](https://github.com/mootdx/mootdx) -- 工程化封装参考
+- [MyTT](https://github.com/mpquant/MyTT) -- 麦语言技术指标算法库，技术指标计算基于此实现
 
 详见 [NOTICE](NOTICE) 和 [LICENSE](LICENSE)。
+
+## Changelog
+
+### 1.4.0 (2026-05-28)
+
+**技术指标计算** — 集成 [MyTT](https://github.com/mpquant/MyTT) 麦语言指标库，支持 30 个常用技术指标，一步获取 K 线 + 指标值。
+
+- 新增 `indicator.py` 核心模块：注册表驱动的指标调度，`compute_indicators()` 纯计算无 IO
+- 新增 `MacClient.get_stock_kline_with_indicators()` / `AsyncMacClient` 同名方法
+- 新增 `UnifiedTdxClient.get_stock_kline_with_indicators()` / `AsyncUnifiedTdxClient` 同名方法
+- 新增 CLI 命令 `easy-tdx indicator` 和 `easy-tdx indicator-list`
+- 自动获取 200+ 条历史数据预热 EMA，用户只需指定返回条数
+- 支持的指标：MACD, KDJ, RSI, BOLL, DMI, ATR, WR, CCI, BIAS, OBV, VR, EMV, MFI, BRAR, ASI, TRIX, DPO, MTM, ROC, EXPMA, BBI, PSY, DFMA, CR, KTN, XSII, MASS, TAQ
+
+### 1.3.1 (2025-05-15)
+
+- 新增 `board-summary` 和 `board-ranking` CLI 命令
+- 新增 `get_board_summary()` 板块汇总（成交额、主力净流入、涨跌家数）
+- 新增 `get_board_ranking()` 板块涨跌幅排行榜
+
+### 1.3.0 (2025-05-12)
+
+- 新增 MAC 协议客户端 `MacClient` / `AsyncMacClient`（端口 7709）
+- 新增扩展市场客户端 `MacExClient` / `AsyncMacExClient`（端口 7727）
+- 新增统一客户端 `UnifiedTdxClient` 自动路由 A 股 / 扩展市场
+- 新增板块、资金流向、集合竞价、异动、个股特征等数据接口
+- 新增 `easy-tdx` CLI 工具，默认 JSON 输出
+
+### 1.2.1 (2025-04-20)
+
+- 离线数据读取模块（日线、分钟线、板块、财务）
+- 除权除息、股本变迁读取
+
+### 1.0.0 (2025-03-01)
+
+- 首个正式版本
+- TdxClient / AsyncTdxClient 标准协议客户端
+- K 线、实时报价、分时、逐笔成交、财务数据

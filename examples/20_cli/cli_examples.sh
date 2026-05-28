@@ -313,3 +313,81 @@ echo "=== 23. 获取扩展市场分时图（港股腾讯）==="
 #  09:34:00 00:00  532.80      532.56    4100
 #  09:35:00 00:00  533.20      532.84    3500
 #  ...（共约330条）
+
+echo "=== 24. 列出可用技术指标 ==="
+# 列出所有支持的技术指标名称、输入需求和输出列。
+# easy-tdx indicator-list --table
+# 输出:
+#  name    description                     inputs                  outputs                       default_params
+#  MACD    MACD 指数平滑异同移动平均线     ['close']               ['MACD_DIF', 'MACD_DEA', ...]  {'SHORT': 12, 'LONG': 26, 'M': 9}
+#  KDJ     KDJ 随机指标                    ['close', 'high', ...]  ['KDJ_K', 'KDJ_D', 'KDJ_J']   {'N': 9, 'M1': 3, 'M2': 3}
+#  RSI     RSI 相对强弱指标                ['close']               ['RSI']                       {'N': 24}
+#  BOLL    BOLL 布林带                     ['close']               ['BOLL_UPPER', 'BOLL_MID'...]  {'N': 20, 'P': 2}
+#  ...（共30个指标）
+
+echo "=== 25. 计算单个技术指标（MACD）==="
+# 计算单只股票的技术指标。默认前复权（QFQ），返回最近 30 条。
+# 参数: <指标名> -m <市场> -c <代码> --count N --table
+# 返回列: datetime, open, high, low, close, vol, amount + 指标列
+# easy-tdx indicator MACD -m SH -c 600519 --table
+# 输出:
+#  datetime              open     high      low    close    vol       amount  MACD_DIF  MACD_DEA  MACD_HIST
+#  2025-05-06 00:00:00  1498.00  1518.00  1492.00  1510.00  16540  2500000000     -4.56     -2.94      -3.24
+#  2025-05-07 00:00:00  1505.00  1516.00  1490.00  1498.00  14280  2150000000     -3.12     -3.18       0.11
+#  2025-05-08 00:00:00  1492.00  1510.00  1485.00  1505.00  15670  2350000000     -2.45     -3.03       1.16
+#  2025-05-09 00:00:00  1498.00  1516.00  1490.00  1498.00  14280  2150000000     -1.89     -2.80       1.82
+#  2025-05-12 00:00:00  1505.00  1516.00  1490.00  1498.00  14280  2150000000     -1.78     -2.60       1.64
+#  ...（默认30条）
+
+echo "=== 26. 同时计算多个指标 ==="
+# 用逗号分隔多个指标名称（不区分大小写）。
+# easy-tdx indicator MACD,KDJ,RSI,BOLL -m SH -c 600519 --count 5 --table
+# 输出:
+#  datetime            close  MACD_DIF  MACD_DEA  MACD_HIST  KDJ_K  KDJ_D   KDJ_J   RSI  BOLL_UPPER  BOLL_MID  BOLL_LOWER
+#  2025-05-09 00:00  1505.00    -1.89     -2.80      1.82  45.23  52.34   31.01  55.6    1530.45   1500.12    1469.79
+#  2025-05-12 00:00  1498.00    -1.78     -2.60      1.64  38.56  48.89   17.90  48.2    1528.90   1498.56    1468.22
+#  2025-05-13 00:00  1510.00    -0.89     -2.26      2.74  62.34  52.17   82.68  56.8    1527.34   1497.00    1466.66
+#  2025-05-14 00:00  1509.00    -0.12     -1.83      3.42  58.12  53.56   67.24  52.3    1525.78   1495.44    1465.10
+#  2025-05-15 00:00  1521.00     1.23     -1.22      4.90  78.45  59.74  115.87  65.1    1524.22   1493.88    1463.54
+
+echo "=== 27. 自定义指标参数 ==="
+# 通过 --params 覆盖默认参数。格式: KEY=VALUE 或 INDICATOR.KEY=VALUE
+# 修改 MACD 短周期为 10，长周期为 22
+# easy-tdx indicator MACD -m SH -c 600519 --params SHORT=10,LONG=22 --table
+#
+# 同时计算 MACD 和 KDJ，分别为它们设置不同参数:
+# easy-tdx indicator MACD,KDJ -m SH -c 600519 --params MACD.SHORT=10,KDJ.N=14 --table
+
+echo "=== 28. 仅输出指标值（不含 OHLCV）==="
+# 加 --no-ohlcv 隐藏原始 K 线列，仅显示时间 + 指标值。
+# easy-tdx indicator RSI -m SZ -c 000001 --no-ohlcv --count 5 --table
+# 输出:
+#  datetime               RSI
+#  2025-05-09 00:00:00  52.34
+#  2025-05-12 00:00:00  48.67
+#  2025-05-13 00:00:00  56.12
+#  2025-05-14 00:00:00  51.89
+#  2025-05-15 00:00:00  63.45
+
+echo "=== 29. 分钟 K 线技术指标 ==="
+# 使用 --period 指定分钟周期，与 K 线命令相同。
+# easy-tdx indicator MACD -m SH -c 600519 --period 5MIN --count 10 --table
+# 输出:
+#  datetime            close  MACD_DIF  MACD_DEA  MACD_HIST
+#  2025-05-15 14:10  1520.50     0.34     0.28      0.12
+#  2025-05-15 14:15  1518.20     0.21     0.27     -0.11
+#  2025-05-15 14:20  1519.80     0.18     0.25     -0.15
+#  2025-05-15 14:25  1521.00     0.23     0.25     -0.04
+#  ...（共10条）
+
+echo "=== 30. 常用指标快速参考 ==="
+# MACD:  easy-tdx indicator MACD -m SH -c 600519 --table
+# KDJ:   easy-tdx indicator KDJ -m SZ -c 000001 --table
+# RSI:   easy-tdx indicator RSI -m SH -c 600519 --table
+# BOLL:  easy-tdx indicator BOLL -m SH -c 600519 --table
+# DMI:   easy-tdx indicator DMI -m SH -c 600519 --table
+# ATR:   easy-tdx indicator ATR -m SH -c 600519 --table
+# WR:    easy-tdx indicator WR -m SH -c 600519 --table
+# CCI:   easy-tdx indicator CCI -m SH -c 600519 --table
+# BIAS:  easy-tdx indicator BIAS -m SZ -c 000001 --table
+# OBV:   easy-tdx indicator OBV -m SZ -c 000001 --table

@@ -375,6 +375,37 @@ class MacClient:
 
         return _to_df(all_bars)
 
+    def get_stock_kline_with_indicators(
+        self,
+        market: int,
+        code: str,
+        indicators: list[str],
+        period: Period = Period.DAILY,
+        count: int = 30,
+        adjust: Adjust = Adjust.QFQ,
+        params: dict[str, dict[str, int | float]] | None = None,
+    ) -> pd.DataFrame:
+        """获取 K 线数据并计算技术指标。
+
+        自动获取足够的历史数据用于指标预热（EMA 至少需要 120 周期）。
+
+        Args:
+            market: 市场代码。
+            code: 股票代码。
+            indicators: 指标名称列表，如 ``["MACD", "KDJ"]``。
+            period: K 线周期。
+            count: 返回条数（默认30）。
+            adjust: 复权方式（默认前复权）。
+            params: 可选指标参数覆盖。
+        """
+        from ..indicator import compute_indicators
+
+        fetch_count = max(120 + count, 200)
+        df = self.get_stock_kline(market, code, period=period, count=fetch_count, adjust=adjust)
+        if df.empty:
+            return df
+        return compute_indicators(df, indicators, params, tail=count)
+
     # ------------------------------------------------------------------ #
     # 分时
     # ------------------------------------------------------------------ #
@@ -1139,6 +1170,30 @@ class AsyncMacClient:
                 break
 
         return _to_df(all_bars)
+
+    async def get_stock_kline_with_indicators(
+        self,
+        market: int,
+        code: str,
+        indicators: list[str],
+        period: Period = Period.DAILY,
+        count: int = 30,
+        adjust: Adjust = Adjust.QFQ,
+        params: dict[str, dict[str, int | float]] | None = None,
+    ) -> pd.DataFrame:
+        """获取 K 线数据并计算技术指标（异步）。
+
+        自动获取足够的历史数据用于指标预热（EMA 至少需要 120 周期）。
+        """
+        from ..indicator import compute_indicators
+
+        fetch_count = max(120 + count, 200)
+        df = await self.get_stock_kline(
+            market, code, period=period, count=fetch_count, adjust=adjust,
+        )
+        if df.empty:
+            return df
+        return compute_indicators(df, indicators, params, tail=count)
 
     # ------------------------------------------------------------------ #
     # 分时
