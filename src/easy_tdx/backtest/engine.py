@@ -137,6 +137,11 @@ class BacktestEngine:
     def _generate_signals(self, df: pd.DataFrame, chanlun_result: Any | None) -> list[Signal]:
         """Generate signals from strategy.
 
+        After each bar's signals, update strategy's internal position state so
+        subsequent bars can make informed decisions (e.g., "don't buy if already
+        holding"). Uses close price as estimate; actual execution price is
+        determined later by OrderSimulator.
+
         Args:
             df: Price data
             chanlun_result: Optional chanlun analysis result
@@ -156,6 +161,11 @@ class BacktestEngine:
         if chanlun_result is not None:
             strat._chanlun_result = chanlun_result
 
+        # Initialize position tracking
+        strat._cash = self._cash
+        strat._position_size = 0.0
+        close_arr = df["close"].to_numpy()
+
         # Call init
         strat._call_init()
 
@@ -165,9 +175,47 @@ class BacktestEngine:
             strat._set_bar_index(i)
             strat._call_next()
             bar_signals = strat._clear_signals()
+
+            # Update strategy position state so next bar sees current holdings
+            self._update_strategy_position(strat, bar_signals, close_arr[i])
+
             all_signals.extend(bar_signals)
 
         return all_signals
+
+    def _update_strategy_position(
+        self, strat: Strategy, signals: list[Signal], est_price: float
+    ) -> None:
+        """Update strategy's internal position estimate after each bar.
+
+        Uses close price as estimate for full-position calculations.
+        The actual execution price is determined by OrderSimulator later.
+
+        Args:
+            strat: Strategy instance
+            signals: Signals generated on this bar
+            est_price: Estimated price (close of current bar)
+        """
+        for sig in signals:
+            price = sig.price or est_price
+            if sig.direction == "BUY":
+                if sig.size == 0:
+                    # Full position: estimate shares (100-lot rounding)
+                    shares = int(strat._cash / (price * (1 + self._commission)) / 100) * 100
+                    if shares > 0:
+                        strat._position_size += shares
+                        strat._cash -= shares * price
+                else:
+                    strat._position_size += sig.size
+                    strat._cash -= sig.size * price
+            elif sig.direction == "SELL":
+                if sig.size == 0:
+                    # Full sell
+                    strat._cash += strat._position_size * price
+                    strat._position_size = 0.0
+                else:
+                    strat._cash += sig.size * price
+                    strat._position_size = max(0.0, strat._position_size - sig.size)
 
     def _compute_pnls(self, trades: list[Trade]) -> list[Trade]:
         """Compute realized PnL for sell trades.
@@ -191,10 +239,10 @@ class BacktestEngine:
                     if position_size > 0:
                         avg_cost = position_cost / position_size
                         trade.pnl = (trade.price - avg_cost) * trade.size - trade.commission
+                        position_cost -= avg_cost * trade.size
+                        position_size -= trade.size
                     else:
                         trade.pnl = 0.0
-                    position_cost -= avg_cost * trade.size
-                    position_size -= trade.size
 
         return trades
 
@@ -240,10 +288,15 @@ class BacktestEngine:
         Returns:
             BacktestResult with empty DataFrames
         """
+        perf = PerformanceAnalyzer(
+            pd.DataFrame(columns=["total", "drawdown"]),
+            pd.DataFrame(columns=["direction", "pnl", "rejected"]),
+        ).compute()
+
         return BacktestResult(
-            performance={},
+            performance=perf,
             equity_curve=pd.DataFrame(
-                columns=["datetime", "cash", "position_value", "total", "drawdown"]
+                columns=["datetime", "cash", "position_value", "total", "drawdown", "drawdown_pct"]
             ),
             trades=pd.DataFrame(
                 columns=[

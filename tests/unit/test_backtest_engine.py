@@ -286,3 +286,76 @@ def test_pnl_calculation():
 
     # For buy trades, PnL should be 0
     assert (buy_trades["pnl"] == 0).all()
+
+
+class PositionAwareStrategy(Strategy):
+    """Strategy that checks position before trading (the common pattern)."""
+
+    def init(self):
+        self.ma5 = self.I(MyTT.MA, self.data.close, 5)
+        self.ma20 = self.I(MyTT.MA, self.data.close, 20)
+        self.cross_up = False
+        self.cross_down = False
+
+    def next(self):
+        if self._bar_index > 0:
+            prev_ma5 = self.ma5[self._bar_index - 1]
+            prev_ma20 = self.ma20[self._bar_index - 1]
+            curr_ma5 = self.ma5[self._bar_index]
+            curr_ma20 = self.ma20[self._bar_index]
+
+            if prev_ma5 <= prev_ma20 and curr_ma5 > curr_ma20:
+                if self.position["size"] == 0:
+                    self.buy(size=0)
+            elif prev_ma5 >= prev_ma20 and curr_ma5 < curr_ma20:
+                if self.position["size"] > 0:
+                    self.sell(size=0)
+
+
+def test_position_aware_buy_sell_alternation():
+    """Regression: strategy that checks position must produce alternating BUY/SELL."""
+    df = _make_df(n=300, seed=42)
+    engine = BacktestEngine(PositionAwareStrategy, cash=100000)
+    result = engine.run(df)
+
+    trades = result.trades[result.trades["rejected"] == False]
+    directions = trades["direction"].tolist()
+
+    # Must have both BUYs and SELLs
+    assert "BUY" in directions, "No BUY trades generated"
+    assert "SELL" in directions, "No SELL trades generated — position feedback broken"
+
+    # Trades must alternate: no two consecutive BUYs or SELLs
+    for i in range(1, len(directions)):
+        assert directions[i] != directions[i - 1], (
+            f"Consecutive same-direction trades at index {i}: "
+            f"{directions[i - 1]} -> {directions[i]}"
+        )
+
+
+def test_position_aware_no_duplicate_buys():
+    """After a BUY, position['size'] > 0 so strategy should not buy again."""
+    df = _make_df(n=300, seed=42)
+    engine = BacktestEngine(PositionAwareStrategy, cash=100000)
+    result = engine.run(df)
+
+    buy_trades = result.trades[
+        (result.trades["direction"] == "BUY") & (result.trades["rejected"] == False)
+    ]
+
+    # Each BUY's size should be reasonable (not tiny leftover from exhausted cash)
+    if len(buy_trades) > 1:
+        # No consecutive buys where the second is tiny (cash leftover artifact)
+        sizes = buy_trades["size"].tolist()
+        for i in range(1, len(sizes)):
+            # Second buy in a pair should not be tiny compared to first
+            # (would indicate position wasn't tracked between bars)
+            if i >= 1:
+                prev_size = sizes[i - 1]
+                cur_size = sizes[i]
+                # Allow some variance but not orders-of-magnitude difference
+                if prev_size > 0:
+                    assert cur_size > prev_size * 0.1, (
+                        f"Suspicious tiny buy {cur_size} after {prev_size} — "
+                        f"position feedback may be broken"
+                    )
