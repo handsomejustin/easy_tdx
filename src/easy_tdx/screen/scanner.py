@@ -87,6 +87,7 @@ class SignalScanner:
         self,
         universe: str = "all",
         progress_callback: Any = None,
+        workers: int = 0,
     ) -> list[ScanResult]:
         """扫描全市场，返回触发买入信号的股票列表。
 
@@ -97,6 +98,10 @@ class SignalScanner:
                 - "sz": 仅深圳
                 - 文件路径: 每行一个 "市场 代码"（如 "SZ 000001"）
             progress_callback: 进度回调函数(current, total, filename)
+            workers: 并发工作进程数
+                - 0: 串行模式（默认，向后兼容）
+                - 1: 串行但使用 executor 基础设施
+                - 2+: ProcessPoolExecutor 并发执行
 
         Returns:
             触发买入信号的 ScanResult 列表
@@ -107,8 +112,23 @@ class SignalScanner:
         if not files:
             return []
 
-        results: list[ScanResult] = []
         total = len(files)
+
+        # 串行模式（workers=0，向后兼容）
+        if workers <= 0:
+            return self._scan_serial(files, total, progress_callback)
+
+        # 并发模式
+        return self._scan_parallel(files, total, workers, progress_callback)
+
+    def _scan_serial(
+        self,
+        files: list[tuple[Path, str, str]],
+        total: int,
+        progress_callback: Any,
+    ) -> list[ScanResult]:
+        """串行扫描（原有逻辑）。"""
+        results: list[ScanResult] = []
 
         for idx, (filepath, market, code) in enumerate(files):
             if progress_callback:
@@ -119,8 +139,50 @@ class SignalScanner:
                 if result is not None:
                     results.append(result)
             except Exception:
-                # 单个文件出错不中断整体扫描
                 continue
+
+        if progress_callback:
+            progress_callback(total, total, "done")
+
+        return results
+
+    def _scan_parallel(
+        self,
+        files: list[tuple[Path, str, str]],
+        total: int,
+        workers: int,
+        progress_callback: Any,
+    ) -> list[ScanResult]:
+        """并发扫描（ProcessPoolExecutor）。"""
+        import concurrent.futures
+
+        # 构建参数：每个任务需要的独立数据
+        tasks = [
+            (str(filepath), market, code, self._strategy_cls, self._cash, self._commission)
+            for filepath, market, code in files
+        ]
+
+        results: list[ScanResult] = []
+        completed = 0
+
+        with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as executor:
+            future_to_idx = {
+                executor.submit(_scan_one_file, *task): i for i, task in enumerate(tasks)
+            }
+
+            for future in concurrent.futures.as_completed(future_to_idx):
+                completed += 1
+                idx = future_to_idx[future]
+
+                if progress_callback:
+                    progress_callback(completed, total, files[idx][0].name)
+
+                try:
+                    result = future.result()
+                    if result is not None:
+                        results.append(result)
+                except Exception:
+                    continue
 
         if progress_callback:
             progress_callback(total, total, "done")
@@ -318,3 +380,60 @@ def _bars_to_df(bars: list[Any]) -> pd.DataFrame:
         )
 
     return pd.DataFrame(rows)
+
+
+def _scan_one_file(
+    filepath: str,
+    market: str,
+    code: str,
+    strategy_cls: type[Strategy],
+    cash: float,
+    commission: float,
+) -> ScanResult | None:
+    """顶层扫描函数（供 ProcessPoolExecutor 调用）。
+
+    将实例方法逻辑提取为独立函数，避免 pickle 实例方法的问题。
+    逻辑与 SignalScanner._scan_one 完全一致。
+
+    Args:
+        filepath: .day 文件路径字符串
+        market: 市场代码（SZ/SH）
+        code: 6 位股票代码
+        strategy_cls: Strategy 子类
+        cash: 初始资金
+        commission: 佣金率
+
+    Returns:
+        ScanResult 如果触发信号，否则 None
+    """
+    bars = read_daily_bars(filepath)
+    if len(bars) < 30:
+        return None
+
+    df = _bars_to_df(bars)
+    if df.empty:
+        return None
+
+    try:
+        factor_signals = extract_factor_signals(
+            strategy_cls,
+            df,
+            cash=cash,
+            commission=commission,
+        )
+    except Exception:
+        return None
+
+    if not factor_signals.buy_mask[-1]:
+        return None
+
+    last_bar = bars[-1]
+    signal_date = last_bar.year * 10000 + last_bar.month * 100 + last_bar.day
+    last_close = last_bar.close
+
+    return ScanResult(
+        code=code,
+        market=market,
+        signal_date=signal_date,
+        last_close=last_close,
+    )
