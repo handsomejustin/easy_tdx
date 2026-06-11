@@ -59,6 +59,9 @@ easy-tdx --help
 
 ```bash
 pip install -e ".[dev]"
+
+# 开发 Web API 模式（含 FastAPI + Uvicorn）
+pip install -e ".[web]"
 ```
 
 ## CLI 参考
@@ -737,12 +740,16 @@ easy-tdx offline sync-all
 
 ## Web API
 
-将 easy-tdx 暴露为 REST + WebSocket 服务，供前端、其他语言或远程调用。
+将 easy-tdx 暴露为 REST + WebSocket 服务，供前端、其他语言或远程调用。无需额外注册，零配置启动。
 
 ### 安装
 
 ```bash
+# 标准安装
 pip install easy-tdx[web]
+
+# 开发模式（从源码安装，支持热重载）
+pip install -e ".[web]"
 ```
 
 ### 快速启动
@@ -751,12 +758,17 @@ pip install easy-tdx[web]
 # 启动 Web API 服务器（自动连接最优 TDX 服务器）
 easy-tdx serve
 
+# 启动后浏览器打开 http://127.0.0.1:8000/docs 查看完整 API 文档（Swagger UI）
+# 也可以访问 http://127.0.0.1:8000/redoc 查看 ReDoc 格式文档
+
 # 指定端口和 TDX 服务器
 easy-tdx serve --port 8080 --tdx-host 119.147.212.81
 
-# 开发模式（自动重载）
+# 开发模式（代码修改后自动重载）
 easy-tdx serve --reload
 ```
+
+> 💡 启动后访问 **http://127.0.0.1:8000/docs** 可以看到完整的交互式 API 文档，支持在线调试每个接口。
 
 ### REST API 示例
 
@@ -1413,7 +1425,9 @@ ruff format --check src/ tests/                              # format check
 - WebSocket 端点 `/ws/realtime/{symbol}` 支持实时行情订阅和多标的动态切换
 - 自动生成 Swagger UI (`/docs`) 和 ReDoc (`/redoc`) 文档
 - 可选依赖 `pip install easy-tdx[web]`，核心安装不受影响
-- 16 个离线单元测试覆盖 schemas、路由注册、OpenAPI schema 生成
+- 20 个离线单元测试覆盖 schemas、路由注册、OpenAPI schema 生成、输入验证
+- 修复 `deps.py` 中 `AsyncTdxClient` 在 `TYPE_CHECKING` 下导致运行时 `NameError`（500 → 正常启动）
+- 修复 market/category 参数不支持小写（`sz`/`sh`）和非法值（`ZZZ`）导致 500 的问题，统一返回 400 Bad Request
 
 ### 1.9.10 (2026-06-11)
 
