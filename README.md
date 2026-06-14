@@ -866,7 +866,9 @@ curl "http://localhost:8000/api/v1/mac/symbol-info?market=SZ&code=000001"
 curl "http://localhost:8000/api/v1/mac/server-info"
 
 # ── 公告检索（巨潮资讯网，独立数据源）──
+# 检索公司公告（无需 TDX 行情服务器）
 curl "http://localhost:8000/api/v1/announcements?code=688017&count=30&page=1"
+# 返回：{"data": [{"title": "...", "type": "...", "date": "...", "url": "..."}], "count": 30}
 
 # ── 排行 / 竞价 / 异动 ──
 # 全 A 涨幅排行前 20
@@ -1323,6 +1325,32 @@ print(f"背驰: {[b.msg for b in result.bcs]}")
 # JSON 兼容字典输出
 print(result.to_dict())
 ```
+
+### 公告检索（巨潮资讯网）
+
+独立数据源（巨潮资讯网 cninfo），无需连接 TDX 行情服务器即可检索公司公告。
+标准库 urllib 实现，零额外依赖。
+
+```python
+from easy_tdx.cninfo import CninfoClient
+
+client = CninfoClient()
+
+# 检索公告（默认 30 条，最新在前）
+df = client.get_announcements("688017")
+# → DataFrame[title, type, date, url]
+
+# 翻页 + 自定义数量
+df = client.get_announcements("600519", count=50, page=2)
+
+# 返回示例：
+#                                              title      type        date                                                 url
+# 0        关于召开2025年年度股东大会的通知    股东大会  2025-06-14  https://www.cninfo.com.cn/new/disclosure/detail?annoId=abc123
+# 1                          2024年年度报告        定期报告  2025-03-28  https://www.cninfo.com.cn/new/disclosure/detail?annoId=def456
+```
+
+> orgId 解析沿用 #19 修复：动态拉取官方映射表，查不到回退硬编码规则，
+> 保证 601xxx 等非标 orgId 段也能正常查询。
 
 ## 枚举参考
 
