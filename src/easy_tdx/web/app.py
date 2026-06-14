@@ -152,6 +152,7 @@ def _create_app(
     from easy_tdx.web.routers.mac_quotes import router as mac_quotes_router
     from easy_tdx.web.routers.market import router as market_router
     from easy_tdx.web.routers.realtime import router as realtime_router
+    from easy_tdx.web.routers.sina import router as sina_router
 
     app.include_router(market_router, prefix="/api/v1")
     app.include_router(bars_router, prefix="/api/v1")
@@ -169,5 +170,7 @@ def _create_app(
     app.include_router(indicator_router, prefix="/api/v1")
     # 公告检索路由（巨潮资讯网，独立数据源）
     app.include_router(announcement_router, prefix="/api/v1")
+    # 新浪财报三表路由（独立数据源）
+    app.include_router(sina_router, prefix="/api/v1")
 
     return app

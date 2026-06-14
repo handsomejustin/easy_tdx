@@ -744,9 +744,13 @@ with MacClient.from_best_host() as c:
 ### 财务
 
 ```bash
-easy-tdx f10 SH 600519              # F10 公司信息
-easy-tdx fund-flow SH 600519        # 历史资金流向
+easy-tdx f10 600519                          # 茅台利润表，最近 8 期（默认 lrb）
+easy-tdx f10 600519 --type fzb --num 4       # 资产负债表，最近 4 期
+easy-tdx f10 000001 --type llb --table       # 平安现金流量表，表格输出
 ```
+
+> 新浪财经数据源，``--type`` 支持 ``lrb``（利润表）/``fzb``（资产负债表）/``llb``（现金流量表）。
+> 独立于 TDX 行情服务器，``item_value`` 已转 float 可直接数值计算，同比附 ``{科目}_同比`` 列。
 
 ### 扩展市场（港股/美股/期货）
 
@@ -875,6 +879,11 @@ curl "http://localhost:8000/api/v1/announcements?code=688017&count=30&page=1"
 # 返回每条含 url（4 参数可直点打开）和 pdf_url（PDF 直链）：
 # {"data": [{"title":"...","type":"...","date":"...","url":".../detail?stockCode=...","pdf_url":"http://static.cninfo.com.cn/.../xxx.PDF",...}], "count": 30}
 
+# ── 财报三表（新浪财经，独立数据源）──
+# 利润表（type: lrb/fzb/llb）
+curl "http://localhost:8000/api/v1/sina/financial-report?code=600519&type=lrb&num=8"
+# 返回每行一期（最新在前），列为科目名（float）+ {科目}_同比（如有）：
+
 # ── 排行 / 竞价 / 异动 ──
 # 全 A 涨幅排行前 20
 curl "http://localhost:8000/api/v1/mac/quote-list?category=A&count=20&sort_type=CHANGE_PCT"
@@ -972,7 +981,7 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 | `screen scan` | 策略选股扫描（纯离线，全市场信号扫描） |
 | `screen rank` | 扫描结果回测排名（按夏普/回撤等指标排序） |
 | `serve` | 启动 Web API 服务器（REST + WebSocket，需 `easy-tdx[web]`） |
-| `f10` | F10 公司信息 |
+| `f10` | 财报三表（新浪：利润表/资产负债表/现金流量表） |
 | `fund-flow` | 历史资金流向 |
 | `ex kline` | 扩展市场 K 线 |
 | `ex quote` | 扩展市场报价 |
@@ -1377,6 +1386,34 @@ for _, row in df.iterrows():
         print(f"跳过（无附件或失败）: {e}")
 ```
 
+### 财报三表（新浪财经）
+
+独立数据源（新浪财经），无需连接 TDX 行情服务器即可获取利润表/资产负债表/现金流量表。
+标准库 urllib 实现，零额外依赖。
+
+```python
+from easy_tdx.sina import SinaClient
+
+client = SinaClient()
+
+# 利润表（默认 8 期，最新在前）
+df = client.get_financial_report("600519", report_type="lrb")
+# → DataFrame，每行一期，列 = [报告期, 营业总收入, 营业总收入_同比, ...]
+
+# 资产负债表 / 现金流量表（report_type 也接受中文别名：利润表/资产负债表/现金流量表）
+df = client.get_financial_report("600519", report_type="fzb", num=4)
+df = client.get_financial_report("600519", report_type="llb", num=4)
+
+# 返回示例（item_value 已转 float，可直接数值计算）：
+#         报告期      营业总收入  营业总收入_同比       营业收入  营业收入_同比
+# 0  2026-03-31  54702912385.23        0.06336  53909252220.51        0.06538
+# 1  2025-12-31 174000000000.00        0.10000            NaN            NaN
+```
+
+> - ``item_value`` 是字符串（新浪原始格式），本实现转 float；空/非数值转 None
+> - 有同比的科目附加 ``{科目}_同比`` 列（float 比例，如 0.06336 = +6.3%）
+> - 大类标题行（如 ``流动资产``，原 ``item_value=""``）保留为 None，反映报表结构
+
 ## 枚举参考
 
 ### Period（K 线周期）
@@ -1580,6 +1617,21 @@ ruff format --check src/ tests/                              # format check
 详见 [NOTICE](NOTICE) 和 [LICENSE](LICENSE)。
 
 ## Changelog
+
+### 1.14.0 (2026-06-15)
+
+**新增新浪财报三表** — 三层接入（编程 API / CLI / Web API），独立数据源，无需连接 TDX 行情服务器。
+
+- 新模块 `easy_tdx.sina`：`SinaClient().get_financial_report(code, report_type=, num=)` 返回 `DataFrame`（每行一期，列为科目名 + `{科目}_同比`）
+- 三表：`lrb`（利润表）/ `fzb`（资产负债表）/ `llb`（现金流量表），report_type 支持中英文别名
+- CLI：`easy-tdx f10 600519 [--type lrb|fzb|llb] [--num N]`（接管原 f10 占位符）
+- Web：`GET /api/v1/sina/financial-report?code=&type=&num=`
+- 标准库 urllib 实现，零新依赖
+- 修复参考脚本 bug：`item_value` 字符串转 float（原 object 列无法数值计算）
+- 大类标题行（如「流动资产」）保留为 None，完整反映报表结构
+- `SinaError` 继承 `TdxError`，保证全局 `except TdxError` 覆盖
+
+测试：`tests/unit/test_sina.py` 27 个离线用例（mock HTTP，零网络），覆盖三表解析、数值转换、报告期格式化、同比键、paperCode 推导、错误转换。
 
 ### 1.13.1 (2026-06-15)
 
