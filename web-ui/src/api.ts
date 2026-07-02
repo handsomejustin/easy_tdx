@@ -47,10 +47,12 @@ export async function fetchStrategies(): Promise<StrategiesResponse> {
 /**
  * 按标的取 K 线行情（OHLCV）。
  *
- * 后端 /bars 仅支持按 count 取数（上限 800 根，约 3.2 年日线），不支持日期范围。
- * 这里固定拉满 800 根，由调用方按日期范围在前端过滤。
+ * 后端 /bars 单次最多 800 根。当 startDate 到 endDate 跨度超过 800 根时，
+ * 自动分页拉取（start=0, 800, 1600...）拼接，直到覆盖 startDate 或达上限。
  * 可选 startDate/endDate 对结果做闭区间过滤（ISO 日期字符串，如 "2024-01-01"）。
  */
+const MAX_PAGES = 10 // 翻页上限：10 × 800 = 8000 根（约 32 年日线）
+
 export async function fetchBars(
   market: string,
   code: string,
@@ -58,19 +60,34 @@ export async function fetchBars(
   startDate?: string,
   endDate?: string,
 ): Promise<Bar[]> {
-  const params = new URLSearchParams({
-    market,
-    code,
-    category,
-    count: '800', // 后端硬上限，前端按日期过滤
-  })
-  const resp = await fetch(`${BASE}/bars?${params}`)
-  if (!resp.ok) await throwError(resp)
-  const body = (await resp.json()) as { data: Record<string, unknown>[] }
-  // 后端 bars 列名不统一：日线及以上是 `date`，分钟线是 `datetime`。
-  // 归一化为统一 `datetime` 字段（取 ISO 前 19 位）。
-  let bars = body.data.map((row) => normalizeBar(row))
-  // 按日期范围过滤（闭区间，比较日期部分 YYYY-MM-DD）
+  let allBars: Bar[] = []
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const params = new URLSearchParams({
+      market,
+      code,
+      category,
+      count: '800',
+      start: String(page * 800),
+    })
+    const resp = await fetch(`${BASE}/bars?${params}`)
+    if (!resp.ok) await throwError(resp)
+    const body = (await resp.json()) as { data: Record<string, unknown>[] }
+    const pageBars = body.data.map((row) => normalizeBar(row))
+    if (pageBars.length === 0) break // 无更多数据
+
+    allBars = allBars.concat(pageBars)
+
+    // 若已覆盖到 startDate（本页最早一根 ≤ startDate），停止翻页
+    if (startDate && pageBars.length > 0) {
+      const oldest = pageBars[pageBars.length - 1].datetime.slice(0, 10)
+      if (oldest <= startDate) break
+    }
+    // 不足 800 根说明已到数据起点
+    if (pageBars.length < 800) break
+  }
+
+  // 按日期范围过滤（闭区间）
+  let bars = allBars
   if (startDate) bars = bars.filter((b) => b.datetime.slice(0, 10) >= startDate)
   if (endDate) bars = bars.filter((b) => b.datetime.slice(0, 10) <= endDate)
   return bars

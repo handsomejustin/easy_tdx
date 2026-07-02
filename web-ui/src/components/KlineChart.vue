@@ -5,6 +5,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import echarts, { DOWN_COLOR, UP_COLOR } from '../echarts-setup'
+import { fmt2 } from '../format'
 import type { Bar, Trade } from '../types'
 
 const props = defineProps<{
@@ -68,7 +69,11 @@ function buildOption(): echarts.EChartsCoreOption {
 
   return {
     backgroundColor: 'transparent',
-    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'cross' },
+      valueFormatter: (v: number | string) => fmt2(Number(v)),
+    },
     legend: { data: ['K线'], top: 0 },
     grid: { left: '8%', right: '3%', top: 30, bottom: 60 },
     xAxis: {
@@ -81,6 +86,7 @@ function buildOption(): echarts.EChartsCoreOption {
     yAxis: {
       scale: true,
       splitLine: { lineStyle: { color: '#2a2e3a' } },
+      axisLabel: { formatter: (v: number) => fmt2(v) },
     },
     dataZoom: [
       { type: 'inside', start: 60, end: 100 },

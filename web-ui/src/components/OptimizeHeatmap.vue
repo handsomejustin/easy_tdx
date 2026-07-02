@@ -47,7 +47,7 @@ function buildOption(): echarts.EChartsCoreOption {
       orient: 'horizontal',
       left: 'center',
       bottom: 0,
-      formatter: (v: number) => `${(v * 100).toFixed(0)}%`,
+      formatter: (v: number) => `${(v * 100).toFixed(2)}%`,
       inRange: { color: ['#18a058', '#2a2e3a', '#ef4146'] }, // 绿(低)→暗→红(高)
     },
     series: [

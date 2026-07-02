@@ -5,6 +5,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import echarts from '../echarts-setup'
+import { fmt2 } from '../format'
 import type { EquityPoint } from '../types'
 
 const props = defineProps<{
@@ -28,7 +29,11 @@ function buildOption(): echarts.EChartsCoreOption {
 
   return {
     backgroundColor: 'transparent',
-    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'cross' },
+      valueFormatter: (v: number | string) => fmt2(Number(v)),
+    },
     legend: { data: ['净值', '回撤%'], top: 0 },
     grid: { left: '8%', right: '8%', top: 30, bottom: 50 },
     xAxis: {
@@ -44,12 +49,14 @@ function buildOption(): echarts.EChartsCoreOption {
         scale: true,
         position: 'left',
         splitLine: { lineStyle: { color: '#2a2e3a' } },
+        axisLabel: { formatter: (v: number) => fmt2(v) },
       },
       {
         type: 'value',
         name: '回撤%',
         position: 'right',
         splitLine: { show: false },
+        axisLabel: { formatter: (v: number) => fmt2(v) },
       },
     ],
     dataZoom: [{ type: 'inside', start: 0, end: 100 }],

@@ -4,6 +4,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import echarts from '../echarts-setup'
+import { fmt2 } from '../format'
 import type { BacktestResult } from '../types'
 
 const props = defineProps<{
@@ -34,11 +35,19 @@ function buildOption(): echarts.EChartsCoreOption {
 
   return {
     backgroundColor: 'transparent',
-    tooltip: { trigger: 'axis' },
+    tooltip: {
+      trigger: 'axis',
+      valueFormatter: (v: number | string) => fmt2(Number(v)),
+    },
     legend: { top: 0, data: seriesData.map((s) => s.name) },
     grid: { left: '8%', right: '5%', top: 30, bottom: 50 },
     xAxis: { type: 'category', data: allDates, boundaryGap: false },
-    yAxis: { type: 'value', scale: true, name: '归一化净值' },
+    yAxis: {
+      type: 'value',
+      scale: true,
+      name: '归一化净值',
+      axisLabel: { formatter: (v: number) => fmt2(v) },
+    },
     dataZoom: [{ type: 'inside', start: 0, end: 100 }],
     series: seriesData.map((s) => {
       const valMap = new Map(s.dates.map((d, i) => [d, s.values[i]]))
