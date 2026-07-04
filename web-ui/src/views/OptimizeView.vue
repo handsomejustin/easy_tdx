@@ -5,10 +5,13 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
+import GradeBadge from '../components/GradeBadge.vue'
 import OptimizeHeatmap from '../components/OptimizeHeatmap.vue'
 import OptimizeResultTable from '../components/OptimizeResultTable.vue'
 import ParamGridPicker from '../components/ParamGridPicker.vue'
 import SymbolPicker from '../components/SymbolPicker.vue'
+import { gradeGridPoint } from '../grading'
+import type { GradeResult } from '../grading'
 import type { Category, ExecutionMode } from '../types'
 import { useBacktestStore } from '../stores/backtest'
 
@@ -125,6 +128,20 @@ function pct(v: number | null | undefined): string {
 function num(v: number | null | undefined, d = 2): string {
   return v !== null && v !== undefined && Number.isFinite(v) ? v.toFixed(d) : '-'
 }
+
+// 寻优评级：4 维度降级版（夏普30%/回撤28%/胜率22%/利润因子20%）。
+// 各网格点交易数独立判断「样本不足」否决。
+const bestGrade = computed<GradeResult | null>(() =>
+  store.optimizeResult?.best ? gradeGridPoint(store.optimizeResult.best) : null,
+)
+// 一键寻优全局最佳评级
+const bestAllGrade = computed<GradeResult | null>(() =>
+  store.optimizeAllResult?.best ? gradeGridPoint(store.optimizeAllResult.best) : null,
+)
+// 一键寻优排名表每行的评级（按需计算，避免大表全量计算）
+const rankingGrades = computed<GradeResult[]>(() =>
+  (store.optimizeAllResult?.ranking ?? []).map((r) => gradeGridPoint(r)),
+)
 </script>
 
 <template>
@@ -202,6 +219,7 @@ function num(v: number | null | undefined, d = 2): string {
         <section class="report-section">
           <h3>最优结果</h3>
           <div v-if="store.optimizeResult.best" class="best-summary">
+            <GradeBadge v-if="bestGrade" :result="bestGrade" size="md" />
             <span class="best-params">{{ JSON.stringify(store.optimizeResult.best.params) }}</span>
             <span class="best-return pos">
               {{ (store.optimizeResult.best.total_return! * 100).toFixed(2) }}%
@@ -233,6 +251,7 @@ function num(v: number | null | undefined, d = 2): string {
         <section class="report-section">
           <h3>全局最佳</h3>
           <div v-if="store.optimizeAllResult.best" class="best-summary">
+            <GradeBadge v-if="bestAllGrade" :result="bestAllGrade" size="md" />
             <span class="best-params">
               {{ store.optimizeAllResult.best.strategy_label }}
               {{ JSON.stringify(store.optimizeAllResult.best.params) }}
@@ -258,6 +277,7 @@ function num(v: number | null | undefined, d = 2): string {
             <thead>
               <tr>
                 <th>#</th>
+                <th>评级</th>
                 <th>策略</th>
                 <th>参数</th>
                 <th class="num">总收益</th>
@@ -275,6 +295,14 @@ function num(v: number | null | undefined, d = 2): string {
                 :class="{ best: i === 0 }"
               >
                 <td class="rank">{{ i + 1 }}</td>
+                <td class="grade-cell">
+                  <GradeBadge
+                    v-if="rankingGrades[i]"
+                    :result="rankingGrades[i]"
+                    size="sm"
+                    :show-score="false"
+                  />
+                </td>
                 <td>{{ r.strategy_label }}</td>
                 <td class="params">{{ JSON.stringify(r.params) }}</td>
                 <td class="num" :class="r.total_return !== null && r.total_return > 0 ? 'pos' : 'neg'">
@@ -437,5 +465,8 @@ function num(v: number | null | undefined, d = 2): string {
 .view-btn {
   font-size: 11px;
   padding: 2px 8px;
+}
+.grade-cell {
+  width: 56px;
 }
 </style>

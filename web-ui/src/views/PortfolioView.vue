@@ -5,11 +5,13 @@ import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
 import EquityChart from '../components/EquityChart.vue'
+import GradeDetails from '../components/GradeDetails.vue'
 import PortfolioCompareChart from '../components/PortfolioCompareChart.vue'
 import PortfolioSummaryTable from '../components/PortfolioSummaryTable.vue'
 import StocksPicker from '../components/StocksPicker.vue'
 import StrategyPicker from '../components/StrategyPicker.vue'
 import { formatError, saveStrategy } from '../api'
+import { gradePortfolio } from '../grading'
 import type { Category, ExecutionMode } from '../types'
 import { useBacktestStore } from '../stores/backtest'
 
@@ -96,6 +98,12 @@ const saveMsg = ref('')
 
 const strategyLabel = computed(
   () => store.strategies.find((s) => s.name === strategy.value)?.label ?? strategy.value,
+)
+
+// 组合评级：从 combined_equity 重算夏普/卡玛/波动率等（组合级净值算不出胜率/利润因子），
+// 用 5 维度评分。净值点数过少（< 60 个交易日）视为样本不足。
+const grade = computed(() =>
+  store.portfolioResult ? gradePortfolio(store.portfolioResult) : null,
 )
 
 function openSaveForm() {
@@ -226,6 +234,11 @@ async function onSave() {
           <button class="ghost" @click="openSaveForm">💾 保存策略</button>
           <span v-if="saveMsg" class="save-msg">{{ saveMsg }}</span>
         </div>
+
+        <section v-if="grade" class="report-section">
+          <h3>组合评级</h3>
+          <GradeDetails :result="grade" expanded />
+        </section>
 
         <section class="report-section">
           <h3>组合整体绩效</h3>

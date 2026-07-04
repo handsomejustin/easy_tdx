@@ -7,12 +7,14 @@ import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
 import EquityChart from '../components/EquityChart.vue'
+import GradeDetails from '../components/GradeDetails.vue'
 import KlineChart from '../components/KlineChart.vue'
 import MetricTable from '../components/MetricTable.vue'
 import StrategyPicker from '../components/StrategyPicker.vue'
 import SymbolPicker from '../components/SymbolPicker.vue'
 import TradeTable from '../components/TradeTable.vue'
 import { formatError, saveStrategy } from '../api'
+import { gradePerformance } from '../grading'
 import type { Category, ExecutionMode } from '../types'
 import { useBacktestStore } from '../stores/backtest'
 
@@ -109,6 +111,13 @@ const saveMsg = ref('') // 保存后提示（成功/失败）
 
 const strategyLabel = computed(
   () => store.strategies.find((s) => s.name === strategy.value)?.label ?? strategy.value,
+)
+
+// 评级：基于完整 Performance，6 维度评分 + 一票否决。
+// total_return 不直接计入评分（只通过卡玛/夏普间接体现），
+// 体现「哪怕近期收益率高，长期风险大也该低评」的产品诉求。
+const grade = computed(() =>
+  store.result ? gradePerformance(store.result.performance) : null,
 )
 
 // 当前股票完整代码（市场:6位），从 SymbolPicker 同步来的 code 是纯数字，
@@ -258,6 +267,11 @@ async function onSave() {
         <section class="report-section">
           <h3>净值曲线与回撤</h3>
           <EquityChart :equity="store.result.equity_curve" />
+        </section>
+
+        <section v-if="grade" class="report-section">
+          <h3>评级</h3>
+          <GradeDetails :result="grade" expanded />
         </section>
 
         <section class="report-section">
