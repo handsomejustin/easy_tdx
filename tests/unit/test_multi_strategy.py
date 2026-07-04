@@ -119,6 +119,53 @@ class TestMultiStrategyEngine:
         result = MultiStrategyEngine(slots, total_cash=1_000_000).run()
         assert (result.combined_equity["drawdown"] >= 0).all()
 
+    def test_max_drawdown_relative_to_peak_not_initial(self) -> None:
+        """最大回撤必须相对「当时峰值」而非「初始资金」。
+
+        回归 v1.17.11/v1.17.12 的 bug：drawdown_pct 分母误用 initial（固定初始值），
+        导致净值大涨后回撤被严重放大（如峰值 6x 初始时，真实 45% 回撤被算成 290%）。
+        构造一个大涨后回撤的场景：净值为 1→6→4（即从峰值回撤 33%），验证 max_drawdown
+        ≈ 33%（旧逻辑会算成 200%，超出 1.0）。
+        """
+        # 构造单标的净值序列：前 50 根 close 线性涨到 6 倍，后 50 根跌到 4 倍。
+        # 用从不交易的 HoldStrategy，使 total ≈ initial_cash（曲线不随 close 变）……
+        # 不行——HoldStrategy 净值恒为初始资金，无法制造涨跌。改用直接断言合并曲线
+        # 的 drawdown_pct 计算逻辑：构造两段净值的合成 df 喂给 _build_combined_equity。
+        from easy_tdx.backtest.types import BacktestResult
+
+        # 两根等长净值曲线：均从 1.0 涨到 6.0 再跌到 4.0（各 50 根，峰值在第 50 根）
+        dates = pd.date_range("2024-01-01", periods=100, freq="D")
+        up = np.linspace(1.0, 6.0, 50)  # 0→50: 1→6
+        down = np.linspace(6.0, 4.0, 50)  # 50→100: 6→4
+        totals = np.concatenate([up, down])  # 峰值 6.0 在第 50 根，谷底 4.0 在末尾
+        ec = pd.DataFrame(
+            {
+                "datetime": dates,
+                "total": totals * 100_000,  # 缩放到资金量级
+                "drawdown": np.zeros(100),
+                "drawdown_pct": np.zeros(100),
+            }
+        )
+        # 造一个空 trades/positions 的 BacktestResult 占位
+        empty_df = pd.DataFrame()
+        fake = BacktestResult(
+            performance={"total_return": 3.0},
+            equity_curve=ec,
+            trades=empty_df,
+            positions=empty_df,
+            config={},
+        )
+        engine = MultiStrategyEngine.__new__(MultiStrategyEngine)
+        combined = engine._build_combined_equity(  # noqa: SLF001 — 直接测内部算法
+            {"A@SZ:000001": fake}, {"A@SZ:000001": 100_000.0}
+        )
+        # 真实最大回撤（相对峰值）：峰值 600000，谷底 400000，回撤 = 200000/600000 ≈ 33.3%
+        dd_pct = combined["drawdown_pct"].to_numpy()
+        max_dd = float(np.max(dd_pct))
+        assert 0.30 <= max_dd <= 0.36, f"max_drawdown 应≈33%，实际 {max_dd:.4f}"
+        # 旧 bug（除以 initial=100000）会算成 200%（200000/100000），必然 >1
+        assert max_dd <= 1.0, "drawdown_pct 相对峰值，绝不可能超过 100%"
+
     def test_capital_split_equal(self) -> None:
         """资金按策略数均分：每个槽位 1/N。"""
         slots = [

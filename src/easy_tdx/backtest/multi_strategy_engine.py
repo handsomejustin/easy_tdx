@@ -228,12 +228,16 @@ class MultiStrategyEngine:
         aligned = aligned.ffill().fillna(0)
         total = aligned.sum(axis=1)
 
-        # 回撤：用正值约定（peak - total），与单标的 PortfolioTracker.equity_curve
-        # 及 PerformanceAnalyzer 一致；EquityChart 也按正值展示（前端取负向下画）。
+        # 回撤：drawdown 为绝对回撤额（峰值-当前，正值），drawdown_pct 为相对当时
+        # 峰值的回撤比例（drawdown / peak，0~1）。分母必须用逐点 peak 而非固定初始值：
+        # 净值大涨后 peak 是初始值的好几倍，若除以 initial 会把回撤百分比严重放大
+        # （如峰值 6.45x 初始时，45% 的真实回撤会被算成 293%）。与单标的
+        # PortfolioTracker.equity_curve 的 drawdown/drawdown_pct 定义保持一致，
+        # PerformanceAnalyzer 直接读 drawdown_pct 列算 max_drawdown。
         peak = total.cummax()
         drawdown = peak - total
-        initial = peak.iloc[0] if len(peak) > 0 and peak.iloc[0] != 0 else 1.0
-        drawdown_pct = drawdown / initial
+        peak_safe = peak.where(peak != 0, 1.0)
+        drawdown_pct = drawdown / peak_safe
 
         return pd.DataFrame(
             {

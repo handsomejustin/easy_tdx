@@ -2,6 +2,15 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.17.13] — 2026-07-04
+
+**修复多策略组合回测「最大回撤」严重虚高** —— 用户反馈：3 个策略各自最大回撤仅 45.53%/40.16%/16.89%，组合在一起却显示 **83.76%**。根因是 `MultiStrategyEngine._build_combined_equity` 计算 `drawdown_pct` 时**分母误用初始资金（`initial`）而非逐点峰值（`peak`）**：净值大涨后峰值是初始值的好几倍（本例总收益 545%，峰值≈6.45×初始），同样的绝对回撤额除以小的初始值，百分比被等比放大。正确公式应为 `drawdown / peak`（相对当时峰值的回撤，0~1），与单标的 `PortfolioTracker.equity_curve` 的 `drawdown_pct` 定义一致。修复后最大回撤回到合理区间（≤ 各策略最大回撤的加权，不可能超过 100%）。**连带修复**：卡玛比率（`年化收益 / 最大回撤`）此前因 max_drawdown 虚高而被压低，修复后恢复正常。其余指标（总收益/年化/夏普/索提诺/波动率/交易数/胜率/盈亏比）经逐一核对**均正确**，不受此 bug 影响。
+
+### 修复
+
+- **`drawdown_pct` 分母改用逐点峰值**（`src/easy_tdx/backtest/multi_strategy_engine.py` `_build_combined_equity`）—— `drawdown / initial` → `drawdown / peak`（`peak_safe = peak.where(peak != 0, 1.0)` 防除零）。这同时修复 `EquityChart` 回撤曲线显示（前端读 `drawdown_pct` 取负向下画）。
+- **回归守卫**（`tests/unit/test_multi_strategy.py::test_max_drawdown_relative_to_peak_not_initial`）—— 构造「净值 1→6→4」的大涨后回撤场景，断言 `max_drawdown ≈ 33%`（旧逻辑会算成 200%，必 >1，断言 `≤1.0` 抓住回归）。
+
 ## [1.17.12] — 2026-07-04
 
 **修复 CI 在新版 FastAPI 上路由注册失败** —— v1.17.11 的 `DELETE /api/v1/strategies/{id}` 用 `status_code=204`，较新 FastAPI/Starlette 在路由注册阶段（`add_api_route`）就抛 `AssertionError: Status code 204 must not have a response body`，导致 CI 的 ubuntu 矩阵（py3.10/3.12/3.13）整片 ERROR（21 个 web 测试因 fixture 导入 router 而连带失败）。改为返回 `200 + {"deleted": id}` 确认体，既消除注册期断言又给前端明确反馈。
