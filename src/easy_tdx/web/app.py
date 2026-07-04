@@ -166,6 +166,7 @@ def _create_app(
     from easy_tdx.web.routers.market import router as market_router
     from easy_tdx.web.routers.realtime import router as realtime_router
     from easy_tdx.web.routers.sina import router as sina_router
+    from easy_tdx.web.routers.strategies import router as strategies_router
 
     app.include_router(market_router, prefix="/api/v1")
     app.include_router(bars_router, prefix="/api/v1")
@@ -187,5 +188,7 @@ def _create_app(
     app.include_router(sina_router, prefix="/api/v1")
     # 回测路由（纯计算，不依赖行情连接 lifespan）
     app.include_router(backtest_router, prefix="/api/v1")
+    # 策略库路由（SQLite 持久化，纯数据 CRUD）
+    app.include_router(strategies_router, prefix="/api/v1")
 
     return app

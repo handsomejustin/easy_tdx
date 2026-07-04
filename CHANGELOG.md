@@ -2,6 +2,29 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.17.11] — 2026-07-04
+
+**Web UI 新增「策略库」与「多策略组合回测」** —— 此前回测结果存在进程内存，重启即丢，用户无法留存自己反复验证过的好策略。本次落地两层能力：(1) **策略库**——在单标的/组合回测结果区点「保存策略」，把策略 + 标的上下文 + 成绩快照（总收益/夏普/回撤/胜率）一起存进本地 SQLite 单文件（`~/.easy_tdx/strategies.db`），策略库页可载入回填、一键重跑、删除；(2) **多策略组合回测**——策略库勾选 N 个单标的策略，各拿 1/N 资金、各跑原标的（取最新行情），净值曲线按日期并集对齐求和，组合结果复用单标的的 19 项完整绩效指标（基于合并净值曲线 + 汇总成交用 `PerformanceAnalyzer` 算出），并展示各策略当前持仓。**895 单测全绿**（+24 新增），ruff format/check / mypy strict / 前端 vue-tsc 全通过。
+
+### 新增
+
+- **策略库后端**（`src/easy_tdx/web/strategy_store.py`、`routers/strategies.py`）—— SQLite 单文件 CRUD（加入/列出/查看/删除），落库路径随 `EASY_TDX_CONFIG_DIR` 环境变量走（与 `config.py` 同约定），线程安全（写操作串行锁 + `check_same_thread=False`）。5 个接口：`GET/POST /api/v1/strategies`、`GET/DELETE /strategies/{id}`。保存记录含 strategy + params + context（symbol 或 stocks + 日期 + 周期）+ trade_config + snapshot（成绩快照）+ tags + notes。
+- **策略库前端**（`web-ui/src/views/StrategiesView.vue` + 路由 `/strategies` + 导航）—— 卡片网格列表，展示策略名/标的/收益/夏普/回撤/标签/备注/创建时间。「载入」跳转对应回测页并自动回填（单标的剥掉市场前缀只传 6 位代码；组合新增 URL query 回填）；「删除」二次确认。空态提示去回测页保存。
+- **保存策略按钮**（`BacktestView.vue` / `PortfolioView.vue` 结果区）—— 弹窗填名称/标签/备注，其余（策略参数、标的上下文、成绩快照）自动从当前请求 + 结果填入。
+- **多策略组合回测引擎**（`src/easy_tdx/backtest/multi_strategy_engine.py`）—— `MultiStrategyEngine`：N 个策略各拿 1/N 资金、各跑原标的，曲线按日期并集 ffill 对齐求和。输出结构同 `PortfolioResult`（`individual_results` key 形如 `"双均线交叉@SH:601088"`），前端复用组合页图表零改动。
+- **多策略组合回测接口**（`web/routers/backtest.py` `POST /backtest/multi-strategy/run/async`）—— 勾选 N 个策略，逐个在 async 上下文取行情 + 构造策略实例（失败跳过），后台线程跑引擎。组合整体绩效基于合并净值曲线 + 汇总成交喂 `PerformanceAnalyzer`，得到与单标的同口径的 19 项指标。
+- **策略库组合回测 UI**（`StrategiesView.vue`）—— 每张卡片加复选框（组合策略无单一 symbol 自动 disabled），顶部「组合回测(N)」按钮，结果区复用 `EquityChart` + `MetricTable`（19 项绩效）+ `PortfolioSummaryTable` + `PortfolioCompareChart` + 当前持仓表（各策略回测结束持仓快照）。
+
+### 变更
+
+- **`PortfolioView.vue` 新增 URL query 回填** —— 此前组合页不读 query，策略库「载入组合策略」无法回填；新增 `onMounted` 读取 `strategy/params/stocks/startDate/endDate/category`，与单标的页回填风格一致。
+- **修正多策略合并净值曲线回撤符号** —— `_build_combined_equity` 原用 `drawdown = total - peak`（负值），改为 `peak - total`（正值），与单标的 `PortfolioTracker`、`PerformanceAnalyzer`、`EquityChart`（前端取负向下画）的正值约定一致；否则最大回撤算成 0、夏普/卡玛比率失真。
+
+### 已知约束（非 bug）
+
+- **多策略组合回测仅支持资金分仓（并行制）** —— 每个策略各拿 1/N 资金独立回测后曲线相加；不支持信号共振（投票制，`combo.py` 已有但未暴露 Web API）。资金/成本统一一组均分，不支持每策略单独配置。
+- **组合回测结果暂不回存策略库** —— 当前可保存的是单次回测的策略；多策略组合的结果暂未支持存为"策略的组合"。
+
 ## [1.17.10] — 2026-07-04
 
 **Web UI 一键寻优「查看」按钮跳转携带完整行情上下文** —— `/optimize` 页策略排名表的两个「查看」按钮此前跳转只带 `strategy` + `params`，丢失了股票代码、周期、起止日期，导致跳到回测页后用户得手动重选标的与日期才能复现寻优行情。本次让跳转 URL 额外携带 `symbol/startDate/endDate/category`，回测页 `onMounted` 自动回填到 `SymbolPicker` 表单（股票代码/周期/起止日期全部就位），用户只需点「开始回测」即可完整复现。**向后兼容**：老书签（只有 `strategy/params`）仍正常工作，缺失字段保持默认值。前端 `vue-tsc --noEmit` / `vite build` 通过，后端 870 单测全绿（无回归）。

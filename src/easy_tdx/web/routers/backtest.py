@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends
 from easy_tdx.web.backtest_schemas import (
     BacktestRequest,
     BacktestResultResponse,
+    MultiStrategyBacktestRequest,
     OptimizeAllBacktestRequest,
     OptimizeAllRankEntry,
     OptimizeAllResult,
@@ -182,7 +183,37 @@ async def run_portfolio_backtest_async(
     return TaskSubmitResponse(task_id=task_id, status=status)
 
 
-# ── 参数网格寻优 ─────────────────────────────────────────────────────────────
+# ── 多策略组合回测（资金分仓） ───────────────────────────────────────────────
+
+
+@router.post(
+    "/backtest/multi-strategy/run/async", response_model=TaskSubmitResponse, status_code=202
+)
+async def run_multi_strategy_backtest_async(
+    req: MultiStrategyBacktestRequest,
+    client: Any = Depends(get_client),
+) -> TaskSubmitResponse:
+    """提交多策略组合回测后台任务（资金分仓 / 并行制）。
+
+    勾选 N 个策略，各自在原标的（取最新行情）上独立回测，各拿总资金 1/N。
+    单个策略取数失败则跳过（不中断整组），全部失败返回 400。结果为
+    MultiStrategyResult（结构同 PortfolioResult），通过 GET /backtest/tasks/{task_id} 轮询。
+    """
+    slots = await _fetch_multi_strategy_bars(client, req.items)
+    if not slots:
+        raise ValueError("所有策略槽位均未取到有效行情数据")
+
+    snapshot = req.model_copy()
+    description = f"多策略组合 | {len(slots)}个策略"
+
+    runner = get_runner()
+    task_id = runner.submit(
+        lambda: _run_multi_strategy_backtest(slots, snapshot),
+        description=description,
+    )
+    state = runner.get(task_id)
+    status: Any = state.status if state.status in ("pending", "running") else "running"
+    return TaskSubmitResponse(task_id=task_id, status=status)
 
 
 @router.post("/backtest/optimize/run/async", response_model=TaskSubmitResponse, status_code=202)
@@ -424,6 +455,93 @@ async def _fetch_portfolio_bars(
             StockData(code=code, market=market_str, df=df.reset_index(drop=True))
         )
     return stock_data_list
+
+
+async def _fetch_multi_strategy_bars(
+    client: Any,
+    items: list[Any],
+) -> list[Any]:
+    """逐个策略槽位取行情 + 构造策略实例，组装 StrategySlot 列表（async）。
+
+    每条 item 自带 symbol（如 "SH:601088"）、category、start/end_date、strategy+params。
+    单条取数或策略构造失败则跳过（不中断整组）。返回的 StrategySlot 已绑定好策略
+    实例与 df，可直接交给后台线程跑引擎（避免把 async client 带进线程）。
+    """
+    from easy_tdx.backtest.multi_strategy_engine import StrategySlot
+    from easy_tdx.backtest.strategies import get_registry
+    from easy_tdx.web.convert import category_from_str, market_from_str
+
+    registry = get_registry()
+    slots: list[StrategySlot] = []
+    for item in items:
+        # 1. 解析策略（未知策略跳过）
+        try:
+            entry = registry.get(item.strategy)
+        except KeyError:
+            continue
+        # 2. 逐页取行情（覆盖 start_date，最多 10 页 = 8000 根）
+        market_str, code = item.symbol.split(":", 1)
+        frames: list[pd.DataFrame] = []
+        for page in range(10):
+            try:
+                page_df = await client.get_security_bars(
+                    market_from_str(market_str),
+                    code,
+                    category_from_str(item.category),
+                    page * 800,
+                    800,
+                )
+            except Exception:
+                break
+            if len(page_df) == 0:
+                break
+            frames.append(page_df)
+            if item.start_date and len(page_df) > 0:
+                dt_col = "datetime" if "datetime" in page_df.columns else "date"
+                oldest = str(page_df[dt_col].iloc[-1])[:10]
+                if oldest <= item.start_date:
+                    break
+            if len(page_df) < 800:
+                break
+        if not frames:
+            continue
+        df = pd.concat(frames, ignore_index=True)
+        if "datetime" not in df.columns and "date" in df.columns:
+            df = df.copy()
+            df["datetime"] = df["date"]
+        df = df.sort_values("datetime").reset_index(drop=True)
+        # 日期范围过滤
+        if item.start_date or item.end_date:
+            df = _filter_df_by_date(df, item.start_date, item.end_date)
+        if len(df) < 2:
+            continue
+        # 3. 构造策略实例（参数非法跳过该条）
+        try:
+            strategy = entry.build(item.params)
+        except ValueError:
+            continue
+        label = item.strategy_label or entry.label
+        slots.append(StrategySlot(label=label, symbol=item.symbol, strategy=strategy, df=df))
+    return slots
+
+
+def _run_multi_strategy_backtest(
+    slots: list[Any], req: MultiStrategyBacktestRequest
+) -> dict[str, Any]:
+    """执行多策略组合回测并返回清洗后的结果字典（后台线程内调用）。"""
+    from easy_tdx.backtest.multi_strategy_engine import MultiStrategyEngine
+
+    engine = MultiStrategyEngine(
+        strategies=slots,
+        total_cash=req.cash,
+        commission=req.commission,
+        min_commission=req.min_commission,
+        stamp_tax=req.stamp_tax,
+        slippage=req.slippage,
+        execution=req.execution,
+    )
+    result = engine.run()
+    return serialize_result(result)
 
 
 def _run_optimize(df: pd.DataFrame, req: OptimizeBacktestRequest) -> dict[str, Any]:

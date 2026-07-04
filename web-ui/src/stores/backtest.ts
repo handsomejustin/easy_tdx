@@ -11,12 +11,14 @@ import {
   submitPortfolioTask,
   submitOptimizeAllTask,
   submitOptimizeTask,
+  submitMultiStrategyTask,
   fetchTask,
 } from '../api'
 import type {
   BacktestRequest,
   BacktestResult,
   Bar,
+  MultiStrategyBacktestRequest,
   PortfolioBacktestRequest,
   PortfolioResult,
   OptimizeAllBacktestRequest,
@@ -117,6 +119,45 @@ export const useBacktestStore = defineStore('backtest', () => {
     error.value = ''
   }
 
+  // ── 多策略组合回测（资金分仓） ─────────────────────────────────────────
+  const multiStrategyResult = ref<PortfolioResult | null>(null)
+  const multiStrategyRunning = ref(false)
+
+  /** 提交多策略组合回测后台任务并轮询直到完成。
+   * 结果结构同 PortfolioResult（复用组合页图表组件）。 */
+  async function runMultiStrategy(req: MultiStrategyBacktestRequest) {
+    multiStrategyRunning.value = true
+    error.value = ''
+    multiStrategyResult.value = null
+    try {
+      const { task_id } = await submitMultiStrategyTask(req)
+      const start = Date.now()
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const state = await fetchTask(task_id)
+        if (state.status === 'done' && state.result) {
+          multiStrategyResult.value = state.result as PortfolioResult
+          break
+        }
+        if (state.status === 'failed') {
+          throw new Error(state.error || '多策略组合回测失败')
+        }
+        if (Date.now() - start > 180_000) throw new Error('多策略组合回测超时（180s）')
+        await new Promise((r) => setTimeout(r, 400))
+      }
+    } catch (e) {
+      error.value = formatError(e)
+      multiStrategyResult.value = null
+    } finally {
+      multiStrategyRunning.value = false
+    }
+  }
+
+  function clearMultiStrategy() {
+    multiStrategyResult.value = null
+    error.value = ''
+  }
+
   // ── 参数网格寻优（Phase 4） ─────────────────────────────────────────────
   const optimizeResult = ref<OptimizeResult | null>(null)
   const optimizeRunning = ref(false)
@@ -195,6 +236,8 @@ export const useBacktestStore = defineStore('backtest', () => {
     error,
     portfolioResult,
     portfolioRunning,
+    multiStrategyResult,
+    multiStrategyRunning,
     optimizeResult,
     optimizeRunning,
     optimizeAllResult,
@@ -208,6 +251,8 @@ export const useBacktestStore = defineStore('backtest', () => {
     clearResult,
     runPortfolio,
     clearPortfolio,
+    runMultiStrategy,
+    clearMultiStrategy,
     runOptimize,
     runOptimizeAll,
   }

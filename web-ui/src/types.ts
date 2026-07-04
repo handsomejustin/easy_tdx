@@ -263,3 +263,69 @@ export interface ApiError {
   error: string
   detail: string
 }
+
+// ── 策略库（已保存策略，GET/POST/DELETE /api/v1/strategies） ─────────────────
+
+/** 新建一条已保存策略的请求体（前端在回测结果区点「保存」时提交）。 */
+export interface SavedStrategyCreate {
+  name: string
+  kind: 'single' | 'portfolio'
+  strategy: string
+  strategy_label?: string
+  params?: Record<string, number | string | boolean>
+  /** 标的上下文：single 存 symbol/category/start_date/end_date；portfolio 存 stocks */
+  context?: Record<string, unknown>
+  /** 资金与成本配置（cash/commission/...） */
+  trade_config?: Record<string, unknown>
+  /** 保存时的成绩快照（total_return/sharpe/...） */
+  snapshot?: Record<string, unknown>
+  tags?: string[]
+  notes?: string
+}
+
+/** 一条已保存策略（响应模型，含 id 与时间戳）。 */
+export interface SavedStrategy {
+  id: string
+  name: string
+  kind: 'single' | 'portfolio'
+  strategy: string
+  strategy_label: string
+  params: Record<string, number | string | boolean>
+  context: Record<string, unknown>
+  trade_config: Record<string, unknown>
+  snapshot: Record<string, unknown>
+  tags: string[]
+  notes: string
+  created_at: string
+  updated_at: string
+  app_version: string
+}
+
+export interface SavedStrategyListResponse {
+  strategies: SavedStrategy[]
+  count: number
+}
+
+// ── 多策略组合回测（资金分仓，POST /api/v1/backtest/multi-strategy/run/async） ──
+
+/** 多策略组合的单个策略槽位（一个策略 + 参数 + 它要跑的原标的 + 日期）。 */
+export interface MultiStrategyItem {
+  strategy: string
+  strategy_label?: string
+  params?: Record<string, number | string | boolean>
+  symbol: string
+  category?: Category
+  start_date?: string
+  end_date?: string
+}
+
+/** 多策略组合回测请求（各策略各拿 1/N 资金，结果结构同 PortfolioResult）。 */
+export interface MultiStrategyBacktestRequest {
+  items: MultiStrategyItem[]
+  cash?: number
+  commission?: number
+  min_commission?: number
+  stamp_tax?: number
+  slippage?: number
+  execution?: ExecutionMode
+}

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "easy-tdx"
-version = "1.17.10"
+version = "1.17.11"
 description = "通达信 TCP 协议行情数据客户端，支持在线行情、离线数据读取与写入同步"
 readme = "README.md"
 requires-python = ">=3.10"

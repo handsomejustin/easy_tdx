@@ -7,11 +7,15 @@ import type {
   BacktestResult,
   Bar,
   Category,
+  MultiStrategyBacktestRequest,
   OptimizeAllBacktestRequest,
   OptimizeBacktestRequest,
   PortfolioBacktestRequest,
-  TaskListResponse,
+  SavedStrategy,
+  SavedStrategyCreate,
+  SavedStrategyListResponse,
   StrategiesResponse,
+  TaskListResponse,
   TaskState,
   TaskSubmitResponse,
 } from './types'
@@ -148,6 +152,19 @@ export async function submitPortfolioTask(
   return (await resp.json()) as TaskSubmitResponse
 }
 
+/** 提交多策略组合回测后台任务（资金分仓），返回 task_id。 */
+export async function submitMultiStrategyTask(
+  req: MultiStrategyBacktestRequest,
+): Promise<TaskSubmitResponse> {
+  const resp = await fetch(`${BASE}/backtest/multi-strategy/run/async`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()) as TaskSubmitResponse
+}
+
 /** 提交参数网格寻优后台任务，返回 task_id。 */
 export async function submitOptimizeTask(
   req: OptimizeBacktestRequest,
@@ -213,4 +230,37 @@ export async function runBacktestWithPolling(
     }
     await new Promise((r) => setTimeout(r, intervalMs))
   }
+}
+
+// ── 策略库（已保存策略）──────────────────────────────────────────────────────
+
+/** 列出全部已保存策略（按创建时间倒序）。 */
+export async function fetchSavedStrategies(): Promise<SavedStrategyListResponse> {
+  const resp = await fetch(`${BASE}/strategies`)
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()) as SavedStrategyListResponse
+}
+
+/** 查看单条已保存策略。 */
+export async function fetchSavedStrategy(id: string): Promise<SavedStrategy> {
+  const resp = await fetch(`${BASE}/strategies/${id}`)
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()) as SavedStrategy
+}
+
+/** 保存一条策略（含当时的标的上下文与成绩快照）。 */
+export async function saveStrategy(req: SavedStrategyCreate): Promise<SavedStrategy> {
+  const resp = await fetch(`${BASE}/strategies`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()) as SavedStrategy
+}
+
+/** 删除一条已保存策略。 */
+export async function deleteSavedStrategy(id: string): Promise<void> {
+  const resp = await fetch(`${BASE}/strategies/${id}`, { method: 'DELETE' })
+  if (!resp.ok) await throwError(resp)
 }
