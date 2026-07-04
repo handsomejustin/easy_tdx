@@ -37,3 +37,21 @@ jobs:
           python-version: "3.13"
       - run: pip install -e ".[dev,web]"
       - run: mypy src/
+
+  # 前端构建检查。web-ui 此前只有本地 vue-tsc，CI 不覆盖，
+  # 类型错误 / 破坏性 import 只有发布后用户才发觉（v1.17.9 的
+  # 65409694% 离谱数值 bug 即前端无回归守卫的典型后果）。
+  # 与 Python 版本无关，故独立 job，避免在 test matrix 里跑 6 遍。
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: web-ui/package-lock.json
+      - run: npm ci
+        working-directory: web-ui
+      - run: npm run build
+        working-directory: web-ui
