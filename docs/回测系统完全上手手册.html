@@ -379,7 +379,29 @@ cd \easy_tdx</code></pre>
 </div>
 
 <div class="step">
-<span class="step-num">2</span><strong>安装项目本体 + Web 服务依赖</strong>
+<span class="step-num">2</span><strong>创建并激活虚拟环境(强烈推荐)</strong>
+<p>虚拟环境就像给 easy-tdx 单独开一个"干净的小房间",里面装的依赖不会污染系统 Python,也不会跟你电脑上其他 Python 项目打架。这一步只创建一次,后面启动系统时只需"激活",不用重建。</p>
+<pre><code><span class="comment"># ① 创建虚拟环境(在项目根目录下执行,只做一次)</span>
+python -m venv venv
+
+<span class="comment"># ② 激活虚拟环境 —— Windows 和 macOS 命令不一样,别搞混!</span>
+
+<span class="comment"># Windows(cmd 或 PowerShell):</span>
+.\venv\Scripts\activate
+
+<span class="comment"># macOS / Linux(Terminal 里):</span>
+source venv/bin/activate</code></pre>
+<p>激活成功的标志:命令行提示符最前面会多出一个 <code>(venv)</code> 字样,例如 <code>(venv) D:\easy_tdx&gt;</code>。看到它,就说明已经进入虚拟环境,后面所有 <code>pip</code>、<code>easy-tdx</code> 命令都会装进 / 跑在这个小房间里,跟系统互不干扰。</p>
+<div class="warn">
+<strong>每次新开命令行窗口,都要重新激活!</strong> 虚拟环境只在当前窗口生效。关掉窗口或新开一个,都得重新执行一次第 ② 步的激活命令。第 ③ 步装依赖只需做一次,不用每次都装。
+</div>
+<div class="tip">
+<strong>macOS 用户注意</strong>:macOS 上 Python 命令一般是 <code>python3</code> 而不是 <code>python</code>。如果第一步创建时报"找不到 python 命令",改用 <code>python3 -m venv venv</code> 即可。
+</div>
+</div>
+
+<div class="step">
+<span class="step-num">3</span><strong>安装项目本体 + Web 服务依赖</strong>
 <pre><code><span class="comment"># 一次性安装项目本体和 Web 服务所需的所有 Python 依赖</span>
 <span class="comment"># 包括 FastAPI、Uvicorn、pandas、numpy 等</span>
 pip install -e ".[web]"</code></pre>
@@ -392,8 +414,8 @@ pip install -e ".[web]"</code></pre>
 </div>
 
 <div class="step">
-<span class="step-num">3</span><strong>验证安装成功</strong>
-<pre><code><span class="comment"># 看到帮助信息就说明安装好了</span>
+<span class="step-num">4</span><strong>验证安装成功</strong>
+<pre><code><span class="comment"># 确保提示符前有 (venv),然后执行(看到帮助信息就说明安装好了)</span>
 easy-tdx --help</code></pre>
 </div>
 
@@ -424,12 +446,19 @@ npm install</code></pre>
 <span class="step-num">1</span><strong>新开一个命令行窗口</strong>
 <p>按 <span class="keyboard">Win</span> + <span class="keyboard">R</span> 输入 <code>cmd</code> 回车,进入项目根目录:</p>
 <pre><code>D:
-cd \easy_tdx</code></pre>
+cd \easy_tdx
+
+<span class="comment"># 重要:新开窗口必须先激活虚拟环境,否则会提示"easy-tdx 不是内部命令"</span>
+<span class="comment"># Windows:</span>
+.\venv\Scripts\activate
+<span class="comment"># macOS:</span>
+<span class="comment"># source venv/bin/activate</span></code></pre>
 </div>
 
 <div class="step">
 <span class="step-num">2</span><strong>启动后端服务</strong>
-<pre><code>easy-tdx serve --port 8000</code></pre>
+<pre><code><span class="comment"># 确认提示符前有 (venv) 再执行</span>
+easy-tdx serve --port 8000</code></pre>
 <p>看到类似下面的输出就成功了:</p>
 <pre><code>INFO:     Uvicorn running on http://0.0.0.0:8000
 INFO:     Application startup complete.</code></pre>
@@ -1261,7 +1290,11 @@ SZ:000858  五粮液</code></pre>
 
 <details>
 <summary>Q1: 启动后端报错 "easy-tdx 不是内部或外部命令"</summary>
-<p>说明 Python 没装好或 PATH 没配置。回到第一章 1.1 重装 Python,务必勾选 "Add Python to PATH"。如果已装,在命令行输入 <code>pip install -e ".[web]"</code>(在项目目录下)重新安装。</p>
+<p>通常是两种情况之一:</p>
+<ol>
+  <li><strong>虚拟环境没激活(最常见)</strong>:你按 2.2 节装在了虚拟环境里,但新开的窗口忘了激活。先 <code>cd</code> 到项目目录,再执行 <code>.\venv\Scripts\activate</code>(macOS 是 <code>source venv/bin/activate</code>),看到提示符前出现 <code>(venv)</code> 再跑 <code>easy-tdx serve</code>。</li>
+  <li><strong>Python 根本没装好或 PATH 没配置</strong>:回到第一章 1.1 重装 Python,务必勾选 "Add Python to PATH"。如果已装,在命令行输入 <code>pip install -e ".[web]"</code>(在项目目录下,激活虚拟环境后)重新安装。</li>
+</ol>
 </details>
 
 <details>
