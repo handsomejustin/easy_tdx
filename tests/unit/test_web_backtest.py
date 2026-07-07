@@ -306,23 +306,38 @@ def test_task_runner_captures_failure():
 
 
 def test_task_runner_lru_eviction():
-    """超过上限应丢弃最旧任务。"""
+    """超过上限应丢弃最旧的非 running 任务。
+
+    注意：淘汰发生在 submit 时，淘汰对象是「当时最旧的非 running 任务」。
+    用 max_workers=1 串行执行时，哪个任务被淘汰取决于提交速度 vs 执行速度
+    的竞态（快机器上 t0 还在 running 会被跳过，慢机器上 t0 已完成会被淘汰）。
+    所以本测试不断言「特定 task_id 被淘汰」，而是验证：
+    (1) 存活的 non-running 任务数 ≤ max_results
+    (2) 最后提交的任务一定存活（它是最近的，不可能被 LRU 淘汰）
+    (3) 至少有 2 个任务被淘汰（5 提交 - 3 上限 = 2）
+    """
     from easy_tdx.web.task_runner import BacktestTaskRunner
 
     runner = BacktestTaskRunner(max_workers=1, max_results=3)
     ids = [runner.submit(lambda: {"i": i}, description=f"t{i}") for i in range(5)]
-    # 等待全部完成
+    # 等待存活的任务全部完成（被淘汰的 peek 返回 None，跳过）
     for _ in range(200):
-        if all(runner.peek(tid) and runner.peek(tid).status in ("done", "failed") for tid in ids):
+        alive = [tid for tid in ids if runner.peek(tid) is not None]
+        if all(runner.peek(tid).status in ("done", "failed") for tid in alive):
             break
         time.sleep(0.02)
 
-    # 前 2 个应被淘汰
-    assert runner.peek(ids[0]) is None
-    assert runner.peek(ids[1]) is None
-    # 后 3 个保留
-    assert runner.peek(ids[2]) is not None
-    assert runner.peek(ids[4]) is not None
+    # 最后提交的任务一定存活（LRU 最近，不可能被淘汰）
+    assert runner.peek(ids[4]) is not None, "最后提交的任务不应被淘汰"
+
+    # 至少淘汰 2 个（5 提交 - max_results 3 = 2）
+    surviving = [tid for tid in ids if runner.peek(tid) is not None]
+    evicted = [tid for tid in ids if runner.peek(tid) is None]
+    assert len(evicted) >= 2, f"应至少淘汰 2 个任务，实际淘汰 {len(evicted)} 个"
+
+    # 存活任务数不超过 max_results（running 完成后）
+    assert len(surviving) <= 3, f"存活任务 {len(surviving)} 超过上限 3"
+
     runner.shutdown()
 
 
