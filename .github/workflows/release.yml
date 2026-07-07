@@ -1,0 +1,93 @@
+name: Release EXE
+
+# 打 tag 时构建 Windows 单 EXE 并发布到 GitHub Release。
+# 与 publish.yml（PyPI）并行独立：即使 PyPI 发布失败，EXE 仍可发布，
+# 提高发布韧性。Phase 1 产物未签名，老人首次运行会被 SmartScreen 拦截，
+# 需手动"更多信息 → 仍要运行"——Phase 2 引入代码签名后解决。
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write  # softprops/action-gh-release 创建 Release 需要
+
+jobs:
+  build-windows:
+    name: Build Windows EXE
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: web-ui/package-lock.json
+
+      # 安装后端（含 [web,packaging] extras：fastapi/uvicorn + pystray/Pillow）
+      - name: Install Python deps
+        run: |
+          pip install -e ".[web,packaging]"
+          pip install pyinstaller
+
+      # 构建前端 → web-ui/dist/，spec 把它打到 EXE 内的 web_dist/
+      - name: Build frontend
+        run: |
+          npm ci
+          npm run build
+        working-directory: web-ui
+
+      - name: Build EXE
+        run: pyinstaller easy_tdx.spec --noconfirm
+
+      # 重命名为带版本号的文件名，方便老人下载时识别
+      - name: Rename EXE with version
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mv dist/easy-tdx.exe "dist/easy-tdx-${VERSION}-windows.exe"
+          ls -lh dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: easy-tdx-windows-exe
+          path: dist/easy-tdx-*-windows.exe
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: easy-tdx-windows-exe
+          path: dist
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/easy-tdx-*-windows.exe
+          generate_release_notes: true
+          body: |
+            ## 下载使用
+
+            1. 下载下方 `easy-tdx-*-windows.exe`（约 80-150MB）
+            2. 双击运行
+            3. 浏览器会自动打开回测界面（地址 `http://localhost:8000`）
+
+            ## ⚠️ SmartScreen 提示
+
+            本版本未做代码签名，首次运行 Windows 会弹出"已保护你的电脑"：
+
+            1. 点击 **更多信息**
+            2. 点击 **仍要运行**
+
+            Phase 2 将引入代码签名消除此提示。

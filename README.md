@@ -446,30 +446,37 @@ easy-tdx portfolio --stocks SZ:000001,SH:600519 \
 
 <img src="./docs/web-ui-page-3.png" alt="Web UI 截图 3" />
 
-不想写命令行？用浏览器。`easy-tdx serve` 启动后端，`web-ui/` 目录跑前端，浏览器打开就是完整的回测可视化界面。
+不想写命令行？用浏览器。`easy-tdx serve` 一条命令启动，浏览器自动打开 `http://localhost:8000`，就是完整的回测可视化界面。
 
 **前置条件：**
 
 ```bash
-# 后端需安装 web 可选依赖（FastAPI + Uvicorn）
+# 需安装 web 可选依赖（FastAPI + Uvicorn）
 pip install -e ".[web]"
-
-# 前端需 Node.js 18+（首次运行需装依赖）
-cd web-ui && npm install
 ```
 
-**启动（两个终端）：**
+**启动（一条命令）：**
 
 ```bash
-# 终端 1：启动后端 API 服务（提供行情数据 + 回测计算）
-easy-tdx serve --port 8000
+# 启动后端 + 自动打开浏览器（默认 http://localhost:8000）
+easy-tdx serve
 
-# 终端 2：启动前端开发服务器（web-ui/ 目录）
-cd web-ui && npm run dev
-# 浏览器打开 http://localhost:5173
+# 自定义端口/不自动开浏览器
+easy-tdx serve --port 8080 --no-open-browser
 ```
 
-> 前端开发服务器通过 Vite proxy 把 `/api` 请求转发到后端 `127.0.0.1:8000`，无需处理跨域。后端行情连接失败时回测路由仍可用（用内联数据），但取行情功能需要后端连通通达信服务器。
+> 后端启动后约 1-2 秒会自动弹出浏览器。前端界面已编译进 `web-ui/dist/`，由后端同源托管，无需单独跑前端开发服务器。后端行情连接失败时回测路由仍可用（用内联数据），但取行情功能需要后端连通通达信服务器。
+
+**不想装 Python？下载 EXE 直接用（面向零基础用户）：**
+
+Windows 用户可以下载打包好的单一 EXE（约 80-150MB），双击即可使用，无需安装 Python/Node 或任何依赖：
+
+1. 到 [Releases 页面](../../releases) 下载最新的 `easy-tdx-<版本>-windows.exe`
+2. 双击运行（首次会被 SmartScreen 拦截，点"更多信息 → 仍要运行"）
+3. 等待 2-5 秒，浏览器自动打开回测界面
+4. 右下角任务栏出现小图标，右键 → "退出" 可关闭
+
+EXE 打包方法见 [`docs/packaging.md`](./docs/packaging.md)。
 
 打开浏览器后，顶部导航栏有五个页面：
 

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
@@ -13,6 +16,41 @@ from fastapi.middleware.cors import CORSMiddleware
 from easy_tdx.web.errors import register_exception_handlers
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_web_dist_dir() -> Path | None:
+    """定位前端构建产物目录（Vite build 输出的 ``web-ui/dist``）。
+
+    依次探测三处，命中即返回，全部缺失时返回 ``None``（开发期未构建前端
+    时正常，路由层照常工作，仅前端页面 404）：
+
+    1. ``EASY_TDX_WEB_DIST`` 环境变量——部署/调试时显式指定。
+    2. PyInstaller 运行态：``sys._MEIPASS / "web_dist"``——单 EXE 解压
+       后的临时目录（``--onefile`` 模式）。开发态无 ``_MEIPASS`` 属性，
+       此分支自动跳过。
+    3. 开发态：仓库根目录的 ``web-ui/dist``——支持 ``pip install -e .``
+       后直接 ``easy-tdx serve`` 调试，无需打包。
+    """
+    env_dir = os.environ.get("EASY_TDX_WEB_DIST")
+    if env_dir:
+        p = Path(env_dir)
+        if p.is_dir():
+            return p
+
+    # PyInstaller --onefile 解压目录（frozen 运行态）
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass is not None:
+        p = Path(meipass) / "web_dist"
+        if p.is_dir():
+            return p
+
+    # 开发态：从 src/easy_tdx/web/app.py 回溯到仓库根的 web-ui/dist
+    repo_root = Path(__file__).resolve().parents[3]
+    p = repo_root / "web-ui" / "dist"
+    if p.is_dir():
+        return p
+
+    return None
 
 
 @asynccontextmanager
@@ -190,5 +228,17 @@ def _create_app(
     app.include_router(backtest_router, prefix="/api/v1")
     # 策略库路由（SQLite 持久化，纯数据 CRUD）
     app.include_router(strategies_router, prefix="/api/v1")
+
+    # --- 前端 dist 托管（生产/打包态同源服务，开发态可缺省） ---
+    # 必须在所有 API 路由注册之后：StaticFiles(html=True) 挂在 "/" 会吞掉
+    # 未匹配路径，放最后保证 /api/v1/* 优先命中路由表。
+    from fastapi.staticfiles import StaticFiles
+
+    dist_dir = _resolve_web_dist_dir()
+    if dist_dir is not None:
+        app.mount("/", StaticFiles(directory=str(dist_dir), html=True), name="web-ui")
+        logger.info("Web UI mounted from %s", dist_dir)
+    else:
+        logger.info("Web UI dist not found — serving API only")
 
     return app
