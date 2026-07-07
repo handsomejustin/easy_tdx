@@ -20,6 +20,9 @@ FK/
 .coverage
 signals.json
 
+# PyInstaller 打包产物（本地产物，不入库）
+*.exe
+
 # 本地独立脚本（不属于 easy_tdx 库，依赖外部 unified_config / sqlalchemy）
 src/easy_tdx/exchange_margin.py
 
