@@ -51,6 +51,17 @@ _T = TypeVar("_T")
 logger = logging.getLogger(__name__)
 
 
+def _coerce_query_date(query_date: int | date | None) -> date | None:
+    """把查询日期统一为 date 对象。
+
+    兼容两种调用方式（与 A 股 MacClient.get_tick_chart 的 YYYYMMDD 整数
+    语义保持一致）：int 视为 YYYYMMDD，date 原样透传，None 表示今天。
+    """
+    if query_date is None or isinstance(query_date, date):
+        return query_date
+    return date(query_date // 10000, (query_date % 10000) // 100, query_date % 100)
+
+
 def _quotes_to_df(result: list[MacQuoteField]) -> pd.DataFrame:
     """将 MacQuoteField 列表展开为 DataFrame。"""
     rows: list[dict[str, Any]] = []
@@ -408,7 +419,7 @@ class MacExClient:
         self,
         market: int,
         code: str,
-        query_date: date | None = None,
+        query_date: int | date | None = None,
     ) -> pd.DataFrame:
         """获取单日分时图。
 
@@ -418,10 +429,12 @@ class MacExClient:
             ExMarket 枚举值。
         code : str
             证券代码。
-        query_date : date | None
-            查询日期，None 表示今天。
+        query_date : int | date | None
+            查询日期：date 对象或 YYYYMMDD 整数，None 表示今天。
         """
-        cmd = SymbolTickChartCmd(market=market, code=code, query_date=query_date)
+        cmd = SymbolTickChartCmd(
+            market=market, code=code, query_date=_coerce_query_date(query_date)
+        )
         result = self._execute(cmd)
         return _to_df(result)
 
@@ -453,7 +466,7 @@ class MacExClient:
         self,
         market: int,
         code: str,
-        query_date: date | None = None,
+        query_date: int | date | None = None,
         start: int = 0,
         count: int = 2000,
     ) -> pd.DataFrame:
@@ -486,13 +499,13 @@ class MacExClient:
         """
         if is_hk_stock_market(market):
             result = _fetch_hk_transactions_sync(
-                self._execute, market, code, query_date, start, count
+                self._execute, market, code, _coerce_query_date(query_date), start, count
             )
             return _to_df(result)
         cmd = SymbolTransactionCmd(
             market=market,
             code=code,
-            query_date=query_date,
+            query_date=_coerce_query_date(query_date),
             start=start,
             count=count,
         )
@@ -824,9 +837,11 @@ class AsyncMacExClient(AsyncHeartbeatMixin):
         self,
         market: int,
         code: str,
-        query_date: date | None = None,
+        query_date: int | date | None = None,
     ) -> pd.DataFrame:
-        cmd = SymbolTickChartCmd(market=market, code=code, query_date=query_date)
+        cmd = SymbolTickChartCmd(
+            market=market, code=code, query_date=_coerce_query_date(query_date)
+        )
         result = await self._execute(cmd)
         return _to_df(result)
 
@@ -849,7 +864,7 @@ class AsyncMacExClient(AsyncHeartbeatMixin):
         self,
         market: int,
         code: str,
-        query_date: date | None = None,
+        query_date: int | date | None = None,
         start: int = 0,
         count: int = 2000,
     ) -> pd.DataFrame:
@@ -859,13 +874,13 @@ class AsyncMacExClient(AsyncHeartbeatMixin):
         """
         if is_hk_stock_market(market):
             result = await _fetch_hk_transactions_async(
-                self._execute, market, code, query_date, start, count
+                self._execute, market, code, _coerce_query_date(query_date), start, count
             )
             return _to_df(result)
         cmd = SymbolTransactionCmd(
             market=market,
             code=code,
-            query_date=query_date,
+            query_date=_coerce_query_date(query_date),
             start=start,
             count=count,
         )
