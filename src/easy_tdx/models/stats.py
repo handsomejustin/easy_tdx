@@ -21,7 +21,12 @@ class MarketStat:
 
 @dataclass
 class FundFlow:
-    """个股资金流向统计（基于 Tick 数据加权计算）。"""
+    """个股资金流向统计（基于逐笔成交重算）。
+
+    口径（Issue #55）：按 0x0fb5 逐笔接口的"单笔成交额"分档——该接口
+    返回的是聚合记录（非交易所真实逐笔，也非挂单额），故 ``main_net_inflow``
+    更接近"主动买卖总失衡"，与东财/同花顺的"主力净流入"不可比。
+    """
 
     # 流入项 (Buy)
     super_in: float  # 超大单流入 (>100万)
@@ -50,7 +55,11 @@ class FundFlow:
 
 @dataclass
 class HistoricalFundFlow:
-    """历史日线资金流向条目。"""
+    """历史日线资金流向条目。
+
+    口径同 ``FundFlow``（Issue #55）：按聚合后单笔成交额分档，与东财/
+    同花顺"主力净流入"不可比。
+    """
 
     year: int
     month: int

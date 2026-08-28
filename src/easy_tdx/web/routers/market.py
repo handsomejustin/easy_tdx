@@ -82,7 +82,10 @@ async def fund_flow(
     code: str = Query(..., min_length=6, max_length=6, description="6位股票代码"),
     client: Any = Depends(get_client),
 ) -> DataFrameResponse:
-    """获取个股当日资金流向。"""
+    """获取个股当日资金流向。
+
+    口径注意：按聚合后单笔成交额分档，与东财/同花顺"主力净流入"不可比（Issue #55）。
+    """
     df = await client.get_fund_flow(market_from_str(market), code)
     return _df_response(df)
 
@@ -95,7 +98,10 @@ async def history_fund_flow(
     count: int = Query(100, ge=1, le=800),
     client: Any = Depends(get_client),
 ) -> DataFrameResponse:
-    """获取个股历史日线资金流向。"""
+    """获取个股历史日线资金流向。
+
+    口径注意：按聚合后单笔成交额分档，与东财/同花顺"主力净流入"不可比（Issue #55）。
+    """
     df = await client.get_history_fund_flow(market_from_str(market), code, start, count)
     return _df_response(df)
 

@@ -1452,6 +1452,8 @@ with TdxClient.from_best_host() as c:
     stat = c.get_market_stat()
 ```
 
+> **资金流口径注意**（Issue #55）：`get_fund_flow` / `get_history_fund_flow` 按 0x0fb5 逐笔接口的"单笔成交额"分档，而该接口返回的记录是交易所真实逐笔**聚合**后的（实测 000001.SZ 单日约 17:1），分档看的也不是挂单额。结果：高价股小单档可不足成交额 1%、主力档常占 95%+，`main_net_inflow` 实质更接近"当日主动买卖总失衡"。东财/同花顺的"主力净流入"基于 L2 逐笔委托、按挂单额分档——两套口径**不可比**（实证同规则选股信号重合度仅约 14%），勿混用于同一张表或同一个因子。
+
 `AsyncTdxClient` 提供对应的 `async def` 方法，接口一一对应。
 
 ### SecurityQuote 字段说明
@@ -1814,8 +1816,8 @@ with MacClient.from_best_host() as client:
 | `get_history_minute_time_data(market, code, date)` | 历史分时 |
 | `get_transaction_data(market, code, ...)` | 当日逐笔成交 |
 | `get_history_transaction_data(...)` | 历史逐笔成交 |
-| `get_fund_flow(market, code)` | 当日资金流向 |
-| `get_history_fund_flow(market, code, ...)` | 历史资金流向 |
+| `get_fund_flow(market, code)` | 当日资金流向（口径注意见上文） |
+| `get_history_fund_flow(market, code, ...)` | 历史资金流向（口径注意见上文） |
 | `get_xdxr_info(market, code)` | 除权除息历史 |
 | `get_finance_info(market, code)` | 最新财务数据 |
 | `get_company_info_category(market, code)` | 公司信息目录 |

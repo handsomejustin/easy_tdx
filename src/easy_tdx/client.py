@@ -893,6 +893,14 @@ class TdxClient:
         """获取个股当日资金流向分布（基于 L1 逐笔数据统计）。
 
         返回列含 ``main_net_inflow``（主力净流入，单位元）。
+
+        口径限制（Issue #55）：分档基于 0x0fb5 逐笔接口返回的"单笔成交额"，
+        而该接口的记录是交易所真实逐笔**聚合**后的（实测 000001.SZ 单日
+        约 17:1），且分档看的是成交额、不是挂单额。高价股单笔普遍被聚合
+        推过 100 万/20 万阈值，小单档可不足成交额 1%、主力档常占 95%+——
+        ``main_net_inflow`` 实质更接近"当日主动买卖总失衡"，与东财/同花顺
+        基于 L2 逐笔委托挂单额的"主力净流入"**不可比**，勿混用于同一张
+        表或同一个因子。
         """
         records = self._collect_transaction_records(
             lambda start, page_size: self._execute(
@@ -952,6 +960,14 @@ class TdxClient:
         此前直接返回空 DataFrame，用户拿不到数据；现复用 K 线故障转移的同源逻辑。
         注意：真·无历史数据（如新股）所有服务器都返回空，此时换台仍为空，直接
         返回空 DataFrame 而非 raise——避免把"该股票本就没数据"误报为故障。
+
+        口径限制（Issue #55）：分档基于 0x0fb5 逐笔接口返回的"单笔成交额"，
+        而该接口的记录是交易所真实逐笔**聚合**后的（实测 000001.SZ 单日
+        约 17:1），且分档看的是成交额、不是挂单额。高价股单笔普遍被聚合
+        推过 100 万/20 万阈值，小单档可不足成交额 1%、主力档常占 95%+——
+        ``main_net_inflow`` 实质更接近"当日主动买卖总失衡"，与东财/同花顺
+        基于 L2 逐笔委托挂单额的"主力净流入"**不可比**，勿混用于同一张
+        表或同一个因子（实证两口径选股信号重合度仅约 14%）。
         """
         results = self._fetch_fund_flow_records(market, code, start, count)
         # 空数据故障转移：与 get_security_bars / get_index_bars 同源逻辑。
@@ -1562,9 +1578,11 @@ class AsyncTdxClient(AsyncHeartbeatMixin):
         return all_recs
 
     async def get_fund_flow(self, market: Market, code: str) -> pd.DataFrame:
-        """获取个股当日资金流向分布（基于 L1 逐笔数据统计）。
+        """获取个股当日资金流向分布（基于 L1 逐笔数据统计，async）。
 
         返回列含 ``main_net_inflow``（主力净流入，单位元）。
+        口径限制同同步版（Issue #55）：0x0fb5 逐笔为聚合记录、按成交额而非
+        挂单额分档，值更接近"主动买卖总失衡"，与东财/同花顺不可比。
         """
         records = await self._collect_transaction_records(
             lambda start, page_size: self._execute(
@@ -1613,6 +1631,9 @@ class AsyncTdxClient(AsyncHeartbeatMixin):
 
         实现："日 K 线取日期 + 逐笔成交重算资金流"；当日 bar 盘中走当日实时
         逐笔接口。返回列含 ``main_net_inflow``（主力净流入，单位元）。
+
+        口径限制同同步版（Issue #55）：0x0fb5 逐笔为聚合记录、按成交额而非
+        挂单额分档，值更接近"主动买卖总失衡"，与东财/同花顺不可比。
 
         空数据故障转移（v1.20.5，Issue #41）：当前 host 无 K 线数据时，
         按延迟顺序逐台实测找首台返回有效数据的服务器。
