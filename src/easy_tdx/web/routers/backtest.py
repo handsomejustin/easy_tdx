@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 import pandas as pd
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from easy_tdx.web.backtest_schemas import (
     BacktestRequest,
@@ -77,6 +77,7 @@ async def run_backtest(req: BacktestRequest) -> BacktestResultResponse:
 @router.post("/backtest/run/async", response_model=TaskSubmitResponse, status_code=202)
 async def run_backtest_async(
     req: BacktestRequest,
+    request: Request,
     client: Any = Depends(get_client),
 ) -> TaskSubmitResponse:
     """提交后台回测任务，立即返回 task_id。
@@ -89,7 +90,7 @@ async def run_backtest_async(
         df = _ohlcv_to_df(req.ohlcv)
         bars_desc = f"{len(df)} 根"
     elif req.symbol is not None:
-        df = await _fetch_bars(client, req.symbol, req.category, req.count)
+        df = await _fetch_bars(request, client, req.symbol, req.category, req.count)
         bars_desc = f"{req.symbol} {req.category}×{req.count}"
     else:
         # BacktestRequest 校验器已保证二者至少其一，此处不可达
@@ -155,6 +156,7 @@ async def get_task(task_id: str) -> TaskStateResponse:
 @router.post("/backtest/portfolio/run/async", response_model=TaskSubmitResponse, status_code=202)
 async def run_portfolio_backtest_async(
     req: PortfolioBacktestRequest,
+    request: Request,
     client: Any = Depends(get_client),
 ) -> TaskSubmitResponse:
     """提交组合（多标的）回测后台任务。
@@ -164,7 +166,7 @@ async def run_portfolio_backtest_async(
     """
     # 1. 逐个标的取行情（async 上下文内）
     stock_data_list = await _fetch_portfolio_bars(
-        client, req.stocks, req.category, req.start_date, req.end_date
+        request, client, req.stocks, req.category, req.start_date, req.end_date
     )
     if not stock_data_list:
         raise ValueError("所有标的均未取到有效行情数据")
@@ -192,6 +194,7 @@ async def run_portfolio_backtest_async(
 )
 async def run_multi_strategy_backtest_async(
     req: MultiStrategyBacktestRequest,
+    request: Request,
     client: Any = Depends(get_client),
 ) -> TaskSubmitResponse:
     """提交多策略组合回测后台任务（资金分仓 / 并行制）。
@@ -200,7 +203,7 @@ async def run_multi_strategy_backtest_async(
     单个策略取数失败则跳过（不中断整组），全部失败返回 400。结果为
     MultiStrategyResult（结构同 PortfolioResult），通过 GET /backtest/tasks/{task_id} 轮询。
     """
-    slots = await _fetch_multi_strategy_bars(client, req.items)
+    slots = await _fetch_multi_strategy_bars(request, client, req.items)
     if not slots:
         raise ValueError("所有策略槽位均未取到有效行情数据")
 
@@ -220,6 +223,7 @@ async def run_multi_strategy_backtest_async(
 @router.post("/backtest/optimize/run/async", response_model=TaskSubmitResponse, status_code=202)
 async def run_optimize_async(
     req: OptimizeBacktestRequest,
+    request: Request,
     client: Any = Depends(get_client),
 ) -> TaskSubmitResponse:
     """提交参数网格寻优后台任务。
@@ -232,7 +236,7 @@ async def run_optimize_async(
         df = _ohlcv_to_df(req.ohlcv)
         desc_bars = f"{len(df)} 根"
     elif req.symbol is not None:
-        df = await _fetch_bars(client, req.symbol, req.category, 800)
+        df = await _fetch_bars(request, client, req.symbol, req.category, 800)
         desc_bars = f"{req.symbol}"
         if req.start_date or req.end_date:
             df = _filter_df_by_date(df, req.start_date, req.end_date)
@@ -263,6 +267,7 @@ async def run_optimize_async(
 @router.post("/backtest/optimize-all/run/async", response_model=TaskSubmitResponse, status_code=202)
 async def run_optimize_all_async(
     req: OptimizeAllBacktestRequest,
+    request: Request,
     client: Any = Depends(get_client),
 ) -> TaskSubmitResponse:
     """提交「一键寻优所有策略」后台任务。
@@ -276,7 +281,7 @@ async def run_optimize_all_async(
         df = _ohlcv_to_df(req.ohlcv)
         desc_bars = f"{len(df)} 根"
     elif req.symbol is not None:
-        df = await _fetch_bars(client, req.symbol, req.category, 800)
+        df = await _fetch_bars(request, client, req.symbol, req.category, 800)
         desc_bars = f"{req.symbol}"
         if req.start_date or req.end_date:
             df = _filter_df_by_date(df, req.start_date, req.end_date)
@@ -383,19 +388,19 @@ def _ohlcv_to_df(records: list[dict[str, Any]]) -> pd.DataFrame:
     return df
 
 
-async def _fetch_bars(client: Any, symbol: str, category: str, count: int) -> pd.DataFrame:
-    """按标的取 K 线（async，必须在 event loop 内调用）。"""
-    from easy_tdx.web.convert import category_from_str, market_from_str
+async def _fetch_bars(
+    request: Any,
+    client: Any,
+    symbol: str,
+    category: str,
+    count: int,
+) -> pd.DataFrame:
+    """按标的取 K 线（async，必须在 event loop 内调用）。
 
-    market_str, code = symbol.split(":", 1)
-    df = await client.get_security_bars(
-        market_from_str(market_str),
-        code,
-        category_from_str(category),
-        0,
-        count,
-    )
-    if len(df) == 0:
+    支持 A 股 / 扩展市场（--enable-ex）/ 加密货币（CRYPTO:xxx，自动缩放）。
+    """
+    df = await _fetch_bars_for_symbol(request, client, symbol, category, count)
+    if df is None or len(df) == 0:
         raise ValueError(f"标的 {symbol} 未取到任何 K 线数据")
     return df
 
@@ -427,7 +432,128 @@ def _run_portfolio_backtest(
     return serialize_result(result)
 
 
+# 加密货币 K 线周期：前端 Category → Binance interval
+_CRYPTO_INTERVALS: dict[str, str] = {
+    "MIN_1": "1m",
+    "MIN_5": "5m",
+    "MIN_15": "15m",
+    "MIN_30": "30m",
+    "MIN_60": "1h",
+    "DAY": "1d",
+    "WEEK": "1w",
+    "MONTH": "1M",
+}
+
+
+def _crypto_price_scale(df: pd.DataFrame) -> pd.DataFrame:
+    """高价加密标的按最新价位数等比缩放价格（÷10^n 到 A 股价位）。
+
+    回测引擎按 A 股整手（100 股）成交：BTC ~8 万美元时默认现金买不起整手。
+    等比缩放下比率类指标（收益/胜率/回撤/夏普）数学不变，等效复权。
+    """
+    if df.empty:
+        return df
+    last = float(df.iloc[-1]["close"])
+    if last <= 0:
+        return df
+    digits = len(str(int(last)))
+    scale = 10 ** max(0, digits - 3)
+    if scale <= 1:
+        return df
+    out = df.copy()
+    for col in ("open", "high", "low", "close"):
+        out[col] = out[col] / scale
+    return out
+
+
+async def _fetch_bars_for_symbol(
+    request: Any,
+    tdx_client: Any,
+    symbol: str,
+    category: str,
+    count: int = 800,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> pd.DataFrame | None:
+    """按市场前缀路由取 K 线：A 股（TdxClient）/ ex 市场（AsyncMacExClient）/ CRYPTO（Binance）。
+
+    取数失败返回 None（由调用方决定跳过或报错）。ex 市场需要 serve 以 --enable-ex 启动。
+    """
+    from easy_tdx.web.convert import (
+        category_from_str,
+        ex_market_from_str,
+        market_from_str,
+        period_times_from_category,
+    )
+
+    market_str, code = symbol.split(":", 1)
+    market_key = market_str.upper()
+    # 扩展市场客户端未启用属配置错误，直接抛出（区别于数据取数失败静默跳过）
+    if market_key not in ("SZ", "SH", "BJ", "CRYPTO"):
+        ex_client: Any | None = request.app.state.ex_client
+        if ex_client is None:
+            raise ValueError(
+                f"标的 {symbol} 属于扩展市场，但扩展市场客户端未启用；"
+                "请以 --enable-ex 启动 easy-tdx serve"
+            )
+    try:
+        if market_key in ("SZ", "SH", "BJ"):
+            # A 股：逐页拉取（最多 8000 根），覆盖 start_date
+            frames: list[pd.DataFrame] = []
+            for page in range(10):
+                page_df = await tdx_client.get_security_bars(
+                    market_from_str(market_key),
+                    code,
+                    category_from_str(category),
+                    page * 800,
+                    800,
+                )
+                if len(page_df) == 0:
+                    break
+                frames.append(page_df)
+                if start_date and len(page_df) > 0:
+                    dt_col = "datetime" if "datetime" in page_df.columns else "date"
+                    oldest = str(page_df[dt_col].iloc[-1])[:10]
+                    if oldest <= start_date:
+                        break
+                if len(page_df) < 800:
+                    break
+            if not frames:
+                return None
+            df = pd.concat(frames, ignore_index=True)
+            df = _filter_df_by_date(df, start_date, end_date)
+            return df
+
+        if market_key == "CRYPTO":
+            # 加密货币：Binance 现货（最近 count 根），自动价格缩放
+            from easy_tdx.crypto import AsyncCryptoClient
+
+            interval = _CRYPTO_INTERVALS.get(category.upper(), "1d")
+            df = await AsyncCryptoClient().klines(code, interval=interval, limit=min(count, 1000))
+            if df.empty:
+                return None
+            df = _crypto_price_scale(df)
+            return _filter_df_by_date(df, start_date, end_date)
+
+        # 扩展市场（美股/港股/期货）：MAC 协议 goods_kline
+        assert ex_client is not None  # 上方已校验未启用即抛出
+        period = period_times_from_category(category_from_str(category))[0]
+        df = await ex_client.goods_kline(
+            market=ex_market_from_str(market_key),
+            code=code,
+            period=period,
+            start=0,
+            count=count,
+        )
+        if df is None or df.empty:
+            return None
+        return _filter_df_by_date(df, start_date, end_date)
+    except Exception:
+        return None
+
+
 async def _fetch_portfolio_bars(
+    request: Any,
     client: Any,
     stocks: list[str],
     category: str,
@@ -436,59 +562,22 @@ async def _fetch_portfolio_bars(
 ) -> list[Any]:
     """逐个标的取 K 线并组装 StockData 列表（async，必须在 event loop 内调用）。
 
-    当 start_date 超出单次 800 根覆盖范围时，自动翻页拉取（与前端 fetchBars
-    同逻辑）。单个标的取数失败时跳过（不中断整个组合），全部失败返回空列表。
+    支持 A 股（SZ/SH/BJ）、扩展市场（US_STOCK/HK_MAIN_BOARD/期货等，需 --enable-ex）
+    与加密货币（CRYPTO:xxx，自动价格缩放）。单个标的取数失败时跳过（不中断
+    整个组合），全部失败返回空列表。
     """
     from easy_tdx.backtest.portfolio_engine import StockData
-    from easy_tdx.web.convert import category_from_str, market_from_str
 
-    max_pages = 10  # 翻页上限：10 × 800 = 8000 根
     stock_data_list: list[StockData] = []
     for symbol in stocks:
         market_str, code = symbol.split(":", 1)
-        frames: list[pd.DataFrame] = []
-        for page in range(max_pages):
-            try:
-                page_df = await client.get_security_bars(
-                    market_from_str(market_str),
-                    code,
-                    category_from_str(category),
-                    page * 800,
-                    800,
-                )
-            except Exception:
-                break  # 单页失败则停止该标的的翻页
-            if len(page_df) == 0:
-                break
-            frames.append(page_df)
-            # 已覆盖到 start_date（本页最早一根 ≤ start_date）则停止
-            if start_date and len(page_df) > 0:
-                dt_col = "datetime" if "datetime" in page_df.columns else "date"
-                oldest = str(page_df[dt_col].iloc[-1])[:10]
-                if oldest <= start_date:
-                    break
-            if len(page_df) < 800:
-                break  # 数据起点
-
-        if not frames:
+        try:
+            df = await _fetch_bars_for_symbol(
+                request, client, symbol, category, 800, start_date, end_date
+            )
+        except Exception:
             continue
-        df = pd.concat(frames, ignore_index=True)
-        # 列名归一化：日线返回 date，分钟线返回 datetime
-        if "datetime" not in df.columns and "date" in df.columns:
-            df = df.copy()
-            df["datetime"] = df["date"]
-        # 翻页拼接后按时间正序排序（页间逆序）
-        df = df.sort_values("datetime").reset_index(drop=True)
-        # 日期范围过滤
-        if start_date or end_date:
-            dt_str = df["datetime"].astype(str).str.slice(0, 10)
-            mask = pd.Series(True, index=df.index)
-            if start_date:
-                mask &= dt_str >= start_date
-            if end_date:
-                mask &= dt_str <= end_date
-            df = df[mask]
-        if len(df) < 2:
+        if df is None or len(df) < 2:
             continue
         stock_data_list.append(
             StockData(code=code, market=market_str, df=df.reset_index(drop=True))
@@ -497,18 +586,19 @@ async def _fetch_portfolio_bars(
 
 
 async def _fetch_multi_strategy_bars(
+    request: Any,
     client: Any,
     items: list[Any],
 ) -> list[Any]:
     """逐个策略槽位取行情 + 构造策略实例，组装 StrategySlot 列表（async）。
 
-    每条 item 自带 symbol（如 "SH:601088"）、category、start/end_date、strategy+params。
+    每条 item 自带 symbol（如 "SH:601088" / "CFFEX_FUTURES:IFL0" /
+    "CRYPTO:BTCUSDT"）、category、start/end_date、strategy+params。
     单条取数或策略构造失败则跳过（不中断整组）。返回的 StrategySlot 已绑定好策略
     实例与 df，可直接交给后台线程跑引擎（避免把 async client 带进线程）。
     """
     from easy_tdx.backtest.multi_strategy_engine import StrategySlot
     from easy_tdx.backtest.strategies import get_registry
-    from easy_tdx.web.convert import category_from_str, market_from_str
 
     registry = get_registry()
     slots: list[StrategySlot] = []
@@ -518,41 +608,20 @@ async def _fetch_multi_strategy_bars(
             entry = registry.get(item.strategy)
         except KeyError:
             continue
-        # 2. 逐页取行情（覆盖 start_date，最多 10 页 = 8000 根）
-        market_str, code = item.symbol.split(":", 1)
-        frames: list[pd.DataFrame] = []
-        for page in range(10):
-            try:
-                page_df = await client.get_security_bars(
-                    market_from_str(market_str),
-                    code,
-                    category_from_str(item.category),
-                    page * 800,
-                    800,
-                )
-            except Exception:
-                break
-            if len(page_df) == 0:
-                break
-            frames.append(page_df)
-            if item.start_date and len(page_df) > 0:
-                dt_col = "datetime" if "datetime" in page_df.columns else "date"
-                oldest = str(page_df[dt_col].iloc[-1])[:10]
-                if oldest <= item.start_date:
-                    break
-            if len(page_df) < 800:
-                break
-        if not frames:
+        # 2. 按市场路由取行情（A 股 / ex / 加密）
+        try:
+            df = await _fetch_bars_for_symbol(
+                request,
+                client,
+                item.symbol,
+                item.category,
+                800,
+                item.start_date,
+                item.end_date,
+            )
+        except Exception:
             continue
-        df = pd.concat(frames, ignore_index=True)
-        if "datetime" not in df.columns and "date" in df.columns:
-            df = df.copy()
-            df["datetime"] = df["date"]
-        df = df.sort_values("datetime").reset_index(drop=True)
-        # 日期范围过滤
-        if item.start_date or item.end_date:
-            df = _filter_df_by_date(df, item.start_date, item.end_date)
-        if len(df) < 2:
+        if df is None or len(df) < 2:
             continue
         # 3. 构造策略实例（参数非法跳过该条）
         try:

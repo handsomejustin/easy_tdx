@@ -6,8 +6,8 @@
 
 import { computed, ref } from 'vue'
 
-import { fetchBars, formatError } from '../api'
-import { detectMarket, marketLabel } from '../market'
+import { CRYPTO_INTERVALS, fetchBars, fetchCryptoBars, fetchExBars, formatError } from '../api'
+import { MARKET_OPTIONS, detectExMarket, detectMarket, exMarketParam, marketLabel } from '../market'
 import { useBacktestStore } from '../stores/backtest'
 import type { Category } from '../types'
 
@@ -29,6 +29,8 @@ const startDate = defineModel<string>('startDate', {
 const endDate = defineModel<string>('endDate', {
   default: new Date().toISOString().slice(0, 10),
 })
+// 市场选择：'auto' = 按代码自动识别（A股/港股/美股）；显式指定时覆盖自动识别
+const marketSel = defineModel<string>('marketSel', { default: 'auto' })
 
 const error = ref('')
 // loading 由父组件控制（回测/寻优时驱动），组件自身只暴露 loadBars
@@ -36,17 +38,67 @@ const loading = ref(false)
 
 const CATEGORIES: Category[] = ['DAY', 'WEEK', 'MONTH', 'MIN_5', 'MIN_15', 'MIN_30', 'MIN_60']
 
-// 智能识别的市场（用于提示展示）
-const detectedMarket = computed(() => (code.value && /^\d{6}$/.test(code.value)
-  ? marketLabel(detectMarket(code.value))
-  : ''))
+// 市场选择项：与 StocksPicker 共用 market.ts 的 MARKET_OPTIONS
+
+// 智能识别的市场（用于提示展示）：A 股 6 位数字 / 港股 5 位数字 / 美股字母代码
+const exMarket = computed(() => detectExMarket(code.value))
+const isAShare = computed(() => /^\d{6}$/.test(code.value))
+const detectedMarket = computed(() => {
+  if (marketSel.value !== 'auto') {
+    return MARKET_OPTIONS.find((o) => o.value === marketSel.value)?.label ?? ''
+  }
+  if (isAShare.value) return marketLabel(detectMarket(code.value))
+  if (exMarket.value) return marketLabel(exMarket.value)
+  return ''
+})
+
+/** 生效的市场类型（供父组件做回测拦截等决策）。
+ * 'A' = A股；'HK'/'US' = 港股/美股（仅行情）；'FUT' = 国内期货（可回测）；
+ * 'CRYPTO' = 加密货币（可回测，现货做多）。
+ */
+const marketType = computed<'A' | 'HK' | 'US' | 'FUT' | 'CRYPTO' | null>(() => {
+  const sel = marketSel.value
+  if (sel === 'CRYPTO') return 'CRYPTO'
+  if (sel === 'HK' || sel === 'US') return sel
+  if (sel === 'auto') {
+    if (/^\d{6}$/.test(code.value.trim())) return 'A'
+    return detectExMarket(code.value)
+  }
+  return 'FUT'
+})
+
+/** 生效的市场标识（/ex/* 用，如 CFFEX_FUTURES；加密为 CRYPTO）；A 股时为 null。 */
+const marketName = computed(() => {
+  const sel = marketSel.value
+  if (sel === 'CRYPTO') return 'CRYPTO'
+  if (sel === 'HK' || sel === 'US') return exMarketParam(sel)
+  if (sel === 'auto') {
+    const ex = detectExMarket(code.value)
+    return ex ? exMarketParam(ex) : null
+  }
+  return sel === 'auto' ? null : sel
+})
 
 /** 取行情（由父组件在点击「开始回测/开始寻优」时调用）。
- * 成功返回 true，失败返回 false（并把错误写入 store.error 供父组件感知）。 */
+ * 成功返回 true，失败返回 false（并把错误写入 store.error 供父组件感知）。
+ *
+ * 支持三类标的：
+ *   - A 股：6 位数字，走 /bars（分页 + 日期过滤）
+ *   - 港股：5 位数字（如 00700），走 /ex/bars（最近 count 根）
+ *   - 美股：1-5 位字母（如 TSLA），走 /ex/bars（最近 count 根）
+ */
 async function loadBars(): Promise<boolean> {
-  // 基本校验
-  if (!/^\d{6}$/.test(code.value)) {
-    error.value = '股票代码必须是 6 位数字'
+  const sel = marketSel.value
+  const trimmed = code.value.trim()
+  // 基本校验：auto 模式按格式识别；显式市场模式只要求非空
+  if (sel === 'auto') {
+    if (!/^\d{6}$/.test(trimmed) && !/^\d{5}$/.test(trimmed) && !/^[A-Za-z]{1,5}$/.test(trimmed)) {
+      error.value = '代码格式不正确：A股 6 位数字 / 港股 5 位数字 / 美股 1-5 位字母（期货请选择市场）'
+      store.error = error.value
+      return false
+    }
+  } else if (!trimmed) {
+    error.value = '请输入代码'
     store.error = error.value
     return false
   }
@@ -59,10 +111,61 @@ async function loadBars(): Promise<boolean> {
   loading.value = true
   error.value = ''
   try {
-    const market = detectMarket(code.value)
+    // 加密货币：走 /api/v1/crypto/bars（Binance 现货）
+    if (marketSel.value === 'CRYPTO') {
+      const sym = trimmed.toUpperCase().replace(/[\/\-_]/g, '')
+      const interval = CRYPTO_INTERVALS[category.value] ?? '1d'
+      const bars = await fetchCryptoBars(sym, interval)
+      if (bars.length < 2) {
+        error.value = `仅取到 ${bars.length} 根 K 线`
+        store.error = error.value
+        return false
+      }
+      // 回测引擎按 A 股整手（100 股）成交：BTC 等高价标的需要现金 ≥ 价格×100。
+      // 按最新价位数缩放价格（÷10^n）到 A 股价位——收益/胜率/回撤等比率类
+      // 指标在等比缩放下数学不变，等效复权处理。
+      const lastClose = bars[bars.length - 1]?.close ?? 0
+      const digits = lastClose > 0 ? Math.floor(Math.log10(lastClose)) + 1 : 1
+      const scale = Math.pow(10, Math.max(0, digits - 3))
+      const scaledBars =
+        scale > 1
+          ? bars.map((b) => ({
+              ...b,
+              open: b.open / scale,
+              high: b.high / scale,
+              low: b.low / scale,
+              close: b.close / scale,
+            }))
+          : bars
+      store.setOhlcv(
+        scaledBars,
+        `CRYPTO:${sym} ${category.value} 最近${bars.length}根` +
+          (scale > 1 ? `（价格÷${scale} 缩放）` : ''),
+      )
+      store.clearResult()
+      return true
+    }
+
+    // 显式选择市场（港股/美股/期货）或 auto 识别到 ex 市场：走 /ex/bars
+    const mkt = marketName.value
+    if (mkt) {
+      const exCode = trimmed.toUpperCase()
+      const bars = await fetchExBars(mkt, exCode, category.value)
+      if (bars.length < 2) {
+        error.value = `仅取到 ${bars.length} 根 K 线`
+        store.error = error.value
+        return false
+      }
+      store.setOhlcv(bars, `${mkt}:${exCode} ${category.value} 最近${bars.length}根`)
+      store.clearResult()
+      return true
+    }
+
+    // A 股：分页 + 日期过滤
+    const market = detectMarket(trimmed)
     const bars = await fetchBars(
       market,
-      code.value,
+      trimmed,
       category.value,
       startDate.value,
       endDate.value,
@@ -73,7 +176,7 @@ async function loadBars(): Promise<boolean> {
       return false
     }
     const range = `${startDate.value} ~ ${endDate.value}`
-    store.setOhlcv(bars, `${market}:${code.value} ${category.value} ${range}`)
+    store.setOhlcv(bars, `${market}:${trimmed} ${category.value} ${range}`)
     store.clearResult()
     return true
   } catch (e) {
@@ -86,7 +189,7 @@ async function loadBars(): Promise<boolean> {
 }
 
 // 暴露给父组件（BacktestView / OptimizeView）在「开始回测/寻优」时串联调用
-defineExpose({ loadBars, loading })
+defineExpose({ loadBars, loading, marketType, marketName })
 </script>
 
 <template>
@@ -95,11 +198,29 @@ defineExpose({ loadBars, loading })
       <label>代码</label>
       <input
         v-model="code"
-        maxlength="6"
-        placeholder="6位代码（市场自动识别）"
+        maxlength="10"
+        placeholder="A股6位/港股5位/美股字母（自动识别）"
       />
       <span v-if="detectedMarket" class="market-tag">{{ detectedMarket }}</span>
     </div>
+
+    <div class="field">
+      <label>市场</label>
+      <select v-model="marketSel">
+        <option v-for="o in MARKET_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
+      </select>
+    </div>
+
+    <p v-if="marketType === 'HK' || marketType === 'US'" class="hint">
+      美股/港股仅支持行情查看（最近 700 根），暂不支持回测
+    </p>
+    <p v-else-if="marketType === 'FUT'" class="hint">
+      期货支持回测（最近 700 根）；费用按股票模型计算，印花税请设为 0
+    </p>
+    <p v-else-if="marketType === 'CRYPTO'" class="hint">
+      加密货币现货：24/7 交易，回测按现货做多模型（无涨跌停/印花税）；
+      高价标的价格自动缩放（比率类指标不受影响）
+    </p>
 
     <div class="field">
       <label>周期</label>
@@ -143,6 +264,11 @@ defineExpose({ loadBars, loading })
   border: 1px solid var(--border);
   padding: 1px 6px;
   border-radius: 3px;
+}
+.hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 6px;
 }
 .err {
   color: var(--up);

@@ -95,16 +95,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             mac_client = None
     app.state.mac_client = mac_client
 
-    # --- 扩展市场客户端（可选） ---
+    # --- 扩展市场客户端（可选，MAC 协议：美股/港股/期货） ---
+    # 注意：ex 扩展协议客户端（AsyncExTdxClient）对美股等市场支持不全（TSLA
+    # 请求超时），这里与 CLI 的 `easy-tdx ex` 一致，使用 AsyncMacExClient。
     ex_client = None
     enable_ex = getattr(app.state, "enable_ex", False)
     if enable_ex:
         try:
-            from easy_tdx.ex.client import AsyncExTdxClient
+            from easy_tdx.ex.mac_client import AsyncMacExClient
 
-            ex_client = AsyncExTdxClient.from_best_host()
+            ex_client = AsyncMacExClient.from_best_host()
             await ex_client.connect()
-            logger.info("Ex market client connected")
+            logger.info("Ex market (MAC) client connected")
         except Exception:
             logger.warning("Ex market client connection failed — Ex endpoints will return 503")
             ex_client = None
@@ -204,6 +206,7 @@ def _create_app(
     from easy_tdx.web.routers.block import router as block_router
     from easy_tdx.web.routers.board_mac import router as board_mac_router
     from easy_tdx.web.routers.chanlun import router as chanlun_router
+    from easy_tdx.web.routers.crypto import router as crypto_router
     from easy_tdx.web.routers.ex_market import router as ex_market_router
     from easy_tdx.web.routers.finance import router as finance_router
     from easy_tdx.web.routers.indicator import router as indicator_router
@@ -220,6 +223,7 @@ def _create_app(
     app.include_router(finance_router, prefix="/api/v1")
     app.include_router(block_router, prefix="/api/v1")
     app.include_router(chanlun_router, prefix="/api/v1")
+    app.include_router(crypto_router, prefix="/api/v1")
     app.include_router(realtime_router, prefix="/api/v1")
     # MAC 协议路由
     app.include_router(board_mac_router, prefix="/api/v1")

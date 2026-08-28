@@ -1,10 +1,9 @@
 <script setup lang="ts">
-// 多标的输入（组合回测用）。逐个添加 6 位代码，市场自动识别。
-// 删除手动市场选择（沪市/深市/北交所），由 detectMarket 智能匹配。
+// 多标的输入（组合回测用）。支持 A 股（自动识别）+ 港股/美股/期货/加密货币。
 
 import { computed, ref } from 'vue'
 
-import { detectMarket, marketLabel } from '../market'
+import { MARKET_OPTIONS, detectMarket as detectMarketSafe, marketLabel, marketPrefix } from '../market'
 
 const props = defineProps<{
   modelValue: string[]
@@ -12,13 +11,22 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [value: string[]] }>()
 
 const code = ref('')
-const detectedMarket = computed(() => (code.value && /^\d{6}$/.test(code.value)
-  ? marketLabel(detectMarket(code.value))
-  : ''))
+const marketSel = ref('auto')
+
+const detectedMarket = computed(() => {
+  if (marketSel.value !== 'auto') {
+    return MARKET_OPTIONS.find((o) => o.value === marketSel.value)?.label ?? ''
+  }
+  const c = code.value.trim()
+  if (/^\d{6}$/.test(c)) return marketLabel(detectMarketSafe(c))
+  if (/^\d{5}$/.test(c)) return '港股'
+  if (/^[A-Za-z]{1,5}$/.test(c)) return '美股'
+  return ''
+})
 
 function add() {
-  if (!/^\d{6}$/.test(code.value)) return
-  const sym = `${detectMarket(code.value)}:${code.value}`
+  const sym = marketPrefix(marketSel.value, code.value)
+  if (!sym) return
   if (!props.modelValue.includes(sym)) {
     emit('update:modelValue', [...props.modelValue, sym])
   }
@@ -33,10 +41,13 @@ function remove(sym: string) {
 <template>
   <div class="stocks-picker">
     <div class="row add-row">
+      <select v-model="marketSel" class="market-sel">
+        <option v-for="o in MARKET_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
+      </select>
       <input
         v-model="code"
-        maxlength="6"
-        placeholder="6位代码（市场自动识别）"
+        maxlength="10"
+        placeholder="代码（A股6位/港股5位/美股字母/期货/加密）"
         @keyup.enter="add"
       />
       <button @click="add">添加</button>
@@ -60,6 +71,9 @@ function remove(sym: string) {
 }
 .add-row input {
   flex: 1;
+}
+.market-sel {
+  max-width: 130px;
 }
 .market-hint {
   color: var(--text-dim);

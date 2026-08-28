@@ -33,6 +33,7 @@ function isoDaysFromNow(days: number): string {
 }
 const startDate = ref('2020-01-06')
 const endDate = ref(isoDaysFromNow(0))
+const marketSel = ref('auto')
 
 const strategy = ref('ma_cross')
 const paramGrid = ref<Record<string, Array<number | string>>>({})
@@ -104,12 +105,19 @@ async function onRun() {
   // 1. 先取行情
   const ok = await symbolPicker.value?.loadBars()
   if (!ok) return
+  // 港股/美股仅支持行情查看，禁止寻优（期货等 ex 市场可寻优）
+  const mt = symbolPicker.value?.marketType
+  if (mt === 'HK' || mt === 'US') {
+    store.error = '美股/港股仅支持行情查看（K线展示），暂不支持参数寻优'
+    return
+  }
   // 取行情成功 → 冻结本次寻优真正使用的标的上下文，供「查看」拼 URL（存 store，跨路由保留）
   store.setOptimizeContext({
     code: code.value,
     category: category.value,
     startDate: startDate.value,
     endDate: endDate.value,
+    marketSel: marketSel.value,
   })
   // 2. 校验寻优参数
   if (Object.keys(paramGrid.value).length === 0) {
@@ -136,12 +144,19 @@ async function onRunAll() {
   // 1. 先取行情
   const ok = await symbolPicker.value?.loadBars()
   if (!ok) return
+  // 港股/美股仅支持行情查看，禁止寻优（期货等 ex 市场可寻优）
+  const mt = symbolPicker.value?.marketType
+  if (mt === 'HK' || mt === 'US') {
+    store.error = '美股/港股仅支持行情查看（K线展示），暂不支持参数寻优'
+    return
+  }
   // 取行情成功 → 冻结本次寻优真正使用的标的上下文，供「查看」拼 URL（存 store，跨路由保留）
   store.setOptimizeContext({
     code: code.value,
     category: category.value,
     startDate: startDate.value,
     endDate: endDate.value,
+    marketSel: marketSel.value,
   })
   // 2. 一键寻优
   await store.runOptimizeAll({
@@ -166,6 +181,7 @@ function buildBacktestQuery(strategyName: string, params: Record<string, number 
     startDate: ctx?.startDate ?? '',
     endDate: ctx?.endDate ?? '',
     category: ctx?.category ?? category.value,
+    marketSel: ctx?.marketSel ?? 'auto',
   }
 }
 
@@ -213,6 +229,7 @@ const rankingGrades = computed<GradeResult[]>(() =>
           v-model:category="category"
           v-model:start-date="startDate"
           v-model:end-date="endDate"
+          v-model:market-sel="marketSel"
         />
       </section>
 

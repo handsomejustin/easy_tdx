@@ -36,6 +36,7 @@ function isoDaysFromNow(days: number): string {
 }
 const startDate = ref('2020-01-06')
 const endDate = ref(isoDaysFromNow(0))
+const marketSel = ref('auto')
 
 // 表单状态（v-model 给子组件）
 const strategy = ref('ma_cross')
@@ -79,10 +80,12 @@ onMounted(async () => {
   const qStartDate = route.query.startDate as string | undefined
   const qEndDate = route.query.endDate as string | undefined
   const qCategory = route.query.category as Category | undefined
+  const qMarketSel = route.query.marketSel as string | undefined
   if (qSymbol) code.value = qSymbol
   if (qStartDate) startDate.value = qStartDate
   if (qEndDate) endDate.value = qEndDate
   if (qCategory) category.value = qCategory
+  if (qMarketSel) marketSel.value = qMarketSel
 })
 
 // 取行情 + 回测 串联（点击「开始回测」触发）
@@ -91,7 +94,13 @@ async function onRun() {
   // 1. 先取行情（SymbolPicker.loadBars 会校验并填充 store.ohlcv）
   const ok = await symbolPicker.value?.loadBars()
   if (!ok) return // 校验/取数失败，错误已在 store.error
-  // 2. 再回测
+  // 2. 港股/美股仅支持行情查看，禁止回测（期货等 ex 市场可回测）
+  const mt = symbolPicker.value?.marketType
+  if (mt === 'HK' || mt === 'US') {
+    store.error = '美股/港股仅支持行情查看（K线展示），暂不支持回测'
+    return
+  }
+  // 3. 再回测
   await store.run({
     strategy: strategy.value,
     params: params.value,
@@ -125,6 +134,9 @@ const grade = computed(() =>
 // 需要带上市场前缀。复用 market.ts 的 detectMarket（与 SymbolPicker /
 // StocksPicker 同一套规则），避免分叉导致 ETF/基金（5 开头）等被错判市场。
 function fullSymbol(code6: string): string {
+  // ex 市场（港股/美股/期货）用 SymbolPicker 解析出的市场参数前缀
+  const mkt = symbolPicker.value?.marketName
+  if (mkt) return `${mkt}:${code6.trim().toUpperCase()}`
   return `${detectMarket(code6)}:${code6}`
 }
 
@@ -197,6 +209,7 @@ async function onSave() {
           v-model:category="category"
           v-model:start-date="startDate"
           v-model:end-date="endDate"
+          v-model:market-sel="marketSel"
         />
       </section>
 
@@ -250,6 +263,14 @@ async function onSave() {
 
       <div v-if="!store.result && !store.running && !store.error" class="placeholder">
         <p>输入代码、配置策略后点击「开始回测」（自动取行情）</p>
+      </div>
+
+      <!-- 仅行情模式：美股/港股等 ex 市场不支持回测，但已取到 K 线 → 直接展示图表（报错由上方 error-banner 展示） -->
+      <div v-if="store.ohlcv.length && !store.result" class="report-content">
+        <section class="report-section">
+          <h3>K线（仅行情查看）</h3>
+          <KlineChart :bars="store.ohlcv" :trades="[]" />
+        </section>
       </div>
 
       <div v-if="store.result" class="report-content">

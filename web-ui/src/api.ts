@@ -107,6 +107,62 @@ export async function fetchBars(
     return bars
 }
 
+/**
+ * 取扩展市场（美股/港股/期货）K 线行情（MAC 协议，走 /api/v1/ex/bars）。
+ *
+ * 与 A 股 /bars 不同：单次最多 800 根、不支持日期区间过滤（返回最近 count 根），
+ * 由前端直接取最新段展示。
+ */
+export async function fetchExBars(
+  market: string,
+  code: string,
+  category: Category,
+  count = 700,
+): Promise<Bar[]> {
+  const params = new URLSearchParams({
+    market,
+    code,
+    category,
+    count: String(count),
+    start: '0',
+  })
+  const resp = await fetch(`${BASE}/ex/bars?${params}`)
+  if (!resp.ok) await throwError(resp)
+  const body = (await resp.json()) as { data: Record<string, unknown>[] }
+  return body.data.map((row) => normalizeBar(row))
+}
+
+/** 前端 Category → Binance interval 映射。 */
+export const CRYPTO_INTERVALS: Record<Category, string> = {
+  MIN_5: '5m',
+  MIN_15: '15m',
+  MIN_30: '30m',
+  MIN_60: '1h',
+  DAY: '1d',
+  WEEK: '1w',
+  MONTH: '1M',
+}
+
+/**
+ * 取加密货币 K 线（Binance 现货，走 /api/v1/crypto/bars）。
+ * 返回最近 limit 根，与 /ex/bars 一致：无日期过滤。
+ */
+export async function fetchCryptoBars(
+  symbol: string,
+  interval: string,
+  limit = 700,
+): Promise<Bar[]> {
+  const params = new URLSearchParams({
+    symbol,
+    interval,
+    limit: String(limit),
+  })
+  const resp = await fetch(`${BASE}/crypto/bars?${params}`)
+  if (!resp.ok) await throwError(resp)
+  const body = (await resp.json()) as { data: Record<string, unknown>[] }
+  return body.data.map((row) => normalizeBar(row))
+}
+
 /** 把后端 bars 的单条记录归一化为统一 Bar（datetime 字段）。 */
 function normalizeBar(row: Record<string, unknown>): Bar {
   const raw = (row.datetime ?? row.date) as string | undefined

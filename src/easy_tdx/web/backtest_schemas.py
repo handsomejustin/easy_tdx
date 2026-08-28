@@ -7,9 +7,14 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
+
+# 标的符号：A 股（SZ/SH/BJ:6位数字）或扩展市场/加密（US_STOCK:TSLA /
+# CFFEX_FUTURES:IFL0 / CRYPTO:BTCUSDT 等）。市场前缀大写字母+下划线，代码任意字符。
+_SYMBOL_RE = re.compile(r"^(SZ|SH|BJ):\d{6}$|^[A-Z][A-Z0-9_]*:[\w.-]+$")
 
 __all__ = [
     "BacktestRequest",
@@ -66,8 +71,8 @@ class BacktestRequest(BaseModel):
     # 数据来源 B：按标的取行情
     symbol: str | None = Field(
         default=None,
-        pattern=r"^(SZ|SH|BJ):\d{6}$",
-        description="标的代码，格式 市场:代码，如 SZ:000001",
+        pattern=_SYMBOL_RE.pattern,
+        description="标的代码，格式 市场:代码，如 SZ:000001 / US_STOCK:TSLA / CRYPTO:BTCUSDT",
     )
     category: Literal["DAY", "WEEK", "MONTH", "MIN_5", "MIN_15", "MIN_30", "MIN_60"] = Field(
         default="DAY", description="K 线周期"
@@ -110,9 +115,11 @@ class PortfolioBacktestRequest(BaseModel):
 
     @model_validator(mode="after")
     def _check_stocks_format(self) -> PortfolioBacktestRequest:
+        # 支持 A 股（SZ/SH/BJ:6位）与扩展市场/加密（US_STOCK:TSLA /
+        # CFFEX_FUTURES:IFL0 / CRYPTO:BTCUSDT 等），由 _fetch_portfolio_bars 按前缀路由
         for s in self.stocks:
-            if not s.startswith(("SZ:", "SH:", "BJ:")) or len(s) != 9:
-                raise ValueError(f"标的格式应为 '市场:6位代码'，得到 {s!r}")
+            if not _SYMBOL_RE.fullmatch(s):
+                raise ValueError(f"标的格式应为 '市场:代码'，得到 {s!r}")
         return self
 
 
@@ -140,7 +147,7 @@ class OptimizeBacktestRequest(BaseModel):
     ohlcv: list[dict[str, Any]] | None = Field(default=None, max_length=2000)
 
     # 数据来源 B：按标的取行情
-    symbol: str | None = Field(default=None, pattern=r"^(SZ|SH|BJ):\d{6}$")
+    symbol: str | None = Field(default=None, pattern=_SYMBOL_RE.pattern)
     category: Literal["DAY", "WEEK", "MONTH", "MIN_5", "MIN_15", "MIN_30", "MIN_60"] = Field(
         default="DAY"
     )
@@ -180,7 +187,7 @@ class OptimizeAllBacktestRequest(BaseModel):
     ohlcv: list[dict[str, Any]] | None = Field(default=None, max_length=2000)
 
     # 数据来源 B：按标的取行情
-    symbol: str | None = Field(default=None, pattern=r"^(SZ|SH|BJ):\d{6}$")
+    symbol: str | None = Field(default=None, pattern=_SYMBOL_RE.pattern)
     category: Literal["DAY", "WEEK", "MONTH", "MIN_5", "MIN_15", "MIN_30", "MIN_60"] = Field(
         default="DAY"
     )
@@ -348,7 +355,7 @@ class MultiStrategyItem(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     symbol: str = Field(
         ...,
-        pattern=r"^(SZ|SH|BJ):\d{6}$",
+        pattern=_SYMBOL_RE.pattern,
         description='标的完整代码，格式 "市场:6位代码"，如 "SH:601088"',
     )
     category: Literal["DAY", "WEEK", "MONTH", "MIN_5", "MIN_15", "MIN_30", "MIN_60"] = Field(

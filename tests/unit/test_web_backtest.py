@@ -203,13 +203,20 @@ def test_backtest_request_requires_data_source():
 
 
 def test_backtest_request_symbol_pattern():
-    """symbol 必须符合 市场:代码 格式。"""
+    """symbol 必须符合 市场:代码 格式（A 股 6 位 / 扩展市场 / 加密）。"""
     from easy_tdx.web.backtest_schemas import BacktestRequest
 
     with pytest.raises(ValueError):
         BacktestRequest(strategy="ma_cross", symbol="000001")  # 缺市场前缀
     with pytest.raises(ValueError):
-        BacktestRequest(strategy="ma_cross", symbol="XX:000001")  # 非法市场
+        BacktestRequest(strategy="ma_cross", symbol="sz:000001")  # 市场前缀必须大写
+    with pytest.raises(ValueError):
+        BacktestRequest(strategy="ma_cross", symbol="SZ:")  # 代码为空
+    with pytest.raises(ValueError):
+        BacktestRequest(strategy="ma_cross", symbol="SZ:12 34")  # 代码含空格
+    # 放宽后合法的扩展市场/加密符号
+    assert BacktestRequest(strategy="ma_cross", symbol="US_STOCK:TSLA").symbol
+    assert BacktestRequest(strategy="ma_cross", symbol="CRYPTO:BTCUSDT").symbol
 
 
 def test_backtest_request_cash_must_be_positive():
@@ -751,7 +758,14 @@ def test_portfolio_request_validates_stocks_format():
     with pytest.raises(ValueError):
         PortfolioBacktestRequest(strategy="ma_cross", stocks=["000001"])  # 缺市场
     with pytest.raises(ValueError):
-        PortfolioBacktestRequest(strategy="ma_cross", stocks=["SZ:123"])  # 非6位
+        PortfolioBacktestRequest(strategy="ma_cross", stocks=["sz:000001"])  # 前缀必须大写
+    with pytest.raises(ValueError):
+        PortfolioBacktestRequest(strategy="ma_cross", stocks=["SZ:"])  # 代码为空
+    # 放宽后扩展市场/加密符号合法
+    req2 = PortfolioBacktestRequest(
+        strategy="ma_cross", stocks=["US_STOCK:TSLA", "CRYPTO:BTCUSDT", "SZ:123"]
+    )
+    assert len(req2.stocks) == 3
     with pytest.raises(ValueError):
         PortfolioBacktestRequest(strategy="ma_cross", stocks=[])  # 空
     with pytest.raises(ValueError):
@@ -777,7 +791,7 @@ def test_portfolio_backtest_endpoint(client, monkeypatch):
 
     np.random.seed(3)
 
-    async def fake_fetch(client_arg, stocks, category, start, end):  # noqa: ANN001
+    async def fake_fetch(request_arg, client_arg, stocks, category, start, end):  # noqa: ANN001
         result = []
         for sym in stocks:
             mkt, code = sym.split(":")
@@ -837,7 +851,7 @@ def test_portfolio_backtest_bad_strategy(client, monkeypatch):
     import easy_tdx.web.routers.backtest as bt_router
     from easy_tdx.backtest.portfolio_engine import StockData
 
-    async def fake_fetch(client_arg, stocks, category, start, end):  # noqa: ANN001
+    async def fake_fetch(request_arg, client_arg, stocks, category, start, end):  # noqa: ANN001
         n = 10
         df = pd.DataFrame(
             {

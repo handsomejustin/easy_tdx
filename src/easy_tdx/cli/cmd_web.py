@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 import webbrowser
 
@@ -15,6 +16,11 @@ import click
 @click.option("--tdx-port", default=None, type=int, help="TDX 服务器端口")
 @click.option("--reload", is_flag=True, help="开发模式（自动重载）")
 @click.option(
+    "--enable-ex",
+    is_flag=True,
+    help="启用扩展市场（美股/港股/期货）行情接口 /api/v1/ex/*（默认关闭）",
+)
+@click.option(
     "--open-browser/--no-open-browser",
     default=True,
     help="启动后自动打开浏览器（默认开启，PyInstaller 打包后老人双击即用）",
@@ -25,6 +31,7 @@ def serve(
     tdx_host: str | None,
     tdx_port: int | None,
     reload: bool,
+    enable_ex: bool,
     open_browser: bool,
 ) -> None:
     """启动 Web API 服务器（需要安装 easy-tdx[web]）。"""
@@ -47,6 +54,9 @@ def serve(
         threading.Timer(1.5, lambda: webbrowser.open(url)).start()
 
     if reload:
+        # reload 模式由 uvicorn 子进程 import app_factory，开关经环境变量传递
+        if enable_ex:
+            os.environ["EASY_TDX_ENABLE_EX"] = "1"
         uvicorn.run(
             "easy_tdx.web:app_factory",
             host=host,
@@ -57,5 +67,5 @@ def serve(
     else:
         from easy_tdx.web import create_app
 
-        app = create_app(host=tdx_host, port=tdx_port)
+        app = create_app(host=tdx_host, port=tdx_port, enable_ex=enable_ex)
         uvicorn.run(app, host=host, port=port)
