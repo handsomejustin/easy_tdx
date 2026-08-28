@@ -22,6 +22,7 @@ asyncio 版本::
 
 from .client import AsyncTdxClient, TdxClient
 from .config import save_best_ex_host, save_best_host
+from .crypto.client import AsyncCryptoClient, CryptoClient
 from .ex.client import AsyncExTdxClient, ExTdxClient
 from .ex.mac_client import AsyncMacExClient, MacExClient
 from .ex.models import KNOWN_EX_HOSTS
@@ -107,6 +108,9 @@ __all__ = [
     "ExTdxClient",
     "AsyncExTdxClient",
     "KNOWN_EX_HOSTS",
+    # 加密货币（Binance）
+    "CryptoClient",
+    "AsyncCryptoClient",
     # 工具
     "ping_all",
     "ping_mac_all",

@@ -29,6 +29,8 @@ _EXPECTED_KIND: dict[str, str] = {
     "AsyncExTdxClient": "class",
     "UnifiedTdxClient": "class",
     "AsyncUnifiedTdxClient": "class",
+    "CryptoClient": "class",
+    "AsyncCryptoClient": "class",
     # 枚举
     "Market": "class",
     "KlineCategory": "class",
