@@ -2,6 +2,22 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.20.12] — 2026-08-28
+
+**`ex tick --date` 传 YYYYMMDD 整数直接崩溃**（PR #56，社区贡献者 @Harveyliu007）——CLI 的 `--date` 选项传入 `YYYYMMDD` 整数，而 `MacExClient.goods_tick_chart()` 只接受 `datetime.date`（内部直接 `query_date.year` 编码），实跑必抛 `AttributeError: 'int' object has no attribute 'year'`；`cmd_ex.py` 的调用点长期带 `# type: ignore[arg-type]`，类型系统没能拦住。A 股侧 `MacClient.get_tick_chart()` 早已支持 int 日期（内部转换），ex 侧漏了同类处理。
+
+### 修复
+
+- **`ex/mac_client.py` 新增 `_coerce_query_date()`**——int（YYYYMMDD）/ date / None 统一归一为 date 对象；`MacExClient` / `AsyncMacExClient` 的 `goods_tick_chart`、`goods_transaction`（共 4 个方法）签名放宽为 `int | date | None`，含港股 ex 历史逐笔协议路由分支，与 A 股侧 YYYYMMDD 整数语义对齐。
+- **`cli/cmd_ex.py`**——移除掩盖问题的 `# type: ignore[arg-type]`；`ex tick --help` 补充 `--date` 用法示例。
+- 顺带：`.gitignore` 增加沙箱环境的 `.npm-cache/` / `.uv-cache/` 本地缓存目录。
+
+### 测试
+
+- 新增 `tests/unit/test_ex_tick_chart_date.py`（13 例，全部离线 mock 连接层）：`_coerce_query_date` 纯函数（int/date/None/月份前导零）、同步/异步客户端三种输入、美股(74)与港股(31)协议路由、CLI 端到端（`--date` 传参 / 缺省 None 两天路径）。
+- 维护者侧复核：ruff / mypy strict 通过；实测修复前崩溃的 `easy-tdx ex tick US_STOCK TSLA --date 20260827` 正常返回当日分时（21:30 开盘起全部分时点）。全套 1050 个单测通过（`test_web_api.py` 2 个失败为基线已存在的环境问题，与本变更无关）。
+- 遗留（未改动）：`ex tick` 的 `--days` 选项仍未接线（扩展市场单日分时协议无多日查询），另行跟进。
+
 ## [1.20.11] — 2026-08-28
 
 **资金流口径限制文档标注**（Issue #55，纯文档、无行为变更）——用户实测反馈：同日同股，本库资金流与东财"主力净额"（数据中心 `RPT_DMSK_TS_STOCKNEW` 的 `PRIME_INFLOW`，该字段已验证恒等于超大单+大单净额）差异极大且方向不一（工业富联 601138 偏大 36 倍、洛阳钼业 603993 偏小 2.4 倍，不可系数校正）。用户独立用 `get_history_transaction_data` 复算八个分档与库返回**逐分吻合（diff 0.00 元）**，证实库实现无误；根因在数据源口径——0x0fb5 的"逐笔"是交易所真实逐笔**聚合**后的记录（000001.SZ 单日实测 76,411 笔 → 仅 4,485 条，约 17:1），按聚合后单笔成交额分档把几乎全部成交推入主力档（实测 601138/603993 主力档占成交额 99.4%+、小单档仅 0.02%），故 `main_net_inflow` 实质是"当日主动买卖总失衡"（另有约 2–4% 方向未定的成交被排除）；而东财基于 L2 逐笔委托按**挂单额**分档、四档净额严格归零。实证两口径在选股层面几乎不相干（856 个共同信号日仅 13.9% 选中同一只股票；同规则策略 2020–2026 单笔均值 −0.12% vs 东财口径 +1.56%），不能互相替代。
