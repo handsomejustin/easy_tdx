@@ -150,6 +150,8 @@ def tick(
       easy-tdx ex tick HK_MAIN_BOARD 00700
 
       easy-tdx ex tick US_STOCK AAPL --table
+
+      easy-tdx ex tick US_STOCK TSLA --date 20260827 --table
     """
     from .conn import get_mac_ex_client
     from .output import print_output
@@ -158,7 +160,7 @@ def tick(
     fmt = "table" if use_table else output_fmt
     mkt = parse_ex_market(market)
     with get_mac_ex_client() as client:
-        df = client.goods_tick_chart(mkt, code, query_date=date)  # type: ignore[arg-type]
+        df = client.goods_tick_chart(mkt, code, query_date=date)
     print_output(df, fmt)
 
 
