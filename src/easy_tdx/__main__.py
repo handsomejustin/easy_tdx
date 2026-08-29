@@ -89,8 +89,10 @@ def _run_tray_server() -> None:
     from easy_tdx.tray import run_with_tray
     from easy_tdx.web import create_app
 
+    # enable_ex=True：打包态默认开启扩展市场（美股/港股/期货）。
+    # 注意不能直接传 create_app（enable_ex 默认 False，会 503）
     run_with_tray(
-        app_factory=create_app,
+        app_factory=lambda: create_app(enable_ex=True),
         host="127.0.0.1",
         port=8000,
         open_browser=True,
