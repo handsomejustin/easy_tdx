@@ -280,6 +280,7 @@ def ex_daily(
             "high": b.high,
             "low": b.low,
             "close": b.close,
+            "amount": b.amount,
             "vol": b.vol,
             "settlement": b.settlement,
         }

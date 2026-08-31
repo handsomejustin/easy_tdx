@@ -2,6 +2,31 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.21.0] — 2026-08-31
+
+**扩展日线（vipdoc/ds `*.day`）解析槽位错误**（Issue #57，含破坏性 API 变更）——`read_ex_daily_bars` 把第 7 槽（成交量）同时赋给 `amount` 与 `vol`（`amount=vol`），真正的成交额藏在第 6 槽 float32 重解释值里、以误导性字段名 `hk_stock_amount` 暴露。实测铁证：扩展市场 `47#IF300`（沪深300）2023-09-11 第 6 槽 float32 = 186,871,758,848、第 7 槽 uint32 = 105,358,016，与标准市场 `sh000300.day` 同日 amount（元）/ vol（手）**完全一致**，证明第 6 槽是 float32 成交额、第 7 槽是 uint32 成交量。`_EX_DAILY_FMT` 旧声明 `<IffffIIf` 还使写端把成交额按 uint32 编码——真实成交额动辄超 42.9 亿上限（如上述 1868 亿），`struct.pack('I')` 必然溢出报错。
+
+### 修复（破坏性变更）
+
+- **`offline/ex_daily_bar.py`**——记录格式改为 `<IfffffIf`：第 6 槽正名为 float32 成交额，直接解进 `amount`；`ExDailyBar.amount` 类型 `int → float`；**移除语义错误的 `hk_stock_amount` 字段**（其值本就是成交额，并非"港股数量"）。
+- **`offline/write_ex_daily.py`**——无需改动即自动正确：encode 沿用同一 fmt，成交额现在按 float32 编码，超 uint32 的大额不再溢出。
+- **`cli/cmd_offline.py`**——`offline ex-daily` 输出新增 `amount` 列（此前该数据完全不可见）。
+
+### 测试
+
+- 新增真实样本回归 `TestRealSampleSlots`（2 例）：`47#IF300` 2023-09-11 原始 32 字节记录断言 `amount=186871758848.0`、`vol=105358016`、`amount != vol`（防串槽回归）；18.69 万倍 uint32 上限的大成交额编码-解码往返不溢出。
+- 补上此前缺失的 round-trip `amount` 断言（旧实现 amount=vol 恰好双双等于 vol，往返测试无法暴露，这是 bug 长期潜伏的原因）。
+- 全套 1052 个单测通过。
+
+## [1.20.13] — 2026-08-31
+
+**`offline sync-daily` 大盘股成交量 uint32 溢出**（PR #60，社区贡献者 @awayings）——K 线协议返回的成交量单位是**股**，而 `encode_daily_bar` 按 `vol / vol_coeff`（A 股 vol_coeff=0.01 即 ×100）写入 .day，期望输入为**手**。原 `_sync_one_daily` 直接把股喂给 `append_daily_bars`，单日成交 > 4295 万股的股票（招商银行 2026-08-31 单日 1.14 亿股等）编码后超出 uint32 上限，`struct.error` 直接失败；低成交量股票不触发，故长期未被发现。
+
+### 修复
+
+- **`cli/cmd_offline.py` `_sync_one_daily`**——对 `vol_coeff == 0.01` 的证券类型（A/B 股、深市基金等）写入前换算 股→手（`vol /= 100`），与读取端 `read_daily_bars` 的 `vol × 0.01` 方向对称。作者用服务器原生 .day 文件（0x06B9 下载）实测验证：浦发银行 2026-08-31 原始 vol 字段 99,682,464（股）与协议 API 完全一致。
+- 已知边界（未处理）：单日成交 > 42.9 亿股的极端天量换算后仍超上限；实测通达信官方 .day 对该 bar 亦降级存储，如需对齐另行讨论。
+
 ## [1.20.12] — 2026-08-28
 
 **`ex tick --date` 传 YYYYMMDD 整数直接崩溃**（PR #56，社区贡献者 @Harveyliu007）——CLI 的 `--date` 选项传入 `YYYYMMDD` 整数，而 `MacExClient.goods_tick_chart()` 只接受 `datetime.date`（内部直接 `query_date.year` 编码），实跑必抛 `AttributeError: 'int' object has no attribute 'year'`；`cmd_ex.py` 的调用点长期带 `# type: ignore[arg-type]`，类型系统没能拦住。A 股侧 `MacClient.get_tick_chart()` 早已支持 int 日期（内部转换），ex 侧漏了同类处理。

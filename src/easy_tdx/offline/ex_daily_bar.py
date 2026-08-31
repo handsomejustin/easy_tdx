@@ -6,22 +6,26 @@ from pathlib import Path
 
 from ..exceptions import TdxFileNotFoundError
 
-# 日期(4B) 开盘(4Bf) 最高(4Bf) 最低(4Bf) 收盘(4Bf) 成交额(4B) 成交量(4B) 结算价(4Bf)
-_EX_DAILY_FMT = struct.Struct("<IffffIIf")
+# 日期(4B) 开盘(4Bf) 最高(4Bf) 最低(4Bf) 收盘(4Bf) 成交额(4Bf) 成交量(4B) 结算价(4Bf)
+# 第 6 槽为 float32 成交额（元）：与标准市场 sh000300.day 实测对照一致
+# （47#IF300 2023-09-11 第 6 槽 = 186871758848.0 元 = sh000300 同日 amount）。
+_EX_DAILY_FMT = struct.Struct("<IfffffIf")
 
 
 @dataclass
 class ExDailyBar:
-    """扩展市场日线（期货/港股等，含结算价）。"""
+    """扩展市场日线（期货/港股等，含结算价）。
+
+    amount 为成交额（元，float32），vol 为成交量（手，uint32）。
+    """
 
     open: float
     high: float
     low: float
     close: float
-    amount: int
+    amount: float
     vol: int
     settlement: float
-    hk_stock_amount: float
     year: int
     month: int
     day: int
@@ -52,11 +56,7 @@ def read_ex_daily_bars(filepath: str | Path) -> list[ExDailyBar]:
 
     for offset in range(0, len(data) - record_size + 1, record_size):
         raw = data[offset : offset + record_size]
-        date_int, op, hi, lo, cl, amt, vol, settlement = _EX_DAILY_FMT.unpack(raw)
-
-        # 第 5 个字段（成交额位置）重新解释为 float 作为港股量
-        hk_bytes = struct.pack("<I", amt)
-        (hk_stock_amount,) = struct.unpack("<f", hk_bytes)
+        date_int, op, hi, lo, cl, amount, vol, settlement = _EX_DAILY_FMT.unpack(raw)
 
         year = date_int // 10000
         month = (date_int % 10000) // 100
@@ -68,10 +68,9 @@ def read_ex_daily_bars(filepath: str | Path) -> list[ExDailyBar]:
                 high=hi,
                 low=lo,
                 close=cl,
-                amount=vol,
+                amount=amount,
                 vol=vol,
                 settlement=settlement,
-                hk_stock_amount=hk_stock_amount,
                 year=year,
                 month=month,
                 day=day,

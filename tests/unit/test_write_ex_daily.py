@@ -26,7 +26,7 @@ def _make_ex_bar(
     high: float = 3550.0,
     low: float = 3480.0,
     close: float = 3520.0,
-    amount: int = 123456,
+    amount: float = 123456.0,
     vol: int = 98765,
     settlement: float = 3510.0,
 ) -> ExDailyBar:
@@ -38,7 +38,6 @@ def _make_ex_bar(
         amount=amount,
         vol=vol,
         settlement=settlement,
-        hk_stock_amount=0.0,
         year=year,
         month=month,
         day=day,
@@ -53,7 +52,7 @@ def _make_raw_ex_bar(
     high: float = 3550.0,
     low: float = 3480.0,
     close: float = 3520.0,
-    amount: int = 123456,
+    amount: float = 123456.0,
     vol: int = 98765,
     settlement: float = 3510.0,
 ) -> bytes:
@@ -101,7 +100,7 @@ class TestEncodeExDailyBar:
 
 class TestExRoundTrip:
     def test_single_bar_round_trip(self, tmp_path: Path) -> None:
-        bar = _make_ex_bar(open_=3500.0, close=3520.0, vol=98765)
+        bar = _make_ex_bar(open_=3500.0, close=3520.0, amount=123456.0, vol=98765)
         encoded = encode_ex_daily_bar(bar)
 
         filepath = tmp_path / "29#A1801.day"
@@ -113,6 +112,7 @@ class TestExRoundTrip:
         assert b.year == 2026 and b.month == 6 and b.day == 6
         assert abs(b.open - 3500.0) < 0.01
         assert abs(b.close - 3520.0) < 0.01
+        assert abs(b.amount - 123456.0) < 0.01
         assert b.vol == 98765
 
     def test_multiple_bars_round_trip(self, tmp_path: Path) -> None:
@@ -188,3 +188,41 @@ class TestAppendExDailyBars:
 
         bars = read_ex_daily_bars(filepath)
         assert len(bars) == 2
+
+
+# ---------------------------------------------------------------------------
+# 真实样本回归（issue #57）：槽位语义
+# ---------------------------------------------------------------------------
+
+# 47#IF300（扩展市场沪深300 指数）2023-09-11 的真实记录。
+# 与标准市场 sh000300.day 同日对照：vol=105358016（手）、amount=186871758848.0（元）完全一致，
+# 证明第 6 槽是 float32 成交额，第 7 槽是 uint32 成交量。
+_REAL_IF300_20230911 = bytes.fromhex(
+    "ffb2340148c969451fc56c45856b6945a4786b45b3092e52c0a2470600000000"
+)
+
+
+class TestRealSampleSlots:
+    def test_amount_is_float32_turnover(self, tmp_path: Path) -> None:
+        filepath = tmp_path / "47#IF300.day"
+        filepath.write_bytes(_REAL_IF300_20230911)
+
+        bars = read_ex_daily_bars(filepath)
+        assert len(bars) == 1
+        b = bars[0]
+        assert (b.year, b.month, b.day) == (2023, 9, 11)
+        assert b.amount == 186871758848.0
+        assert b.vol == 105358016
+        assert abs(b.close - 3767.54) < 0.01
+        # amount 与 vol 不得串槽（回归：旧实现 amount=vol）
+        assert b.amount != b.vol
+
+    def test_large_amount_does_not_overflow(self, tmp_path: Path) -> None:
+        # 真实成交额动辄超 uint32 上限，第 6 槽必须按 float32 编码
+        bar = _make_ex_bar(amount=186871758848.0)
+        encoded = encode_ex_daily_bar(bar)
+        filepath = tmp_path / "47#IF300.day"
+        filepath.write_bytes(encoded)
+
+        (b,) = read_ex_daily_bars(filepath)
+        assert b.amount == 186871758848.0
