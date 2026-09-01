@@ -19,6 +19,12 @@ import click
     default=True,
     help="启动后自动打开浏览器（默认开启，PyInstaller 打包后老人双击即用）",
 )
+@click.option(
+    "--no-ui",
+    is_flag=True,
+    help="纯 API 模式：不托管 Web UI 前端，仅提供 /api/v1/* REST 接口"
+    "（给 AI Agent / 程序调用时省去前端资源；此时也不自动开浏览器）",
+)
 def serve(
     host: str,
     port: int,
@@ -26,6 +32,7 @@ def serve(
     tdx_port: int | None,
     reload: bool,
     open_browser: bool,
+    no_ui: bool,
 ) -> None:
     """启动 Web API 服务器（需要安装 easy-tdx[web]）。"""
     try:
@@ -39,7 +46,7 @@ def serve(
 
     # 启动后延迟打开浏览器：uvicorn 需要约 1-2 秒绑定端口，过早打开会
     # 命中 connection refused。用后台 Timer 而非阻塞主线程。
-    if open_browser and not reload:
+    if open_browser and not reload and not no_ui:
         # 0.0.0.0 / 127.0.0.1 在浏览器里用 localhost 打开（更友好）。
         display_host = "localhost" if host in ("0.0.0.0", "127.0.0.1") else host
         url = f"http://{display_host}:{port}"
@@ -57,5 +64,5 @@ def serve(
     else:
         from easy_tdx.web import create_app
 
-        app = create_app(host=tdx_host, port=tdx_port)
+        app = create_app(host=tdx_host, port=tdx_port, enable_ui=not no_ui)
         uvicorn.run(app, host=host, port=port)

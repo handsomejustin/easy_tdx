@@ -556,3 +556,24 @@ def test_openapi_schema_generated():
     # they are verified in test_full_app_routes_registered instead.
     # Just ensure REST paths are present.
     assert "/api/v1/fund-flow" in schema["paths"]
+
+
+def test_create_app_no_ui_mode():
+    """--no-ui 纯 API 模式：不挂载 Web UI 静态托管，API 路由完整。"""
+    pytest.importorskip("fastapi")
+    from easy_tdx.web import create_app
+
+    app = create_app(enable_ui=False)
+    # 无 web-ui 静态 Mount（FastAPI 0.141+ 顶层 Mount 不受 _IncludedRouter 影响）
+    mounts = [r for r in app.routes if type(r).__name__ == "Mount"]
+    assert all(getattr(m, "name", "") != "web-ui" for m in mounts)
+
+    # API 路由完整可用
+    paths = list(app.openapi()["paths"].keys())
+    assert any("/api/v1/security" in p for p in paths)
+    assert any("/api/v1/watchlist" in p for p in paths)
+
+    # 对照：默认模式挂载 web-ui（dist 存在时）
+    app_ui = create_app()
+    mounts_ui = [r for r in app_ui.routes if type(r).__name__ == "Mount"]
+    assert any(getattr(m, "name", "") == "web-ui" for m in mounts_ui)

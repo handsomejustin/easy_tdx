@@ -172,8 +172,14 @@ def _create_app(
     *,
     enable_mac: bool = True,
     enable_ex: bool = False,
+    enable_ui: bool = True,
 ) -> FastAPI:
-    """创建并配置 FastAPI 应用实例。"""
+    """创建并配置 FastAPI 应用实例。
+
+    Args:
+        enable_ui: 是否同源托管 Web UI 前端（``easy-tdx serve --no-ui``
+            纯 API 模式传 False：不挂载静态 dist，根路径 404，仅 /api/v1/*）。
+    """
     from easy_tdx.config import get_best_host, get_port, get_timeout
 
     if host is None:
@@ -290,7 +296,7 @@ def _create_app(
 
     from fastapi.staticfiles import StaticFiles
 
-    dist_dir = _resolve_web_dist_dir()
+    dist_dir = _resolve_web_dist_dir() if enable_ui else None
     if dist_dir is not None:
         # SPA fallback：前端用 createWebHistory（HTML5 history 模式），
         # 用户直接访问 /optimize、/portfolio 等前端路由或刷新时，后端必须
