@@ -6,11 +6,11 @@
 > - ✅ **P2 v1.26.0**——DuckDB K 线仓库 + provisional 状态机 + 增量同步 + 健康自检 + CLI `warehouse` 命令组（P2-2 评级后端化已随 1.25.0 提前交付）
 > - ✅ **P3 v1.27.0**——通达信公式解析器（tokenizer + AST + 白名单求值，无 Python eval）+ 公式三通道（CLI `formula` / REST `/formula/*` / Python API）+ 轮动组合引擎（排名换仓 + 槽位等额 + 自动补位 + 止盈止损，REST `/backtest/rotation/run/async`）
 > - ✅ **P1 前端补全（随 1.27.0）**——回测页「附加分析」开关：WF 逐窗柱状图 + 一条龙评估报告卡（评分分项/高适配徽标/买入持有基准对比/8 项适配检查），复用同一份内联行情并行执行
-> - ✅ **P4（部分）v1.27.0**——Docker Compose 部署 + `scripts/verify_ci.sh` 一键门禁。**未做**：Playwright E2E（需前端基建，独立排期）、WebSocket 实时推送联动 EventBus（README 既有 TODO，与本计划无耦合）、引擎逐 bar 循环向量化（寻优加速的下一步方向）——三项已整理为独立排期提示词
+> - ✅ **P4 收尾（未发布，2026-09-01）**——三项遗留全部落地：Playwright E2E（后端合成数据 mock 模式，5 用例进 CI frontend job）；WebSocket 实时推送联动 EventBus（`RealtimeStreamHub` 按需轮询 + fan-out，`ws_smoke.py` 冒烟，README/api_reference 协议文档）；引擎信号管线向量化（先基准后优化：ma_cross 800 根全流程 ×12.6——profile 证实真瓶颈是 OrderSimulator 的逐信号 strftime 全列扫描而非逐 bar 循环，19 内置策略对拍逐位一致）
 >
 > 实测备注（诚实数据）：
-> - 寻优加速——指标缓存命中率 41.7%（36 点网格）但墙钟 ~1.01x（本引擎指标层非瓶颈，逐 bar Python 循环才是）；进程并行 4 workers 约 2x。后续更大加速的方向是引擎循环向量化。
-> - 最终回归：1252 个单元测试全过（基线 1078），ruff / ruff format / mypy strict（245 文件）全绿。
+> - 寻优加速——v1.25：指标缓存命中率 41.7%（36 点网格）但墙钟 ~1.01x（指标层非瓶颈）；进程并行 4 workers 约 2x。P4 收尾后：信号管线三处优化（向量化掩码 + 日期查找表 + 去 strftime），32 点网格 800 根 3.0s（按基线折算）→ 231ms。
+> - 最终回归（P4 收尾后）：1314 个单元测试全过（基线 1078 → 1252 → 1314），ruff / ruff format / mypy strict（247 文件）全绿，前端 vue-tsc + build + Playwright E2E 5 用例全绿。
 >
 > 依据：对两个基于 easy-tdx 的下游项目的逆向调研
 > - [mvpbaggio/backtest-system](https://github.com/mvpbaggio/backtest-system)（v1.4，MIT）— 回测框架，运行时依赖 easy-tdx（行情拉取、PerformanceAnalyzer、MyTT、Param 注册表思路）
