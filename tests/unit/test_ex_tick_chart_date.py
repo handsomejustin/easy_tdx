@@ -26,7 +26,8 @@ from easy_tdx.ex.mac_client import MacExClient, _coerce_query_date
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("raw,expected",
+@pytest.mark.parametrize(
+    "raw,expected",
     [
         (20260827, date(2026, 8, 27)),
         (20250101, date(2025, 1, 1)),

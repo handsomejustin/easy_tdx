@@ -50,30 +50,30 @@ INDEX_NAMES: dict[str, str] = {
 _MARKET_NAMES = {Market.SZ: "SZ", Market.SH: "SH", Market.BJ: "BJ"}
 
 # 推送给前端的字段白名单（SecurityQuote 全字段中挑展示需要的，避免 unknown_* 噪音）。
-_QUOTE_FIELDS = [
-    "market",
-    "code",
-    "price",
-    "pre_close",
-    "open",
-    "high",
-    "low",
-    "vol",
-    "cur_vol",
-    "amount",
-    "s_vol",
-    "b_vol",
-    "rise_speed",
-    "limit_up",
-    "limit_down",
-    "decimal_point",
-    "server_time",
-    "trading_status",
-] + [
-    f"{side}{i}" for side in ("bid", "ask") for i in range(1, 6)
-] + [
-    f"{side}_vol{i}" for side in ("bid", "ask") for i in range(1, 6)
-]
+_QUOTE_FIELDS = (
+    [
+        "market",
+        "code",
+        "price",
+        "pre_close",
+        "open",
+        "high",
+        "low",
+        "vol",
+        "cur_vol",
+        "amount",
+        "s_vol",
+        "b_vol",
+        "rise_speed",
+        "limit_up",
+        "limit_down",
+        "decimal_point",
+        "server_time",
+        "trading_status",
+    ]
+    + [f"{side}{i}" for side in ("bid", "ask") for i in range(1, 6)]
+    + [f"{side}_vol{i}" for side in ("bid", "ask") for i in range(1, 6)]
+)
 
 _SH_TZ = dt_timezone(timedelta(hours=8))  # Asia/Shanghai
 

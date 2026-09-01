@@ -151,8 +151,12 @@ class WatchlistStore:
                 (market, code, name, group, _now_iso(), next_order),
             )
         return WatchItem(
-            market=market, code=code, name=name, group_name=group,
-            created_at=_now_iso(), sort_order=next_order,
+            market=market,
+            code=code,
+            name=name,
+            group_name=group,
+            created_at=_now_iso(),
+            sort_order=next_order,
         )
 
     def remove(self, market: str, code: str) -> bool:
