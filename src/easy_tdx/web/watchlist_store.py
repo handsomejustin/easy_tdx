@@ -56,7 +56,7 @@ class WatchItem:
         """前端统一标识：SH600000 形式。"""
         return f"{self.market}{self.code}"
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, object]:
         return {
             "market": self.market,
             "code": self.code,
@@ -125,7 +125,8 @@ class WatchlistStore:
         market = market.upper()
         with _write_lock, self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM watchlist WHERE market = ? AND code = ?", (market, code)
+                "SELECT * FROM watchlist WHERE market = ? AND code = ?",
+                (market, code),
             ).fetchone()
             if row is not None:
                 if name and name != row["name"]:
@@ -141,19 +142,26 @@ class WatchlistStore:
                     created_at=row["created_at"],
                     sort_order=row["sort_order"],
                 )
-            next_order = conn.execute("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM watchlist").fetchone()[0]
+            next_order = conn.execute(
+                "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM watchlist"
+            ).fetchone()[0]
             conn.execute(
                 "INSERT INTO watchlist (market, code, name, group_name, created_at, sort_order)"
                 " VALUES (?, ?, ?, ?, ?, ?)",
                 (market, code, name, group, _now_iso(), next_order),
             )
-        return WatchItem(market=market, code=code, name=name, group_name=group, created_at=_now_iso(), sort_order=next_order)
+        return WatchItem(
+            market=market, code=code, name=name, group_name=group,
+            created_at=_now_iso(), sort_order=next_order,
+        )
 
     def remove(self, market: str, code: str) -> bool:
         """移除自选；返回是否确实删除了一条。"""
         market = market.upper()
         with _write_lock, self._connect() as conn:
-            cur = conn.execute("DELETE FROM watchlist WHERE market = ? AND code = ?", (market, code))
+            cur = conn.execute(
+                "DELETE FROM watchlist WHERE market = ? AND code = ?", (market, code)
+            )
             return cur.rowcount > 0
 
 

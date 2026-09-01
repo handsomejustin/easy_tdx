@@ -201,7 +201,8 @@ class GetSecurityQuotesCmd(BaseCommand[list[SecurityQuote]]):
                 raise TdxDecodeError(f"security_quotes 非法 market 值: {market_b}") from e
 
             code = code_b.decode("utf-8").rstrip("\x00")
-            # 价格按品种有效小数位解析：股票/大盘指数 ÷100，ETF/基金/债券/880 统计指数 ÷1000（Issue #8）
+            # 价格按品种有效小数位解析：股票/大盘指数 ÷100；
+            # ETF/基金/债券/880 统计指数 ÷1000（Issue #8）
             divisor = 10 ** _price_decimal_digits(market, code)
             p = price_raw / divisor
 

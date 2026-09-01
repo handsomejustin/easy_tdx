@@ -19,7 +19,8 @@ import asyncio
 import itertools
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timedelta, timezone as dt_timezone
+from datetime import datetime, timedelta
+from datetime import timezone as dt_timezone
 from typing import Any
 
 import pandas as pd

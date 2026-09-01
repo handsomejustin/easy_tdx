@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
@@ -37,7 +38,7 @@ async def stream_quotes(request: Request) -> StreamingResponse:
 
     qid, queue = streamer.subscribe()
 
-    async def event_gen():  # type: ignore[no-untyped-def]
+    async def event_gen() -> AsyncGenerator[str, None]:
         try:
             # 首帧 hello：告诉前端连接可用 + 当前订阅规模
             hello = {"type": "hello", "subscribers": streamer.subscriber_count}

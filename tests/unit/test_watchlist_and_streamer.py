@@ -12,7 +12,6 @@ from easy_tdx.models.enums import Market
 from easy_tdx.web.quote_streamer import INDEX_SYMBOLS, QuoteStreamer, _is_trading_hours
 from easy_tdx.web.watchlist_store import WatchlistStore
 
-
 # ── WatchlistStore ──────────────────────────────────────────────────────────
 
 
@@ -147,7 +146,8 @@ def test_streamer_backpressure_drops_oldest() -> None:
 
 
 def test_is_trading_hours() -> None:
-    from datetime import datetime, timedelta, timezone as dt_timezone
+    from datetime import datetime, timedelta
+    from datetime import timezone as dt_timezone
 
     tz = dt_timezone(timedelta(hours=8))
     assert _is_trading_hours(datetime(2026, 9, 1, 10, 0, tzinfo=tz)) is True  # 周二盘中

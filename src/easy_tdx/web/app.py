@@ -88,7 +88,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         store = get_watchlist_store()
 
-        async def _watch_symbols():
+        async def _watch_symbols() -> list[tuple[Market, str]]:
             # SQLite 存 "SH"/"SZ"/"BJ" 字符串，轮询器需要 Market 枚举
             return [(Market[mkt], code) for mkt, code in store.symbols()]
 
@@ -132,10 +132,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
     # --- 关闭实时行情推送器 ---
-    streamer = getattr(app.state, "quote_streamer", None)
-    if streamer is not None:
+    streamer_svc = getattr(app.state, "quote_streamer", None)
+    if streamer_svc is not None:
         try:
-            await streamer.stop()
+            await streamer_svc.stop()
         except Exception:
             logger.warning("QuoteStreamer stop failed", exc_info=True)
 
