@@ -2,6 +2,16 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.23.2] — 2026-09-01
+
+**1.23.1 的质量门禁补丁**——1.23.1 的 PyPI 包与 EXE 功能完整（1078 单测全过、本地全功能冒烟），但其 tag commit 未通过 CI 的 `ruff check` / `ruff format --check` / `mypy --strict` 三道门禁（发布前漏在本地预演）。本版本补齐：
+
+- mypy strict：`watchlist_store` / `routers/watchlist` 裸 `dict` 补泛型参数；`routers/stream` 的 `event_gen` 补 `AsyncGenerator[str, None]` 注解；`app` 的 `_watch_symbols` 补返回类型、teardown 变量改名消除类型冲突。
+- ruff：5 处超长行拆行、3 处导入排序、3 个文件 `ruff format` 重排（含历史遗留的 `test_ex_tick_chart_date.py`）。
+- FastAPI 0.141+ `_IncludedRouter` 的测试适配（`app.routes` 不再平铺子路由，改用 OpenAPI schema 验证）随 1.23.1 已入库，此处一并回归确认。
+
+CI 全矩阵（3 OS × 3 Python + frontend job）绿。**建议直接使用本版本**；1.23.1 功能等价，仅代码整洁度差异。
+
 ## [1.23.1] — 2026-09-01
 
 **行情终端 Web UI 重大升级**——Web UI 从「回测工作台」升级为「行情终端 + 回测工作台」双模块。展示层设计对标 tick-stock-panel 等专业看盘终端（暗色主题、红涨绿跌、高信息密度侧边栏布局），数据全部来自通达信协议直连，零新增后端依赖（SSE 用标准 StreamingResponse 手写，未引 sse-starlette）。
