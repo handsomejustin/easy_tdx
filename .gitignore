@@ -32,3 +32,8 @@ CLAUDE.md
 
 # 代码审计报告（本地产物，不入库）
 audit-report-*.html
+
+# Playwright E2E 运行产物（trace/截图/视频）与临时配置目录
+web-ui/e2e/.results/
+web-ui/test-results/
+web-ui/playwright-report/

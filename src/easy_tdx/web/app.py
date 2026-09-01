@@ -63,24 +63,40 @@ def _resolve_web_dist_dir() -> Path | None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """管理 TDX 连接生命周期：启动时连接，关闭时断开。"""
-    from easy_tdx.client import AsyncTdxClient
+    """管理 TDX 连接生命周期：启动时连接，关闭时断开。
+
+    E2E mock 模式（``EASY_TDX_E2E_MOCK=1``，见 :mod:`easy_tdx.web.e2e_mock`）：
+    全部行情连接替换为合成数据客户端（不连真实服务器、不受交易时段限制），
+    回测 / 自选 / 策略库等纯计算路径保持真实，供 Playwright E2E 使用。
+    """
+    from easy_tdx.web.e2e_mock import is_e2e_mock_enabled, log_mock_banner
+
+    mock_mode = is_e2e_mock_enabled()
 
     # --- 标准 TDX 客户端 ---
     host = app.state.tdx_host
     port = app.state.tdx_port
     timeout = app.state.tdx_timeout
 
-    client = AsyncTdxClient(host=host, port=port, timeout=timeout)
-    try:
-        await client.connect()
-        logger.info("TDX client connected to %s:%s", host, port)
-    except Exception:
-        logger.warning("TDX client connection failed — endpoints will return 503")
+    client: Any
+    if mock_mode:
+        from easy_tdx.web.e2e_mock import MockTdxClient
+
+        log_mock_banner()
+        client = MockTdxClient()
+    else:
+        from easy_tdx.client import AsyncTdxClient
+
+        client = AsyncTdxClient(host=host, port=port, timeout=timeout)
+        try:
+            await client.connect()
+            logger.info("TDX client connected to %s:%s", host, port)
+        except Exception:
+            logger.warning("TDX client connection failed — endpoints will return 503")
 
     app.state.tdx_client = client
 
-    # --- 实时行情 SSE 推送器（共享轮询 + fan-out） ---
+    # --- 实时行情 SSE 推送器（共享轮询 + fan-out；mock 模式轮询合成数据） ---
     try:
         from easy_tdx.models.enums import Market
         from easy_tdx.web.quote_streamer import QuoteStreamer
@@ -92,7 +108,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             # SQLite 存 "SH"/"SZ"/"BJ" 字符串，轮询器需要 Market 枚举
             return [(Market[mkt], code) for mkt, code in store.symbols()]
 
-        streamer = QuoteStreamer(client.get_security_quotes, _watch_symbols)
+        # mock 模式不受真实限流/交易时段约束，缩短轮询间隔让 E2E 的
+        # SSE 断言（首帧价格渲染）秒级到达，而不是等盘外 60s 慢拍
+        streamer = QuoteStreamer(
+            client.get_security_quotes,
+            _watch_symbols,
+            trading_interval=2.0 if mock_mode else 8.0,
+            idle_interval=2.0 if mock_mode else 60.0,
+        )
         streamer.start()
         app.state.quote_streamer = streamer
     except Exception:
@@ -100,9 +123,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.quote_streamer = None
 
     # --- MAC 协议客户端 ---
-    mac_client = None
+    mac_client: Any = None
     enable_mac = getattr(app.state, "enable_mac", True)
-    if enable_mac:
+    if mock_mode:
+        from easy_tdx.web.e2e_mock import MockMacClient
+
+        mac_client = MockMacClient()
+    elif enable_mac:
         try:
             from easy_tdx.mac.client import AsyncMacClient
 

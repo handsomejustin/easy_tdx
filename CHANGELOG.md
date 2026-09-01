@@ -2,6 +2,12 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [未发布]
+
+### 新增
+
+- **Playwright E2E 前端测试基建**（升级计划 P4-1）——web-ui 引入 `@playwright/test`（`e2e/` + `playwright.config.ts`，`npm run test:e2e`）。**mock 方案选后端合成数据而非 page.route 拦截**：`EASY_TDX_E2E_MOCK=1` 时 serve 的 lifespan 把 TDX/MAC 客户端替换为合成数据客户端（`web/e2e_mock.py`，按 (market, code) CRC32 播种的确定性随机游走，分页语义与真实 /bars 一致），回测/WF/一条龙评估/自选/策略库继续走**真实后端代码**（它们本就不依赖行情连接），SSE 由 QuoteStreamer 真轮询合成数据全链路覆盖（mock 模式下轮询降到 2s 一拍，不受交易时段限制）。用例覆盖：看板五大指数区块+SSE 价格渲染、自选增删、回测全流程（净值图/绩效表/成交记录）、「附加分析」开关（WF 逐窗柱状图+一条龙评估卡）、策略库保存；`EASY_TDX_CONFIG_DIR` 指向每轮独立临时目录（断言可写死、不污染真实 `~/.easy_tdx`）。CI frontend job 追加 E2E 步骤；`verify_ci.sh` 补 `--no-frontend` 与前端 typecheck+build+E2E 段。新增 `tests/unit/test_e2e_mock.py`（11 例）守护 mock 与真实客户端的契约。
+
 ## [1.27.0] — 2026-09-01
 
 **公式与轮动版本**——升级计划 P3 + P4（部分）落地：通达信公式解析器让写惯公式的用户零 Python 进入筛选/回测，轮动组合引擎补齐「排名换仓」组合形态，附 Docker 部署与一键门禁脚本。

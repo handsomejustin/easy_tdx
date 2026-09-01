@@ -76,3 +76,16 @@ jobs:
         working-directory: web-ui
       - run: npm run build
         working-directory: web-ui
+      # Playwright E2E（mock 模式）：serve 托管刚构建的 dist，行情全部来自
+      # EASY_TDX_E2E_MOCK=1 合成数据，不连真实通达信服务器、不受交易时段限制。
+      # 需要 Python 侧 easy-tdx[web]（webServer 用系统 python 启动 serve）。
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[web]"
+      - run: npx playwright install --with-deps chromium
+        working-directory: web-ui
+      - run: npm run test:e2e
+        working-directory: web-ui
+        env:
+          EASY_TDX_PYTHON: python
