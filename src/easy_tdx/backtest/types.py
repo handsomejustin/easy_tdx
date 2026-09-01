@@ -108,7 +108,7 @@ def to_json_native(obj: Any) -> Any:
 
     if isinstance(obj, dict):
         return {str(k): to_json_native(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
+    if isinstance(obj, list | tuple):
         return [to_json_native(v) for v in obj]
     if isinstance(obj, np.integer):
         return int(obj)
@@ -119,7 +119,7 @@ def to_json_native(obj: Any) -> Any:
         return bool(obj)
     if isinstance(obj, float) and not math.isfinite(obj):
         return None
-    if obj is None or isinstance(obj, (str, int, bool)):
+    if obj is None or isinstance(obj, str | int | bool):
         return obj
     if hasattr(obj, "isoformat"):
         return obj.isoformat()

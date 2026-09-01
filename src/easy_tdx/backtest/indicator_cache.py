@@ -89,6 +89,6 @@ class IndicatorCache:
             arr_id = id(a)
             self._array_refs[arr_id] = a  # 持引用，防 id 复用
             return ("arr", arr_id, a.shape)
-        if isinstance(a, (int, float, str, bool, type(None))):
+        if isinstance(a, int | float | str | bool | None):
             return ("s", type(a).__name__, repr(a))
         return ("o", type(a).__name__, repr(a))

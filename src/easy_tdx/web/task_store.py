@@ -53,16 +53,16 @@ def _json_default(obj: Any) -> Any:
     import numpy as np
     import pandas as pd
 
-    if isinstance(obj, (np.integer,)):
+    if isinstance(obj, np.integer):
         return int(obj)
-    if isinstance(obj, (np.floating,)):
+    if isinstance(obj, np.floating):
         v = float(obj)
         return v if np.isfinite(v) else None
     if isinstance(obj, np.bool_):
         return bool(obj)
     if isinstance(obj, pd.Timestamp):
         return obj.isoformat()
-    if isinstance(obj, (np.ndarray, pd.Series)):
+    if isinstance(obj, np.ndarray | pd.Series):
         return obj.tolist()
     return str(obj)
 

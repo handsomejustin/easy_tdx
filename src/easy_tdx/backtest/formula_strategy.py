@@ -116,7 +116,7 @@ def _clean_json(obj: Any) -> Any:
 
     if isinstance(obj, dict):
         return {str(k): _clean_json(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
+    if isinstance(obj, list | tuple):
         return [_clean_json(v) for v in obj]
     if isinstance(obj, _np.integer):
         return int(obj)
@@ -125,7 +125,7 @@ def _clean_json(obj: Any) -> Any:
         return f if _np.isfinite(f) else None
     if isinstance(obj, _np.bool_):
         return bool(obj)
-    if obj is None or isinstance(obj, (str, int, bool)):
+    if obj is None or isinstance(obj, str | int | bool):
         return obj
     if isinstance(obj, float):
         return float(obj) if _np.isfinite(obj) else None

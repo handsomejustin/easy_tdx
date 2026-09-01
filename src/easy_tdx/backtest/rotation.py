@@ -107,7 +107,7 @@ def _clean(obj: Any) -> Any:
     """numpy/Timestamp/NaN → JSON 原生（递归）。"""
     if isinstance(obj, dict):
         return {str(k): _clean(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
+    if isinstance(obj, list | tuple):
         return [_clean(v) for v in obj]
     if isinstance(obj, np.integer):
         return int(obj)
@@ -118,7 +118,7 @@ def _clean(obj: Any) -> Any:
         return bool(obj)
     if isinstance(obj, float) and not math.isfinite(obj):
         return None
-    if obj is None or isinstance(obj, (str, int, bool)):
+    if obj is None or isinstance(obj, str | int | bool):
         return obj
     if hasattr(obj, "isoformat"):
         return obj.isoformat()
