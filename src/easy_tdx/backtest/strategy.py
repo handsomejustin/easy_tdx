@@ -106,7 +106,10 @@ class StrategyDataProxy:
                 # datetime 列转为 int (YYYYMMDD)
                 self._arrays[col] = _datetime_to_int(arr)
             else:
-                self._arrays[col] = arr.astype(np.float64)
+                # copy=False：已是 float64 时零拷贝复用同一数组对象——
+                # 网格寻优复用同一 df 时，IndicatorCache 按 (id, shape) 签名
+                # 才能跨网格点命中（见 indicator_cache.py）
+                self._arrays[col] = arr.astype(np.float64, copy=False)
 
     def _set_index(self, idx: int) -> None:
         """设置当前 bar 索引（引擎调用）。"""
@@ -233,6 +236,8 @@ class Strategy(ABC):
         self._position_size = 0.0
         self._cash = 0.0
         self._datetime_array: NDArray | None = None
+        # 两段式寻优加速：引擎挂载的指标缓存（None = 直接计算）
+        self._indicator_cache: Any = None
 
     # ── 用户实现方法 ─────────────────────────────────────────────────────────────
 
@@ -281,8 +286,12 @@ class Strategy(ABC):
             else:
                 unpacked_args.append(arg)
 
-        # 调用函数
-        result = func(*unpacked_args, **kwargs)
+        # 两段式加速：挂载了 IndicatorCache（网格寻优场景）时按
+        # (函数, 参数) 复用跨网格点的指标计算结果
+        if self._indicator_cache is not None:
+            result = self._indicator_cache.get_or_compute(func, tuple(unpacked_args), kwargs)
+        else:
+            result = func(*unpacked_args, **kwargs)
 
         # 存储指标（用于调试/日志）
         func_name = getattr(func, "__name__", str(func))

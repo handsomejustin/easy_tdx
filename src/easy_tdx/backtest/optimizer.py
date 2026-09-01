@@ -78,6 +78,7 @@ class OptimizeResult:
     results: list[GridPointResult]
     best: GridPointResult | None = None
     heatmap: dict[str, Any] | None = None
+    cache_stats: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """序列化为 JSON 兼容字典。"""
@@ -117,6 +118,7 @@ class OptimizeResult:
                 else None
             ),
             "heatmap": self.heatmap,
+            "cache_stats": self.cache_stats,
         }
 
 
@@ -149,7 +151,24 @@ class ParamGridOptimizer:
         stamp_tax: float = 0.001,
         slippage: float = 0.0,
         execution: str = "next_open",
+        workers: int = 1,
     ) -> None:
+        """Initialize.
+
+        Args:
+            strategy_name: 策略名（从注册表解析）
+            param_grid: 参数取值网格，如 {"fast": [5,10,20], "slow": [10,20,30]}
+            df: OHLCV DataFrame（所有网格点共用）
+            cash: 初始资金
+            commission: 佣金率
+            min_commission: 最低佣金
+            stamp_tax: 印花税
+            slippage: 滑点
+            execution: 成交模式
+            workers: 并行度。1（默认）= 进程内串行 + 指标缓存跨网格点复用
+                （两段式加速）；≥2 = ProcessPoolExecutor 进程级并行（回测
+                持 GIL，线程无加速；并行模式下各进程独立缓存）。
+        """
         size = 1
         for vals in param_grid.values():
             size *= len(vals)
@@ -167,6 +186,10 @@ class ParamGridOptimizer:
         self._stamp_tax = stamp_tax
         self._slippage = slippage
         self._execution = execution
+        self._workers = max(int(workers), 1)
+        # 两段式加速：指标层缓存（workers==1 时生效；并行模式各进程独立）
+        self._cache: Any = None
+        self._cache_stats: dict[str, Any] | None = None
 
     def run(self) -> OptimizeResult:
         """执行网格寻优，返回排序后的结果。"""
@@ -176,43 +199,12 @@ class ParamGridOptimizer:
         entry = get_registry().get(self._strategy_name)
         param_names = list(self._param_grid.keys())
         value_lists = [self._param_grid[name] for name in param_names]
+        combos = [dict(zip(param_names, c, strict=True)) for c in itertools.product(*value_lists)]
 
-        results: list[GridPointResult] = []
-        for combo in itertools.product(*value_lists):
-            params = dict(zip(param_names, combo, strict=True))
-            try:
-                # 寻优时跳过参数范围检查——探索超范围值是寻优的目的；
-                # 但跨参数语义约束（如 fast<slow）仍生效，倒挂组合在此被跳过
-                strategy = entry.build(params, skip_bounds=True)
-            except ValueError:
-                # 预期内的无效组合（语义倒挂/相等），info 级即可，无需堆栈
-                logger.info("网格点 %s 语义无效，跳过", params)
-                continue
-            try:
-                engine = BacktestEngine(
-                    strategy=strategy,
-                    cash=self._cash,
-                    commission=self._commission,
-                    min_commission=self._min_commission,
-                    stamp_tax=self._stamp_tax,
-                    slippage=self._slippage,
-                    execution=self._execution,
-                )
-                bt_result: BacktestResult = engine.run(self._df)
-                perf = bt_result.performance
-                results.append(
-                    GridPointResult(
-                        params=params,
-                        total_return=perf.get("total_return", 0.0),
-                        sharpe=perf.get("sharpe", 0.0),
-                        max_drawdown=perf.get("max_drawdown", 0.0),
-                        total_trades=int(perf.get("total_trades", 0)),
-                        win_rate=perf.get("win_rate", 0.0),
-                        profit_factor=perf.get("profit_factor", 0.0),
-                    )
-                )
-            except Exception:  # noqa: BLE001 — 单点失败不中断整个网格
-                logger.warning("网格点 %s 回测失败，跳过", params, exc_info=True)
+        if self._workers >= 2:
+            results = self._run_parallel(combos)
+        else:
+            results = self._run_serial(combos, entry)
 
         # 按 total_return 降序
         results.sort(key=lambda r: r.total_return, reverse=True)
@@ -220,13 +212,92 @@ class ParamGridOptimizer:
         best = results[0] if results else None
         heatmap = self._build_heatmap(results, param_names) if len(param_names) == 2 else None
 
-        return OptimizeResult(
+        out = OptimizeResult(
             strategy=self._strategy_name,
             param_names=param_names,
             results=results,
             best=best,
             heatmap=heatmap,
+            cache_stats=self._cache_stats,
         )
+        return out
+
+    def _run_serial(self, combos: list[dict[str, Any]], entry: Any) -> list[GridPointResult]:
+        """进程内串行 + 指标缓存复用。"""
+        from easy_tdx.backtest.indicator_cache import IndicatorCache
+
+        cache = IndicatorCache()
+        self._cache = cache
+        results: list[GridPointResult] = []
+        for params in combos:
+            r = self._evaluate_point(entry, params, cache)
+            if r is not None:
+                results.append(r)
+        self._cache_stats = cache.stats()
+        return results
+
+    def _run_parallel(self, combos: list[dict[str, Any]]) -> list[GridPointResult]:
+        """进程池并行（Windows spawn 要求 worker 函数与参数可 pickle）。"""
+        import concurrent.futures
+
+        jobs = [
+            (
+                self._strategy_name,
+                params,
+                self._df,
+                self._cash,
+                self._commission,
+                self._min_commission,
+                self._stamp_tax,
+                self._slippage,
+                self._execution,
+            )
+            for params in combos
+        ]
+        results: list[GridPointResult] = []
+        with concurrent.futures.ProcessPoolExecutor(max_workers=self._workers) as pool:
+            for r in pool.map(_optimize_grid_point, jobs, chunksize=4):
+                if r is not None:
+                    results.append(r)
+        return results
+
+    def _evaluate_point(
+        self, entry: Any, params: dict[str, Any], cache: Any
+    ) -> GridPointResult | None:
+        """评估单个网格点（无效组合/回测失败返回 None）。"""
+        try:
+            # 寻优时跳过参数范围检查——探索超范围值是寻优的目的；
+            # 但跨参数语义约束（如 fast<slow）仍生效，倒挂组合在此被跳过
+            strategy = entry.build(params, skip_bounds=True)
+        except ValueError:
+            # 预期内的无效组合（语义倒挂/相等），info 级即可，无需堆栈
+            logger.info("网格点 %s 语义无效，跳过", params)
+            return None
+        try:
+            engine = BacktestEngine(
+                strategy=strategy,
+                cash=self._cash,
+                commission=self._commission,
+                min_commission=self._min_commission,
+                stamp_tax=self._stamp_tax,
+                slippage=self._slippage,
+                execution=self._execution,
+                indicator_cache=cache,
+            )
+            bt_result: BacktestResult = engine.run(self._df)
+            perf = bt_result.performance
+            return GridPointResult(
+                params=params,
+                total_return=perf.get("total_return", 0.0),
+                sharpe=perf.get("sharpe", 0.0),
+                max_drawdown=perf.get("max_drawdown", 0.0),
+                total_trades=int(perf.get("total_trades", 0)),
+                win_rate=perf.get("win_rate", 0.0),
+                profit_factor=perf.get("profit_factor", 0.0),
+            )
+        except Exception:  # noqa: BLE001 — 单点失败不中断整个网格
+            logger.warning("网格点 %s 回测失败，跳过", params, exc_info=True)
+            return None
 
     def _build_heatmap(
         self,
@@ -253,3 +324,42 @@ class ParamGridOptimizer:
             data.append([x_idx[x], y_idx[y], r.total_return])
 
         return {"x_name": x_name, "y_name": y_name, "x": x_vals, "y": y_vals, "data": data}
+
+
+def _optimize_grid_point(job: tuple[Any, ...]) -> GridPointResult | None:
+    """进程池 worker：在子进程内评估单个网格点（模块级，可 pickle）。
+
+    job = (strategy_name, params, df, cash, commission, min_commission,
+           stamp_tax, slippage, execution)
+    """
+    (name, params, df, cash, commission, min_commission, stamp_tax, slippage, execution) = job
+    from easy_tdx.backtest.strategies import get_registry
+
+    try:
+        entry = get_registry().get(name)
+        strategy = entry.build(params, skip_bounds=True)
+    except ValueError:
+        return None
+    try:
+        engine = BacktestEngine(
+            strategy=strategy,
+            cash=cash,
+            commission=commission,
+            min_commission=min_commission,
+            stamp_tax=stamp_tax,
+            slippage=slippage,
+            execution=execution,
+        )
+        perf = engine.run(df).performance
+        return GridPointResult(
+            params=params,
+            total_return=perf.get("total_return", 0.0),
+            sharpe=perf.get("sharpe", 0.0),
+            max_drawdown=perf.get("max_drawdown", 0.0),
+            total_trades=int(perf.get("total_trades", 0)),
+            win_rate=perf.get("win_rate", 0.0),
+            profit_factor=perf.get("profit_factor", 0.0),
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("网格点 %s 回测失败（并行 worker），跳过", params, exc_info=True)
+        return None

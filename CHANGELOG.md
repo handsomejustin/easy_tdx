@@ -2,6 +2,25 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.25.0] — 2026-09-01
+
+**防过拟合验证链版本**——补上两个下游项目（backtest-system / indicator-lab）都在自研的最大空白：样本外验证工具链。此后「回测好」可升级为「样本外也好」。升级计划第二阶段（P1），全量 1193 单测。
+
+### 新增
+
+- **Walk-Forward 样本外验证引擎**（`backtest/walkforward.py`）——前 30% 预热区后均分 7 个连续测试窗，**每窗独立开仓**（窗口起点空仓、持仓不跨窗结转，杜绝跨窗重复计收益——backtest-system v1.2.1 踩过的坑直接采用正确语义）；每窗前置 60 根上下文做指标预热，用引擎 `warmup_bars` 压制上下文区间信号（指标有历史、信号只属窗口内）。输出逐窗收益、盈利窗占比 `consistency`、连乘收益、最差/最好窗、平均夏普。接入 CLI `easy-tdx backtest --wf [--wf-windows N]` 与 REST `POST /backtest/wf/run/async`。
+- **策略适配性评估**（`backtest/fitness.py`）——train/valid/test 三段切分（默认 60/20/20，段间独立回测）+ 8 项可解释检查（三段各自盈利/收益符号一致/测试段回撤有界/训练段样本充分/测试段未失效停摆/样本外加权夏普为正），通过率 ≥75% 且样本充分 →「高适配」标记；`evaluate_prefix` 只用截至某日之前的数据评估（滚动适配过滤原语，无未来数据泄漏），`rolling_fitness_scores` 输出时序适配分。
+- **一条龙评估**（`backtest/benchmark.py` `evaluate_strategy()`）——回测 + WF + 适配性 + 综合评分 + S-D 评级 + **买入持有基准对比**（同区间同费率，`excess_return` 为跑不赢买入持有的一票否决级研发信号）一次调用出全报告。CLI `easy-tdx backtest --evaluate`；REST `POST /backtest/evaluate/run/async`。
+- **策略综合评分**（`backtest/scoring.py`）——0-100 加权（收益 50% + 夏普 15% + 回撤 10% + Sortino 5% + WF 一致性 20%；无 WF 数据时权重自动归一化，不惩罚不加分），子项复用评级锚点插值，阈值口径单一真源。
+- **评级后端化**（`backtest/grading.py`）——前端 `web-ui/src/grading/`（S-D 五档、六维加权、一票否决、组合净值指标重算）忠实移植 Python：`grade_performance` / `grade_grid_point` / `grade_portfolio_equity`；**评级刻意不看收益率**（与评分分工）。REST `/backtest/run` 与 `/backtest/run/async` 响应新增 `grade` + `score` 字段，CLI 通道同样可得。
+- **多 seed 验证 + 晋级门槛**（`backtest/validation.py`）——股票池多 seed 随机抽样回测，跨样本稳定性指标（正收益比例、均值/中位数收益、平均夏普、各 seed 稳定性列 `per_seed_positive_ratio`）+ 四项可配置晋级门槛（正收益比例 ≥0.5 / 平均夏普 >0 / 平均交易数 ≥5 / 平均收益 >0），任一不达标即 `promoted=False`。REST `POST /backtest/multiseed/run/async`。
+- **寻优两段式加速**——`IndicatorCache`（指标层跨网格点复用，`fast×slow` 网格中同参数指标只算一次，实测 36 点网格命中率 41.7%）+ `ParamGridOptimizer(workers=N)` 进程级并行（Windows spawn 安全的模块级 worker，实测 36 点×800 根 4 进程约 2 倍，网格越大收益越高）；寻优结果附 `cache_stats`。诚实说明：本引擎逐 bar Python 循环占大头，指标缓存对廉价指标（MA/RSI）墙钟收益有限（~1.01x），其价值在昂贵指标（缠论类）与并行模式；REST 寻优请求新增 `workers` 字段。附带优化：`StrategyDataProxy` 数组绑定改零拷贝（`astype(copy=False)`）。
+
+### 内部
+
+- `strategy.py` `I()` 支持引擎挂载指标缓存（不挂载时行为不变，向后兼容）。
+- `backtest/__init__.py` 导出 WF/评分/评级/适配性/一条龙评估全套 API。
+
 ## [1.24.0] — 2026-09-01
 
 **信任与持久化版本**——修复下游反馈的 QFQ 复权可信度问题（引入双引擎对拍验证）、回测任务落盘 SQLite（重启不丢）、品种感知费率（ETF/可转债免印花税）。源自对两个下游项目（backtest-system / indicator-lab）的逆向调研，完整升级计划见 `docs/upgrade-plan-2026H2.md`。

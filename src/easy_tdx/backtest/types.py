@@ -96,6 +96,36 @@ class Position:
 # ── 回测结果 ────────────────────────────────────────────────────────────────
 
 
+def to_json_native(obj: Any) -> Any:
+    """递归把 numpy 标量/Timestamp/NaN 清洗为 JSON 原生类型。
+
+    供各结果 dataclass 的 ``to_dict`` 在源头清洗（REST 任务结果与
+    Pydantic 序列izer 都不认 numpy.int64/float64）。
+    """
+    import math
+
+    import numpy as np
+
+    if isinstance(obj, dict):
+        return {str(k): to_json_native(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [to_json_native(v) for v in obj]
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        f = float(obj)
+        return f if math.isfinite(f) else None
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, float) and not math.isfinite(obj):
+        return None
+    if obj is None or isinstance(obj, (str, int, bool)):
+        return obj
+    if hasattr(obj, "isoformat"):
+        return obj.isoformat()
+    return str(obj)
+
+
 @dataclass
 class BacktestResult:
     """回测完整结果。
