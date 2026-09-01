@@ -177,6 +177,9 @@ class MacClient:
         # XDXR（除权除息）记录缓存：(market, code) -> DataFrame。
         # 仅在服务端 QFQ 返回异常（负价）时用于本地前复权重算。
         self._xdxr_cache: dict[tuple[int, str], pd.DataFrame] = {}
+        # 最近一次 QFQ 本地重算的对拍报告（qfq_check.crosscheck_qfq 产出），
+        # 供调试/上游排查；None = 尚未触发过本地重算。
+        self.last_qfq_crosscheck: dict[str, object] | None = None
 
     # ------------------------------------------------------------------ #
     # 工厂方法
@@ -479,11 +482,22 @@ class MacClient:
             重算后的 DataFrame；XDXR 取不到或重算仍异常时原样返回 df。
         """
         from .adjust import apply_forward_adjust, has_bad_prices
+        from .qfq_check import crosscheck_qfq
 
         xd = self._fetch_xdxr_records(market, code)
         if xd is None:
             return df
         out = apply_forward_adjust(df, xd)
+        # 对拍校验：公式法结果 vs 跳空检测法独立证据链，不一致即告警
+        report = crosscheck_qfq(df, out, xd, code, market)
+        self.last_qfq_crosscheck = report.to_dict()
+        if not report.ok:
+            _logger.warning(
+                "QFQ 对拍校验发现 %d 个问题（%s）：%s",
+                len(report.issues),
+                report.symbol,
+                "; ".join(f"{i.kind}@{i.date}" for i in report.issues[:5]),
+            )
         if has_bad_prices(out):
             _logger.warning("QFQ 本地重算后 %s %s 仍含非法价格，降级返回服务端 QFQ", market, code)
             return df
@@ -1239,6 +1253,8 @@ class AsyncMacClient(AsyncHeartbeatMixin):
         # XDXR（除权除息）记录缓存：(market, code) -> DataFrame。
         # 仅在服务端 QFQ 返回异常（负价）时用于本地前复权重算。
         self._xdxr_cache: dict[tuple[int, str], pd.DataFrame] = {}
+        # 最近一次 QFQ 本地重算的对拍报告（同 MacClient.last_qfq_crosscheck）
+        self.last_qfq_crosscheck: dict[str, object] | None = None
 
     # ------------------------------------------------------------------ #
     # 工厂方法
@@ -1477,11 +1493,22 @@ class AsyncMacClient(AsyncHeartbeatMixin):
     ) -> pd.DataFrame:
         """对 QFQ 异常的 K 线用 NONE+XDXR 本地重算前复权（同 MacClient）。"""
         from .adjust import apply_forward_adjust, has_bad_prices
+        from .qfq_check import crosscheck_qfq
 
         xd = self._fetch_xdxr_records(market, code)
         if xd is None:
             return df
         out = apply_forward_adjust(df, xd)
+        # 对拍校验：公式法结果 vs 跳空检测法独立证据链，不一致即告警
+        report = crosscheck_qfq(df, out, xd, code, market)
+        self.last_qfq_crosscheck = report.to_dict()
+        if not report.ok:
+            _logger.warning(
+                "QFQ 对拍校验发现 %d 个问题（%s）：%s",
+                len(report.issues),
+                report.symbol,
+                "; ".join(f"{i.kind}@{i.date}" for i in report.issues[:5]),
+            )
         if has_bad_prices(out):
             _logger.warning("QFQ 本地重算后 %s %s 仍含非法价格，降级返回服务端 QFQ", market, code)
             return df

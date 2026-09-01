@@ -30,6 +30,12 @@ import click
 @click.option("--cash", default=100000.0, type=float, help="初始资金")
 @click.option("--commission", default=0.0003, type=float, help="佣金率")
 @click.option(
+    "--auto-fees",
+    "auto_fees",
+    is_flag=True,
+    help="按标的品种自动解析费率（ETF/可转债免印花税等；显式 --commission 优先）",
+)
+@click.option(
     "--execution",
     default="next_open",
     type=click.Choice(["next_open", "next_close"]),
@@ -47,6 +53,19 @@ import click
 )
 @click.option("--table", "use_table", is_flag=True, help="表格输出")
 @click.option("--output", "output_fmt", type=click.Choice(["json", "table", "csv"]), default="json")
+@click.option(
+    "--wf",
+    "walk_forward",
+    is_flag=True,
+    help="附加 Walk-Forward 样本外验证（默认 7 窗，每窗独立开仓）",
+)
+@click.option("--wf-windows", "wf_windows", default=7, type=int, help="Walk-Forward 窗口数")
+@click.option(
+    "--evaluate",
+    "full_evaluate",
+    is_flag=True,
+    help="一条龙评估：回测+WF+适配性+综合评分+S-D评级+买入持有基准对比（覆盖常规输出）",
+)
 def backtest(
     market: str,
     code: str,
@@ -56,6 +75,7 @@ def backtest(
     combo_mode: str,
     cash: float,
     commission: float,
+    auto_fees: bool,
     execution: str,
     period: str,
     adjust: str,
@@ -64,6 +84,9 @@ def backtest(
     chanlun_level: str | None,
     use_table: bool,
     output_fmt: str,
+    walk_forward: bool,
+    wf_windows: int,
+    full_evaluate: bool,
 ) -> None:
     """回测引擎：执行策略并返回绩效报告。
 
@@ -132,12 +155,34 @@ def backtest(
         )
     else:
         assert strategy_cls is not None  # guarded above by SystemExit
+
+        # 一条龙评估：覆盖常规输出（含回测本身，无需重复跑）
+        if full_evaluate:
+            import json as _json
+
+            from ..backtest.benchmark import evaluate_strategy
+
+            report = evaluate_strategy(
+                strategy=strategy_cls,
+                df=df,
+                cash=cash,
+                commission=commission,
+                execution=execution,
+                symbol=f"{market}:{code}",
+                auto_fees=auto_fees,
+                n_windows=wf_windows,
+            )
+            click.echo(_json.dumps(report, ensure_ascii=False, default=str))
+            return
+
         engine = BacktestEngine(
             strategy=strategy_cls,
             cash=cash,
             commission=commission,
             execution=execution,
             chanlun_level=chanlun_level,
+            symbol=f"{market}:{code}",
+            auto_fees=auto_fees,
         )
         result = engine.run(df)
 
@@ -149,6 +194,25 @@ def backtest(
         _print_table(result)
     else:
         click.echo(result.to_json())
+
+    # 6. 附加 Walk-Forward 样本外验证（--wf）
+    if walk_forward and not is_combo:
+        import json as _json
+
+        from ..backtest.walkforward import WalkForwardEngine
+
+        assert strategy_cls is not None
+        wf = WalkForwardEngine(
+            strategy=strategy_cls,
+            n_windows=wf_windows,
+            cash=cash,
+            commission=commission,
+            execution=execution,
+            symbol=f"{market}:{code}",
+            auto_fees=auto_fees,
+        )
+        wf_report = {"walkforward": wf.run(df).to_dict()}
+        click.echo(_json.dumps(wf_report, ensure_ascii=False, default=str))
 
 
 def _load_strategy(strategy_str: str | None, strategy_file: str | None) -> type | None:

@@ -91,6 +91,7 @@ class PortfolioBacktestEngine:
         slippage: float = 0.0,
         execution: str = "next_open",
         chanlun_level: str | None = None,
+        auto_fees: bool = False,
     ) -> None:
         """初始化组合回测引擎。
 
@@ -107,6 +108,11 @@ class PortfolioBacktestEngine:
             slippage: 滑点
             execution: 执行模式
             chanlun_level: 缠论级别（可选）
+            auto_fees: 为 True 时按各标的代码解析品种费率（ETF/债券免
+                印花税等），覆盖默认值；显式非默认费率仍优先。
+
+        .. versionadded:: 1.24
+            ``auto_fees`` 品种感知费率（按 StockData.market+code 逐标的解析）。
         """
         self._strategy = strategy
         self._stocks = stocks
@@ -118,6 +124,7 @@ class PortfolioBacktestEngine:
         self._slippage = slippage
         self._execution = execution
         self._chanlun_level = chanlun_level
+        self._auto_fees = auto_fees
 
     def _compute_allocations(self) -> dict[str, float]:
         """计算每只标的的资金分配。"""
@@ -158,6 +165,8 @@ class PortfolioBacktestEngine:
                 slippage=self._slippage,
                 execution=self._execution,
                 chanlun_level=self._chanlun_level,
+                symbol=key,
+                auto_fees=self._auto_fees,
             )
             result = engine.run(stock.df)
             individual_results[key] = result

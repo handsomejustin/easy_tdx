@@ -19,12 +19,14 @@ from fastapi import APIRouter, Depends
 from easy_tdx.web.backtest_schemas import (
     BacktestRequest,
     BacktestResultResponse,
+    MultiSeedRequest,
     MultiStrategyBacktestRequest,
     OptimizeAllBacktestRequest,
     OptimizeAllRankEntry,
     OptimizeAllResult,
     OptimizeBacktestRequest,
     PortfolioBacktestRequest,
+    RotationBacktestRequest,
     SignalScanRequest,
     StrategySchemaResponse,
     TaskListResponse,
@@ -146,6 +148,76 @@ async def get_task(task_id: str) -> TaskStateResponse:
         error=state.error,
         description=state.description,
         elapsed=(state.finished_at or _now()) - (state.started_at or state.created_at),
+    )
+
+
+@router.get("/backtest/tasks/{task_id}/export")
+async def export_task(task_id: str, format: str = "json") -> Any:
+    """导出已完成任务的回测结果（JSON 全量 / CSV 主表）。
+
+    ``format=json``：完整 result 字典（performance + equity_curve + trades +
+    config 等）。``format=csv``：导出结果中的主表——优先 trades（成交明细），
+    其次 ranking（寻优排名）、equity_curve（资金曲线）；都缺时导出
+    performance 键值对。
+    """
+    import csv
+    import io
+    import json as _json
+
+    from fastapi.responses import Response
+
+    state = get_runner().peek(task_id)
+    if state is None:
+        raise ValueError(f"未知任务 '{task_id}'")
+    if state.status != "done" or state.result is None:
+        raise ValueError(f"任务 '{task_id}' 尚未完成（status={state.status}），无法导出")
+
+    result = state.result
+    fmt = format.lower()
+    if fmt not in ("json", "csv"):
+        raise ValueError(f"不支持的导出格式 '{format}'（可选 json / csv）")
+
+    if fmt == "json":
+        payload = _json.dumps(result, ensure_ascii=False, default=str)
+        return Response(
+            content=payload,
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="backtest-{task_id[:8]}.json"'},
+        )
+
+    # CSV：挑主表
+    rows: list[dict[str, Any]] | None = None
+    label = "metrics"
+    for key, name in (("trades", "trades"), ("ranking", "ranking"), ("equity_curve", "equity")):
+        val = result.get(key)
+        if isinstance(val, list) and val and isinstance(val[0], dict):
+            rows = val
+            label = name
+            break
+    if rows is not None:
+        buf = io.StringIO()
+        dict_writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()), extrasaction="ignore")
+        dict_writer.writeheader()
+        for r in rows:
+            dict_writer.writerow(r)
+        content = buf.getvalue()
+    else:
+        perf = result.get("performance")
+        if not isinstance(perf, dict):
+            raise ValueError(f"任务 '{task_id}' 的结果不含可导出的表格数据")
+        buf = io.StringIO()
+        list_writer = csv.writer(buf)
+        list_writer.writerow(["metric", "value"])
+        for k, v in perf.items():
+            list_writer.writerow([k, v])
+        content = buf.getvalue()
+        label = "performance"
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="backtest-{task_id[:8]}-{label}.csv"'
+        },
     )
 
 
@@ -336,6 +408,257 @@ async def run_signal_scan_async(
     return TaskSubmitResponse(task_id=task_id, status=status)
 
 
+# ── Walk-Forward / 一条龙评估（v1.25 防过拟合链）──────────────────────────────
+
+
+@router.post("/backtest/wf/run/async", response_model=TaskSubmitResponse, status_code=202)
+async def run_walkforward_async(
+    req: BacktestRequest,
+    n_windows: int = 7,
+    client: Any = Depends(get_client),
+) -> TaskSubmitResponse:
+    """提交 Walk-Forward 样本外验证后台任务（默认 7 窗、每窗独立开仓）。
+
+    数据来源同 /backtest/run/async（内联 ohlcv 或按 symbol 取行情）。
+    结果含逐窗收益、盈利窗占比 consistency、连乘收益等，通过
+    GET /backtest/tasks/{task_id} 轮询。
+    """
+    df = await _resolve_df(client, req)
+    snapshot = req.model_copy()
+    description = f"{snapshot.strategy} WF验证 | {len(df)}根 | {snapshot.symbol or '内联数据'}"
+    runner = get_runner()
+    task_id = runner.submit(
+        lambda: _run_walkforward(df, snapshot, n_windows), description=description
+    )
+    state = runner.get(task_id)
+    status: Any = state.status if state.status in ("pending", "running") else "running"
+    return TaskSubmitResponse(task_id=task_id, status=status)
+
+
+@router.post("/backtest/evaluate/run/async", response_model=TaskSubmitResponse, status_code=202)
+async def run_evaluate_async(
+    req: BacktestRequest,
+    client: Any = Depends(get_client),
+) -> TaskSubmitResponse:
+    """提交一条龙评估后台任务：回测 + WF + 适配性体检 + 综合评分 + S-D 评级
+    + 买入持有基准对比（excess_return）。
+
+    结果结构见 ``easy_tdx.backtest.benchmark.evaluate_strategy`` 文档，
+    通过 GET /backtest/tasks/{task_id} 轮询；可用
+    GET /backtest/tasks/{task_id}/export?format=json 导出。
+    """
+    df = await _resolve_df(client, req)
+    snapshot = req.model_copy()
+    description = f"{snapshot.strategy} 一条龙评估 | {snapshot.symbol or '内联数据'}"
+    runner = get_runner()
+    task_id = runner.submit(lambda: _run_evaluate(df, snapshot), description=description)
+    state = runner.get(task_id)
+    status: Any = state.status if state.status in ("pending", "running") else "running"
+    return TaskSubmitResponse(task_id=task_id, status=status)
+
+
+async def _resolve_df(client: Any, req: BacktestRequest) -> pd.DataFrame:
+    """内联 ohlcv 或按 symbol 取行情（/backtest/run/async 同逻辑的复用封装）。"""
+    if req.ohlcv is not None:
+        return _ohlcv_to_df(req.ohlcv)
+    if req.symbol is not None:
+        return await _fetch_bars(client, req.symbol, req.category, max(req.count, 800))
+    raise ValueError("必须提供 ohlcv 或 symbol")
+
+
+@router.post("/backtest/multiseed/run/async", response_model=TaskSubmitResponse, status_code=202)
+async def run_multiseed_async(
+    req: MultiSeedRequest,
+    client: Any = Depends(get_client),
+) -> TaskSubmitResponse:
+    """提交多 seed 随机抽样验证后台任务（v1.25 晋级门槛）。
+
+    股票池逐标的取行情（async），后台线程跑 MultiSeedValidator：多 seed
+    抽样 → 跨样本稳定性 → 四项晋级门槛（正收益比例/平均夏普/平均交易数/
+    平均收益）。结果含 per_seed_positive_ratio 稳定性列，通过
+    GET /backtest/tasks/{task_id} 轮询。
+    """
+    from easy_tdx.web.convert import category_from_str, market_from_str
+
+    stock_dfs: dict[str, pd.DataFrame] = {}
+    for symbol in req.stocks:
+        market_str, code = symbol.split(":", 1)
+        try:
+            page = await client.get_security_bars(
+                market_from_str(market_str),
+                code,
+                category_from_str(req.category),
+                0,
+                req.count,
+            )
+        except Exception:  # noqa: BLE001 — 单标的失败跳过
+            continue
+        if len(page) >= 30:
+            stock_dfs[symbol] = page
+    if len(stock_dfs) < 2:
+        raise ValueError(f"股票池有效标的不足 2 只（{len(stock_dfs)}/{len(req.stocks)}）")
+
+    snapshot = req.model_copy()
+    description = f"{snapshot.strategy} 多seed验证 | {len(stock_dfs)}只池×{snapshot.n_seeds}seed"
+    runner = get_runner()
+    task_id = runner.submit(lambda: _run_multiseed(stock_dfs, snapshot), description=description)
+    state = runner.get(task_id)
+    status: Any = state.status if state.status in ("pending", "running") else "running"
+    return TaskSubmitResponse(task_id=task_id, status=status)
+
+
+def _run_multiseed(stock_dfs: dict[str, pd.DataFrame], req: MultiSeedRequest) -> dict[str, Any]:
+    """执行多 seed 验证（后台线程内调用）。"""
+    from easy_tdx.backtest.validation import MultiSeedValidator
+
+    validator = MultiSeedValidator(
+        strategy=_build_strategy_from(req.strategy, req.params),
+        stock_dfs=stock_dfs,
+        n_seeds=req.n_seeds,
+        sample_size=req.sample_size,
+        gates=req.gates,
+        cash=req.cash,
+        commission=req.commission,
+        min_commission=req.min_commission,
+        stamp_tax=req.stamp_tax,
+        slippage=req.slippage,
+        execution=req.execution,
+        auto_fees=req.auto_fees,
+    )
+    return validator.run().to_dict()
+
+
+def _build_strategy_from(strategy_name: str, params: dict[str, Any]) -> Any:
+    """按名 + 参数构造策略实例（registry KeyError → ValueError）。"""
+    from easy_tdx.backtest.strategies import get_registry
+
+    try:
+        entry = get_registry().get(strategy_name)
+    except KeyError as exc:
+        raise ValueError(str(exc)) from exc
+    return entry.build(params)
+
+
+def _build_strategy(req: BacktestRequest) -> Any:
+    """解析策略实例（registry KeyError → ValueError → HTTP 400）。"""
+    from easy_tdx.backtest.strategies import get_registry
+
+    try:
+        entry = get_registry().get(req.strategy)
+    except KeyError as exc:
+        raise ValueError(str(exc)) from exc
+    return entry.build(req.params)
+
+
+def _run_walkforward(df: pd.DataFrame, req: BacktestRequest, n_windows: int = 7) -> dict[str, Any]:
+    """执行 Walk-Forward 验证并附带常规回测绩效（后台线程内调用）。"""
+    from easy_tdx.backtest.walkforward import WalkForwardEngine
+
+    wf = WalkForwardEngine(
+        strategy=_build_strategy(req),
+        n_windows=n_windows,
+        cash=req.cash,
+        commission=req.commission,
+        min_commission=req.min_commission,
+        stamp_tax=req.stamp_tax,
+        slippage=req.slippage,
+        execution=req.execution,
+        symbol=req.symbol,
+        auto_fees=req.auto_fees,
+    ).run(df)
+    return {"walkforward": wf.to_dict()}
+
+
+def _run_evaluate(df: pd.DataFrame, req: BacktestRequest) -> dict[str, Any]:
+    """执行一条龙评估（后台线程内调用）。"""
+    from easy_tdx.backtest.benchmark import evaluate_strategy
+
+    return evaluate_strategy(
+        strategy=_build_strategy(req),
+        df=df,
+        cash=req.cash,
+        commission=req.commission,
+        min_commission=req.min_commission,
+        stamp_tax=req.stamp_tax,
+        slippage=req.slippage,
+        execution=req.execution,
+        symbol=req.symbol,
+        auto_fees=req.auto_fees,
+    )
+
+
+# ── 轮动组合回测（v1.27）─────────────────────────────────────────────────────
+
+
+@router.post("/backtest/rotation/run/async", response_model=TaskSubmitResponse, status_code=202)
+async def run_rotation_async(
+    req: RotationBacktestRequest,
+    client: Any = Depends(get_client),
+) -> TaskSubmitResponse:
+    """提交轮动组合回测后台任务（v1.27）。
+
+    按打分排名定期换仓：固定槽位等额、跌出排名自动卖出补位、日/周/月刷新、
+    可选槽内止盈止损。打分支持内置动量（``score="momentum"`` + ``period``）
+    或通达信公式数值输出（``score="formula"`` + ``formula_text`` + ``score_col``）。
+    """
+    from easy_tdx.web.convert import category_from_str, market_from_str
+
+    stock_dfs: dict[str, pd.DataFrame] = {}
+    for symbol in req.stocks:
+        market_str, code = symbol.split(":", 1)
+        try:
+            page = await client.get_security_bars(
+                market_from_str(market_str), code, category_from_str(req.category), 0, req.count
+            )
+        except Exception:  # noqa: BLE001 — 单标的失败跳过
+            continue
+        if page is not None and len(page) >= 30:
+            stock_dfs[symbol] = page
+    if len(stock_dfs) < 2:
+        raise ValueError(f"股票池有效标的不足 2 只（{len(stock_dfs)}/{len(req.stocks)}）")
+
+    snapshot = req.model_copy()
+    description = f"轮动组合 | {len(stock_dfs)}只 × {snapshot.slots}槽 × {snapshot.refresh}"
+    runner = get_runner()
+    task_id = runner.submit(lambda: _run_rotation(stock_dfs, snapshot), description=description)
+    state = runner.get(task_id)
+    status: Any = state.status if state.status in ("pending", "running") else "running"
+    return TaskSubmitResponse(task_id=task_id, status=status)
+
+
+def _run_rotation(
+    stock_dfs: dict[str, pd.DataFrame], req: RotationBacktestRequest
+) -> dict[str, Any]:
+    """执行轮动回测（后台线程内调用）。"""
+    from easy_tdx.backtest.rotation import RotationEngine, formula_score, momentum_score
+
+    if req.score == "formula":
+        if not req.formula_text:
+            raise ValueError("score=formula 需要提供 formula_text")
+        score_fn = formula_score(req.formula_text, req.score_col)
+    else:
+        score_fn = momentum_score(req.period)
+
+    engine = RotationEngine(
+        stock_dfs=stock_dfs,
+        score_fn=score_fn,
+        slots=req.slots,
+        refresh=req.refresh,
+        cash=req.cash,
+        commission=req.commission,
+        min_commission=req.min_commission,
+        stamp_tax=req.stamp_tax,
+        stop_loss=req.stop_loss,
+        take_profit=req.take_profit,
+    )
+    out = engine.run().to_dict()
+    # 组合评级（净值曲线口径）
+    from easy_tdx.backtest.grading import grade_portfolio_equity
+
+    out["grade"] = grade_portfolio_equity(out["equity_curve"]).to_dict()
+    return out
+
+
 # ── 内部实现 ───────────────────────────────────────────────────────────────────
 
 
@@ -359,9 +682,18 @@ def _run_backtest(df: pd.DataFrame, req: BacktestRequest) -> dict[str, Any]:
         stamp_tax=req.stamp_tax,
         slippage=req.slippage,
         execution=req.execution,
+        symbol=req.symbol,
+        auto_fees=req.auto_fees,
     )
     result = engine.run(df)
-    return serialize_result(result)
+    out = serialize_result(result)
+    # v1.25：评级/评分后端化——REST 直接输出 S-D 档位与 0-100 综合分
+    from easy_tdx.backtest.grading import grade_performance
+    from easy_tdx.backtest.scoring import score_strategy
+
+    out["grade"] = grade_performance(dict(result.performance)).to_dict()
+    out["score"] = score_strategy(dict(result.performance)).to_dict()
+    return out
 
 
 def _ohlcv_to_df(records: list[dict[str, Any]]) -> pd.DataFrame:
@@ -422,6 +754,7 @@ def _run_portfolio_backtest(
         stamp_tax=req.stamp_tax,
         slippage=req.slippage,
         execution=req.execution,
+        auto_fees=req.auto_fees,
     )
     result = engine.run()
     return serialize_result(result)
@@ -595,6 +928,7 @@ def _run_optimize(df: pd.DataFrame, req: OptimizeBacktestRequest) -> dict[str, A
         commission=req.commission,
         slippage=req.slippage,
         execution=req.execution,
+        workers=req.workers,
     )
     result = optimizer.run()
     return result.to_dict()

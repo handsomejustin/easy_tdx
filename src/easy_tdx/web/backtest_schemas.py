@@ -55,6 +55,10 @@ class BacktestRequest(BaseModel):
     execution: Literal["next_open", "next_close"] = Field(
         default="next_open", description="成交模式"
     )
+    auto_fees: bool = Field(
+        default=False,
+        description="按标的品种自动解析费率（ETF/可转债免印花税等）；显式非默认费率优先",
+    )
 
     # 数据来源 A：内联 OHLCV（上限与 symbol 路径的 count 上限对齐，防 DoS）
     ohlcv: list[dict[str, Any]] | None = Field(
@@ -96,6 +100,9 @@ class PortfolioBacktestRequest(BaseModel):
     stamp_tax: float = Field(default=0.001, ge=0, le=0.01)
     slippage: float = Field(default=0.0, ge=0, le=0.05)
     execution: Literal["next_open", "next_close"] = Field(default="next_open")
+    auto_fees: bool = Field(
+        default=False, description="按各标的品种逐只解析费率（ETF/可转债免印花税等）"
+    )
     stocks: list[str] = Field(
         ...,
         min_length=1,
@@ -129,6 +136,13 @@ class OptimizeBacktestRequest(BaseModel):
     commission: float = Field(default=0.0003, ge=0, le=0.01)
     slippage: float = Field(default=0.0, ge=0, le=0.05)
     execution: Literal["next_open", "next_close"] = Field(default="next_open")
+    workers: int = Field(
+        default=1,
+        ge=0,
+        le=32,
+        description="并行工作进程数：0/1=串行+指标缓存（默认）；2+=进程级并行（实测 36 点网格 "
+        "800 根 K 线约 2 倍，网格越大收益越高）",
+    )
     param_grid: dict[str, list[int | float | str]] = Field(
         ...,
         min_length=1,
@@ -195,6 +209,77 @@ class OptimizeAllBacktestRequest(BaseModel):
         return self
 
 
+class MultiSeedRequest(BaseModel):
+    """多 seed 随机抽样验证 + 晋级门槛请求（v1.25）。
+
+    在给定股票池上对策略做多次（不同 seed）随机抽样回测，输出跨样本稳定性
+    （正收益比例 / 平均夏普 / 各 seed 稳定性列）与四项晋级门槛判定。
+    """
+
+    strategy: str = Field(..., description="策略名（见 /backtest/strategies）")
+    params: dict[str, Any] = Field(default_factory=dict, description="策略参数")
+    stocks: list[str] = Field(
+        ...,
+        min_length=2,
+        max_length=50,
+        description='股票池，格式 "市场:代码"，如 ["SZ:000001","SH:600519"]',
+    )
+    category: Literal["DAY", "WEEK", "MONTH", "MIN_5", "MIN_15", "MIN_30", "MIN_60"] = Field(
+        default="DAY"
+    )
+    count: int = Field(default=500, ge=60, le=2000, description="每标的 K 线根数")
+    n_seeds: int = Field(default=3, ge=1, le=10, description="随机种子数")
+    sample_size: int | None = Field(
+        default=None, ge=1, le=50, description="每 seed 抽样标的数（None=全池）"
+    )
+    cash: float = Field(default=1_000_000.0, gt=0)
+    commission: float = Field(default=0.0003, ge=0, le=0.01)
+    min_commission: float = Field(default=5.0, ge=0)
+    stamp_tax: float = Field(default=0.001, ge=0, le=0.01)
+    slippage: float = Field(default=0.0, ge=0, le=0.05)
+    execution: Literal["next_open", "next_close"] = Field(default="next_open")
+    auto_fees: bool = Field(default=True, description="按各标的品种计费（默认开）")
+    gates: dict[str, float] | None = Field(
+        default=None,
+        description="晋级门槛覆盖（positive_ratio/mean_sharpe/mean_trades/mean_return）",
+    )
+
+
+class RotationBacktestRequest(BaseModel):
+    """轮动组合回测请求（v1.27）。
+
+    按打分排名定期换仓：固定槽位等额、跌出排名自动卖出补位。
+    打分支持内置动量或通达信公式数值输出。
+    """
+
+    stocks: list[str] = Field(
+        ...,
+        min_length=2,
+        max_length=50,
+        description='股票池，格式 "市场:代码"，如 ["SZ:000001","SH:600519"]',
+    )
+    score: Literal["momentum", "formula"] = Field(
+        default="momentum", description="打分方式：momentum（内置动量）或 formula（公式数值输出）"
+    )
+    period: int = Field(default=20, ge=2, le=250, description="动量回看周期（score=momentum 时）")
+    formula_text: str | None = Field(
+        default=None, max_length=8000, description="通达信公式（score=formula 时）"
+    )
+    score_col: str | None = Field(default=None, description="公式数值输出列名（默认最后一个）")
+    slots: int = Field(default=5, ge=1, le=20, description="持仓槽位数")
+    refresh: Literal["daily", "weekly", "monthly"] = Field(default="weekly", description="调仓频率")
+    category: Literal["DAY", "WEEK", "MONTH", "MIN_5", "MIN_15", "MIN_30", "MIN_60"] = Field(
+        default="DAY"
+    )
+    count: int = Field(default=500, ge=60, le=2000, description="每标的 K 线根数")
+    cash: float = Field(default=1_000_000.0, gt=0)
+    commission: float = Field(default=0.0003, ge=0, le=0.01)
+    min_commission: float = Field(default=5.0, ge=0)
+    stamp_tax: float = Field(default=0.001, ge=0, le=0.01)
+    stop_loss: float | None = Field(default=None, gt=0, le=0.9, description="槽内止损比例")
+    take_profit: float | None = Field(default=None, gt=0, le=10.0, description="槽内止盈比例")
+
+
 # ── 响应模型 ───────────────────────────────────────────────────────────────────
 
 
@@ -213,6 +298,9 @@ class BacktestResultResponse(BaseModel):
     trades: list[dict[str, Any]]
     positions: list[dict[str, Any]]
     config: dict[str, Any]
+    # v1.25：评级（S-D，不看收益）与综合评分（0-100，含收益权重）后端输出
+    grade: dict[str, Any] | None = None
+    score: dict[str, Any] | None = None
 
 
 class TaskSubmitResponse(BaseModel):

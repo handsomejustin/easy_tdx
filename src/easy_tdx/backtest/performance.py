@@ -73,7 +73,7 @@ class PerformanceAnalyzer:
             - avg_loss: 平均亏损
             - max_win: 最大盈利
             - max_loss: 最大亏损
-            - avg_holding_days: 平均持仓天数（简化为固定值 5.0）
+            - avg_holding_days: 平均持仓天数（FIFO 配对、按 size 加权，日历日口径）
             - volatility: 年化波动率
         """
         # 边界检查

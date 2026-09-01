@@ -2,6 +2,26 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.24.0] — 2026-09-01
+
+**信任与持久化版本**——修复下游反馈的 QFQ 复权可信度问题（引入双引擎对拍验证）、回测任务落盘 SQLite（重启不丢）、品种感知费率（ETF/可转债免印花税）。源自对两个下游项目（backtest-system / indicator-lab）的逆向调研，完整升级计划见 `docs/upgrade-plan-2026H2.md`。
+
+### 新增
+
+- **QFQ 对拍验证体系**（`mac/qfq_check.py`）——公式法（NONE+XDXR）与跳空检测法（板块感知涨跌停阈值：主板 10%/双创 20%/北交所 30% + 0.5% 余量）双证据链交叉验证前复权结果，检出四类问题：`bad_price`（非法价格）、`residual_gap`（除权日仍残留跳空，疑似漏算/未生效）、`wrong_direction`（残差方向反，疑似复权过度/方向算反）、`unexplained_gap`（NONE 跳空但 XDXR 无对应记录）。已接入 `MacClient` / `AsyncMacClient` 的 QFQ 本地重算路径：不一致即打告警日志，最近一次报告存于 `client.last_qfq_crosscheck`。含「茅台式多重分红」「浦发式送转股方向」合成案例回归测试（13 个用例）。回应下游 backtest-system 对 QFQ 可靠性的反馈。
+- **回测任务 SQLite 持久化**（`web/task_store.py`）——任务状态/结果双写内存 LRU + `~/.easy_tdx/tasks.db`（随 `EASY_TDX_CONFIG_DIR`，保留 500 条），serve 重启后对比页历史任务、已完成寻优排名均可继续查询；重启时遗留的 pending/running 任务自动标记为 failed（注明「服务重启中断」）。`EASY_TDX_NO_TASK_DB=1` 可关闭（测试默认关闭）。
+- **任务结果导出端点**——`GET /backtest/tasks/{task_id}/export?format=json|csv`：JSON 导出完整 result；CSV 智能挑主表（trades → ranking → equity_curve，兜底 performance 键值对），带 `Content-Disposition` 附件头。
+- **品种感知费率**（`backtest/fees.py`）——按代码前缀+市场推断品种（股票/ETF/LOF/可转债/B股/指数），自动解析佣金/最低佣金/印花税；核心法定差异：**ETF/可转债免印花税**（此前扁平默认对 ETF 轮动类策略长期错收印花税）。接入：`BacktestEngine(symbol=..., auto_fees=True)`、`PortfolioBacktestEngine(auto_fees=True)`（逐标的解析）、CLI `easy-tdx backtest --auto-fees`、REST 请求体 `auto_fees` 字段。显式非默认费率仍优先；结果 config 快照记录 symbol 与解析后费率。34 个测试用例。
+
+### 修复
+
+- `performance.py` 中 `avg_holding_days` 的过时文档注释（实现早已是 FIFO 配对、按 size 加权的真实日历日口径，注释仍写「简化为固定值 5.0」，误导审计）。
+
+### 内部
+
+- `tests/conftest.py` 全局默认 `EASY_TDX_NO_TASK_DB=1`，防止单测污染用户真实 `~/.easy_tdx/tasks.db`。
+- `task_store` 初始化用独立 `_init_lock`（避免与写锁死锁）；`task_runner` 的 pending 落盘先于 executor.submit（避免旧状态覆盖新状态的竞态）。
+
 ## [1.23.3] — 2026-09-01
 
 **serve 纯 API 模式 + 看板修复**。自 1.23.2 以来的增量：

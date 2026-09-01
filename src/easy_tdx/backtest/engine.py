@@ -64,6 +64,9 @@ class BacktestEngine:
         slippage_model: SlippageModel | None = None,
         execution_model: ExecutionModel | None = None,
         warmup_bars: int = 0,
+        symbol: str | None = None,
+        auto_fees: bool = False,
+        indicator_cache: Any | None = None,
     ):
         """Initialize engine.
 
@@ -87,9 +90,32 @@ class BacktestEngine:
             warmup_bars: 指标预热 bar 数。前 ``warmup_bars`` 根不调用
                 ``next()``、不产生信号（指标 NaN 期过滤），避免早期数据不足
                 导致的越界或误信号。默认 0（向后兼容）。
+            symbol: 标的代码（如 ``"SH:510300"``，供品种感知费率解析）。
+            auto_fees: 为 True 且提供 symbol 时，按品种自动解析
+                commission/min_commission/stamp_tax（ETF/债券免印花税等），
+                覆盖默认值；显式传入的非默认费率仍优先于自动解析。
+            indicator_cache: 指标计算缓存（网格寻优跨点复用，见
+                :class:`~easy_tdx.backtest.indicator_cache.IndicatorCache`）。
+                None = 每次直接计算（默认，向后兼容）。
+
+        .. versionchanged:: 1.24
+            新增 ``symbol`` / ``auto_fees`` 品种感知费率参数。
         """
         self._strategy_cls = strategy if isinstance(strategy, type) else type(strategy)
         self._strategy_instance = strategy if isinstance(strategy, Strategy) else None
+
+        self._symbol = symbol
+        if auto_fees and symbol:
+            from easy_tdx.backtest.fees import resolve_fee_model
+
+            fee = resolve_fee_model(symbol)
+            # 显式非默认值优先（调用方有意覆盖），否则用品种默认
+            if commission == 0.0003:
+                commission = fee.commission
+            if min_commission == 5.0:
+                min_commission = fee.min_commission
+            if stamp_tax == 0.001:
+                stamp_tax = fee.stamp_tax
 
         self._cash = cash
         self._commission = commission
@@ -104,6 +130,7 @@ class BacktestEngine:
         self._slippage_model = slippage_model
         self._execution_model = execution_model
         self._warmup_bars = max(int(warmup_bars), 0)
+        self._indicator_cache = indicator_cache
 
     def run(self, df: pd.DataFrame, chanlun_result: Any | None = None) -> BacktestResult:
         """Run backtest.
@@ -174,13 +201,17 @@ class BacktestEngine:
         performance = analyzer.compute()
 
         # Config snapshot
-        config = {
+        config: dict[str, Any] = {
             "cash": self._cash,
             "commission": self._commission,
+            "min_commission": self._min_commission,
+            "stamp_tax": self._stamp_tax,
             "execution": self._execution,
             "position_mode": self._position_mode,
             "reject_policy": self._reject_policy,
         }
+        if self._symbol:
+            config["symbol"] = self._symbol
 
         return BacktestResult(
             performance=performance,
@@ -264,6 +295,8 @@ class BacktestEngine:
 
         # Bind data
         strat._bind_data(df)
+        # 挂载指标缓存（两段式寻优加速；None 时 I() 直接计算）
+        strat._indicator_cache = self._indicator_cache
 
         # Inject chanlun result if provided
         if chanlun_result is not None:

@@ -6,8 +6,11 @@
 设计取舍：
 - 回测本身是 CPU-bound（numpy/pandas 持 GIL），线程池主要价值是**不阻塞
   FastAPI 的 asyncio event loop**——回测在独立线程跑，HTTP handler 立即返回。
-- 任务结果保留在进程内存，带 LRU 上限（默认 100），重启即丢。MVP 可接受；
-  若需持久化历史，未来再加 SQLite。
+- 任务结果双写：内存 OrderedDict（LRU 上限 100，热路径零磁盘 IO）+
+  SQLite（``~/.easy_tdx/tasks.db``，v1.24 起持久化，serve 重启不丢历史）。
+  查询走「内存优先、磁盘兜底」；列表合并两源。磁盘侧由
+  :mod:`easy_tdx.web.task_store` 管理淘汰（保留 500 条）与中断任务恢复。
+  ``EASY_TDX_NO_TASK_DB=1`` 可整体关闭持久化（测试用）。
 
 并发正确性要点（task_runner.py 审计修复）：
 - ``submit`` 把「注册 task state」与「提交 executor」放在**同一把锁**内，
@@ -31,6 +34,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any, Literal
+
+from easy_tdx.web.task_store import get_task_store
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +117,11 @@ class BacktestTaskRunner:
         with self._lock:
             if self._shutdown:
                 raise RuntimeError("任务执行器已关闭，拒绝提交")
-            self._tasks[task_id] = TaskState(task_id=task_id, description=description)
+            state = TaskState(task_id=task_id, description=description)
+            self._tasks[task_id] = state
+            # 持久化 pending 态必须先于 executor.submit——否则工作线程可能
+            # 先写 running/done，随后被这里的旧 pending 快照覆盖（状态回退）。
+            self._persist_locked(state)
             # 提交 executor 也在锁内——避免「注册后被淘汰再提交」的窗口。
             # executor.submit 本身很快（入队即返回），不会显著持锁。
             self._executor.submit(self._run, task_id, func)
@@ -122,25 +131,44 @@ class BacktestTaskRunner:
     def get(self, task_id: str) -> TaskState:
         """取任务状态，不存在抛 KeyError。"""
         with self._lock:
-            if task_id not in self._tasks:
-                raise KeyError(f"未知任务 '{task_id}'")
-            return self._tasks[task_id]
+            if task_id in self._tasks:
+                return self._tasks[task_id]
+        # 锁外做磁盘恢复（_restore_from_store 内部自行加锁）
+        restored = self._restore_from_store(task_id)
+        if restored is None:
+            raise KeyError(f"未知任务 '{task_id}'")
+        return restored
 
     def peek(self, task_id: str) -> TaskState | None:
         """取任务状态，不存在返回 None（不抛异常，便于轮询）。"""
         with self._lock:
-            return self._tasks.get(task_id)
+            state = self._tasks.get(task_id)
+            if state is not None:
+                return state
+        return self._restore_from_store(task_id)
 
     def list_recent(self, limit: int = 20) -> list[TaskState]:
-        """返回最近 N 个任务（按完成/创建时间倒序，LRU 表尾=最近）。
+        """返回最近 N 个任务（内存 + 磁盘合并，按完成/创建时间倒序）。
 
         Args:
             limit: 最多返回的任务数（默认 20）。
         """
         with self._lock:
-            # OrderedDict 尾部是最近使用的（done 时 move_to_end）；倒序取
-            items = list(reversed(self._tasks.values()))
-            return items[:limit]
+            memory_items = list(self._tasks.values())
+        seen = {s.task_id for s in memory_items}
+        # 磁盘侧多取一些（覆盖内存 LRU 已淘汰的），再合并排序
+        try:
+            disk_items = [
+                self._dict_to_state(d)
+                for d in get_task_store().list_recent(limit=limit + len(seen))
+                if d["task_id"] not in seen
+            ]
+        except Exception:  # noqa: BLE001 — 持久化故障不阻断列表查询
+            logger.exception("任务持久化：list_recent 读盘失败，仅返回内存任务")
+            disk_items = []
+        merged = memory_items + disk_items
+        merged.sort(key=lambda s: s.finished_at or s.created_at, reverse=True)
+        return merged[:limit]
 
     def status(self, task_id: str) -> TaskStatus | None:
         """取任务状态字符串，不存在返回 None。"""
@@ -166,6 +194,7 @@ class BacktestTaskRunner:
 
         状态写入用本地 ``state`` 引用，不假设条目仍在 ``self._tasks`` 中——
         并发淘汰可能在任务运行期间移除条目。``move_to_end`` 容忍 KeyError。
+        每次状态跃迁（running/done/failed）同步落盘 SQLite。
         """
         # 取本地引用；若已被淘汰则静默退出（无副作用）
         with self._lock:
@@ -175,6 +204,7 @@ class BacktestTaskRunner:
                 return
             state.status = "running"
             state.started_at = time.time()
+        self._persist(state)
 
         try:
             result = func()
@@ -197,6 +227,63 @@ class BacktestTaskRunner:
                     self._tasks.move_to_end(task_id)
                 except KeyError:
                     pass
+        self._persist(state)
+
+    # ── SQLite 持久化辅助 ─────────────────────────────────────────────────────
+
+    def _persist_locked(self, state: TaskState) -> None:
+        """把状态快照落盘（调用方需持 ``self._lock``，避免与跃迁竞争）。"""
+        try:
+            get_task_store().save(
+                task_id=state.task_id,
+                status=state.status,
+                description=state.description,
+                created_at=state.created_at,
+                started_at=state.started_at,
+                finished_at=state.finished_at,
+                error=state.error,
+                result=state.result,
+            )
+        except Exception:  # noqa: BLE001 — 持久化故障不阻断回测主流程
+            logger.exception("任务 %s 持久化失败（不影响任务本身）", state.task_id)
+
+    def _persist(self, state: TaskState) -> None:
+        """把状态快照落盘（工作线程跃迁后调用，state 已稳定）。"""
+        with self._lock:
+            self._persist_locked(state)
+
+    def _restore_from_store(self, task_id: str) -> TaskState | None:
+        """从磁盘恢复任务到内存（内存淘汰/进程重启后的查询兜底）。"""
+        try:
+            d = get_task_store().load(task_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("任务 %s 读盘失败", task_id)
+            return None
+        if d is None:
+            return None
+        state = self._dict_to_state(d)
+        with self._lock:
+            # 竞态兜底：等待期间可能已被并发查询/提交加载进内存
+            existing = self._tasks.get(task_id)
+            if existing is not None:
+                return existing
+            self._tasks[task_id] = state
+            self._evict_if_needed_locked()
+        return state
+
+    @staticmethod
+    def _dict_to_state(d: dict[str, Any]) -> TaskState:
+        """task_store 行字典 → TaskState。"""
+        return TaskState(
+            task_id=d["task_id"],
+            status=d["status"],
+            result=d.get("result"),
+            error=d.get("error"),
+            created_at=float(d.get("created_at") or 0.0),
+            started_at=(float(d["started_at"]) if d.get("started_at") is not None else None),
+            finished_at=(float(d["finished_at"]) if d.get("finished_at") is not None else None),
+            description=d.get("description", ""),
+        )
 
     def _evict_if_needed_locked(self) -> None:
         """超过上限时丢弃最旧的 non-running 任务（调用方需持锁）。
