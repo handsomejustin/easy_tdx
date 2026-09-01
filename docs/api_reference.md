@@ -639,3 +639,66 @@ compute_price_limits(market, code, name, pre_close, listed_days=None)
 | `KNOWN_HOSTS` | `list[str]` | A 股行情服务器列表 |
 | `KNOWN_EX_HOSTS` | `list[str]` | 扩展行情服务器列表 |
 | `XDXR_CATEGORY_NAMES` | `dict[int, str]` | 除权除息事件类型映射 |
+
+---
+
+## WebSocket 实时行情（serve /ws/realtime/*）
+
+`easy-tdx serve` 后可建立 WebSocket 连接（v1.28 起联动 `RealtimeDataFeed`，此前
+该端点不推送数据）：
+
+```
+ws://127.0.0.1:8000/api/v1/ws/realtime/{symbol}     # symbol 如 SZ000001 / SH600519
+```
+
+### 服务端推送帧（JSON）
+
+| type | 触发 | 字段 |
+|------|------|------|
+| `tick` | 轮询到标的的最新快照（价格/量变化才推，约 `interval` 秒一拍） | `symbol`、`market`、`code`、`price`、`volume`、`ts`（epoch 秒）、`open`、`high`、`low`、`pre_close`、`amount`、`name` |
+| `ping` | 连续 30s 未收到客户端消息的心跳 | —（客户端忽略即可，无须回包） |
+| `status` | 客户端 subscribe/unsubscribe 的确认 | `msg`（如 `subscribed SH600000`） |
+| `error` | 非法 JSON / 未知 action / 超出订阅上限 | `msg` |
+
+### 客户端控制消息（JSON 文本帧）
+
+```json
+{"action": "subscribe", "symbol": "SH600000"}
+{"action": "unsubscribe", "symbol": "SH600000"}
+```
+
+### 行为约定
+
+- **连接即订阅** path 上的 symbol；断开自动退订全部标的。
+- **按需轮询**：订阅集合为空时服务端不产生任何行情请求；去重后标的总数上限
+  80（`get_stock_quotes` 协议约束）。
+- **交易时段**：默认 A 股时段外只睡不拉（无 tick 帧，心跳照发）；mock 模式
+  （`EASY_TDX_E2E_MOCK=1`）不受限制。
+- **背压**：消费过慢时丢最旧快照保最新，不积压。
+- 环境变量：`EASY_TDX_WS_INTERVAL`（轮询间隔秒数，默认 3.0）。
+
+### 前端接入方式（自动重连 + 心跳容忍）
+
+```typescript
+function connectRealtime(symbol: string, onTick: (f: TickFrame) => void) {
+  let retry = 0
+  let ws: WebSocket | null = null
+  const open = () => {
+    ws = new WebSocket(`ws://${location.host}/api/v1/ws/realtime/${symbol}`)
+    ws.onmessage = (e) => {
+      const frame = JSON.parse(e.data)
+      if (frame.type === 'tick') { retry = 0; onTick(frame) }  // ping/status 忽略
+    }
+    ws.onclose = () => {
+      retry += 1
+      setTimeout(open, Math.min(1000 * 2 ** (retry - 1), 30_000))  // 指数退避
+    }
+  }
+  open()
+  return () => ws?.close()
+}
+```
+
+> 说明：看板/自选页的实时刷新已由 SSE `/stream/quotes`（全量快照、单连接共享）
+> 承担；WS 通道定位是**按需订阅单标的 tick 事件**（后续实时策略信号的接入点），
+> 两条链路按场景选用，不要求同时连接。手动冒烟见 `scripts/ws_smoke.py`。

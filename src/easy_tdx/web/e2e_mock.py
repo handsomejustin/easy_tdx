@@ -27,6 +27,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import zlib
 from datetime import datetime, timedelta
 from typing import Any
@@ -276,6 +277,36 @@ class MockMacClient:
 
     async def close(self) -> None:
         """lifespan 关闭时调用（无真实连接，空操作）。"""
+
+    async def get_stock_quotes(
+        self, stocks: list[tuple[int, str]], fields: Any = None
+    ) -> pd.DataFrame:
+        """批量五档快照（RealtimeStreamHub → RealtimeDataFeed 的轮询入口）。
+
+        与 feed._row_to_event 的取数口径对齐：最新价落在 close 列、
+        market 为 int；价格在合成序列上随每次调用轻微漂移（绕过 feed 去重，
+        让 WS/E2E 在盘外也能持续看到推送帧）。
+        """
+        rows = []
+        for market, code in stocks:
+            closes = _synth_closes(market_enum_key(_int_market_to_enum(int(market))), code, 30)
+            jitter = 1.0 + ((time.time() % 60.0) / 60.0 - 0.5) * 0.002
+            price = float(closes[-1]) * jitter
+            rows.append(
+                {
+                    "market": int(market),
+                    "code": code,
+                    "close": price,
+                    "vol": 100_000.0 + (time.time() % 60.0) * 10.0,
+                    "open": float(closes[-1]),
+                    "high": price * 1.005,
+                    "low": price * 0.995,
+                    "pre_close": float(closes[-2]),
+                    "amount": price * 100_000.0,
+                    "name": _display_name(market, code),
+                }
+            )
+        return pd.DataFrame(rows)
 
     async def get_stock_kline(
         self,

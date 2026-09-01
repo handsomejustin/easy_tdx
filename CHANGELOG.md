@@ -7,6 +7,11 @@
 ### 新增
 
 - **Playwright E2E 前端测试基建**（升级计划 P4-1）——web-ui 引入 `@playwright/test`（`e2e/` + `playwright.config.ts`，`npm run test:e2e`）。**mock 方案选后端合成数据而非 page.route 拦截**：`EASY_TDX_E2E_MOCK=1` 时 serve 的 lifespan 把 TDX/MAC 客户端替换为合成数据客户端（`web/e2e_mock.py`，按 (market, code) CRC32 播种的确定性随机游走，分页语义与真实 /bars 一致），回测/WF/一条龙评估/自选/策略库继续走**真实后端代码**（它们本就不依赖行情连接），SSE 由 QuoteStreamer 真轮询合成数据全链路覆盖（mock 模式下轮询降到 2s 一拍，不受交易时段限制）。用例覆盖：看板五大指数区块+SSE 价格渲染、自选增删、回测全流程（净值图/绩效表/成交记录）、「附加分析」开关（WF 逐窗柱状图+一条龙评估卡）、策略库保存；`EASY_TDX_CONFIG_DIR` 指向每轮独立临时目录（断言可写死、不污染真实 `~/.easy_tdx`）。CI frontend job 追加 E2E 步骤；`verify_ci.sh` 补 `--no-frontend` 与前端 typecheck+build+E2E 段。新增 `tests/unit/test_e2e_mock.py`（11 例）守护 mock 与真实客户端的契约。
+- **WebSocket 实时推送联动 EventBus**（升级计划 P4-2）——`/ws/realtime/{symbol}` 从「不推送数据」变为真链路：新增 `web/realtime_hub.py`（RealtimeStreamHub），订阅集合变化时按需启停 `RealtimeDataFeed`（轮询 `get_stock_quotes` → `EventBus` → 每连接独立队列 fan-out，丢最旧保最新）；**无人订阅完全停止轮询**（对齐 QuoteStreamer 节能语义）；去重后标的上限 80；推送帧 `{type:"tick", symbol, market, code, price, volume, ts, open, high, low, pre_close, amount, name}`，30s 空闲 `ping` 心跳，客户端可 `subscribe`/`unsubscribe` 动态增删。端点重写为「单一写者泵」模型（全部出站帧经队列串行，杜绝并发 send 交错）。**前端接入选择只写文档不上组件**：看板/自选实时刷新已由 SSE `/stream/quotes`（全量快照、单连接共享）承担，WS 定位是按需单标的 tick（实时策略信号预留口），双通道同时拉同样行情属冗余——协议 + 自动重连/心跳容忍代码骨架落 `docs/api_reference.md` 与 README（「未联动」警示已撤）。新增 `scripts/ws_smoke.py` 手动冒烟（mock 模式随时可跑，实测可见 tick 帧与动态订阅确认）。环境变量 `EASY_TDX_WS_INTERVAL` 可调轮询间隔。
+
+### 修复
+
+- `RealtimeDataFeed` stop-before-start 竞态：`run_async`/`run_sync` 首行会把 `_running` 重置为 True，若 `stop()` 在任务首次调度前调用，停止请求被覆盖、任务永不退出（RealtimeStreamHub 换标的重建 feed 时必现死锁）。引入独立 `_stop_requested` 标志，启动前已请求停止则直接返回；`tests/unit/test_realtime_feed.py` 补 2 个回归用例。
 
 ## [1.27.0] — 2026-09-01
 

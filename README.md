@@ -1170,22 +1170,38 @@ curl -X POST "http://localhost:8000/api/v1/chanlun/analyze" \
 
 ### WebSocket 实时行情
 
-> ⚠️ **当前未联动数据源**：`create_app()` 尚未创建 `EventBus`，此 WS 端点目前
-> 不会推送任何行情。计划在后续版本接入 `RealtimeDataFeed` 后打通。
-> 如需实时行情，请先用上文「实时行情轮询」的编程 API。
+`/api/v1/ws/realtime/{symbol}`（v1.28 起接通数据源）：连接即订阅指定标的，服务端
+经 `RealtimeDataFeed`（按 `interval` 秒轮询五档快照 → `EventBus`）推送 tick 帧；
+连接断开自动退订，无人订阅时完全停止轮询。盘外时段默认只睡不拉（交易时段过滤），
+本地冒烟/演示可配合 `EASY_TDX_E2E_MOCK=1` 的合成行情随时验证（见
+`scripts/ws_smoke.py`）。
 
 ```javascript
-// JavaScript 示例
-const ws = new WebSocket("ws://localhost:8000/ws/realtime/SZ000001");
+const ws = new WebSocket("ws://localhost:8000/api/v1/ws/realtime/SZ000001");
 
 ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    console.log(data);  // {type: "tick", market: "SZ", code: "000001", price: 10.5, ...}
+    const frame = JSON.parse(event.data);
+    if (frame.type === "tick") {
+        // {type:"tick", symbol:"SZ000001", market:"SZ", code:"000001",
+        //  price:10.5, volume:12345, ts:1760000000.0,
+        //  open, high, low, pre_close, amount, name}
+        console.log(frame.symbol, frame.price, frame.ts);
+    } else if (frame.type === "ping") {
+        // 服务端 30s 空闲心跳，忽略即可（客户端无须回包）
+    }
 };
 
-// 动态订阅更多标的
+// 动态订阅更多标的（服务端回 {"type":"status","msg":"subscribed SH600000"}）
 ws.send(JSON.stringify({action: "subscribe", symbol: "SH600000"}));
+// 退订
+ws.send(JSON.stringify({action: "unsubscribe", symbol: "SH600000"}));
 ```
+
+浏览器接入建议（自动重连 + 心跳容忍）：`onclose` 后指数退避重连（参考
+`web-ui/src/stores/quotes.ts` 对 SSE 的同类处理）；`{"type":"ping"}` 心跳帧直接
+忽略、不回包；连续 N 秒无任何帧（含 ping）再视为僵死连接主动重连。协议字段完整
+说明见 `docs/api_reference.md` 的 WebSocket 一节；单标的 WS 订阅与看板 SSE
+（全量快照）并存不冲突，按需选用。
 
 ### API 文档
 

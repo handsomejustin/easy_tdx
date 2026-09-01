@@ -186,6 +186,11 @@ class RealtimeDataFeed:
         self._fields = fields
         self._state = _FeedState()
         self._running = False
+        # stop() 在 run_async/run_sync 首次调度前调用的竞态防护：
+        # run_* 的首行会把 _running 重置为 True，若不另立 stop 标志，
+        # 「先 stop 后 start」的停止请求会被覆盖，任务永不退出
+        # （RealtimeStreamHub 换标的重建 feed 时必现，v1.28 修复）。
+        self._stop_requested = False
 
     @property
     def running(self) -> bool:
@@ -206,6 +211,8 @@ class RealtimeDataFeed:
             max_iterations: 最多轮询多少轮（测试用）；None 表示无限循环直到
                 :meth:`stop`。
         """
+        if self._stop_requested:
+            return  # 启动前已请求停止（见 __init__ 的竞态说明）
         self._running = True
         try:
             count = 0
@@ -254,6 +261,8 @@ class RealtimeDataFeed:
 
     async def _run_sync_loop(self, client: Any, max_iterations: int | None) -> None:
         """同步客户端的轮询循环：阻塞调用丢到 executor。"""
+        if self._stop_requested:
+            return  # 启动前已请求停止（见 __init__ 的竞态说明）
         self._running = True
         try:
             count = 0
@@ -267,7 +276,12 @@ class RealtimeDataFeed:
             self._running = False
 
     def stop(self) -> None:
-        """请求停止轮询（下一轮 sleep 结束后生效）。"""
+        """请求停止轮询（下一轮 sleep 结束后生效）。
+
+        在 ``run_async`` / ``run_sync`` 首次获得调度之前调用同样有效
+        （启动即退出），见 ``__init__`` 的竞态说明。
+        """
+        self._stop_requested = True
         self._running = False
 
     # ------------------------------------------------------------------ #

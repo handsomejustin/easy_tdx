@@ -141,6 +141,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             mac_client = None
     app.state.mac_client = mac_client
 
+    # --- WebSocket 实时推送枢纽（/ws/realtime/*，按需轮询 + fan-out） ---
+    # 与 MAC 客户端共用一条连接；无订阅时不轮询（见 realtime_hub.py）。
+    # mock 模式关闭交易时段过滤并支持更密轮询，供 E2E / 冒烟脚本随时可推。
+    app.state.realtime_hub = None
+    if mac_client is not None:
+        try:
+            from easy_tdx.web.realtime_hub import RealtimeStreamHub
+
+            app.state.realtime_hub = RealtimeStreamHub(
+                mac_client,
+                interval=float(os.environ.get("EASY_TDX_WS_INTERVAL", "3.0")),
+                sessions=() if mock_mode else None,
+            )
+            logger.info("RealtimeStreamHub 已挂载（/ws/realtime/* 就绪）")
+        except Exception:
+            logger.warning("RealtimeStreamHub 挂载失败 — WS 实时推送不可用", exc_info=True)
+
     # --- 扩展市场客户端（可选） ---
     ex_client = None
     enable_ex = getattr(app.state, "enable_ex", False)
@@ -165,6 +182,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await streamer_svc.stop()
         except Exception:
             logger.warning("QuoteStreamer stop failed", exc_info=True)
+
+    # --- 关闭 WebSocket 实时推送枢纽（停止按需轮询任务） ---
+    rt_hub = getattr(app.state, "realtime_hub", None)
+    if rt_hub is not None:
+        try:
+            await rt_hub.shutdown()
+        except Exception:
+            logger.warning("RealtimeStreamHub shutdown failed", exc_info=True)
 
     # --- 依次关闭 ---
     for name, cli in [
