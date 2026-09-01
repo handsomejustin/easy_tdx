@@ -2,6 +2,23 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.26.0] — 2026-09-01
+
+**本地数据仓库版本**——把碎片化缓存升级为统一数据底座（升级计划 P2 阶段；P2-2 评级后端化已随 1.25.0 提前交付）。此前下游项目（indicator-lab 的 DuckDB 仓库、backtest-system 的 cache/ 目录）都在自建数据层，现在 easy-tdx 原生提供。
+
+### 新增
+
+- **K 线仓库**（`warehouse/` 包，DuckDB 单文件）——默认 `~/.easy_tdx/warehouse.duckdb`（随 `EASY_TDX_CONFIG_DIR`），列存 + SQL 友好 + 主键去重 upsert。DuckDB 为**可选依赖**（`pip install easy-tdx[warehouse]`），惰性导入不影响核心三通道。
+- **provisional / completed 状态机**（借鉴 indicator-lab）——15:05 前落盘的当日 bar **逐行**标记 `provisional`（盘中临时值），查询/回测默认忽略（杜绝拿盘中价当收盘价）；`promote_provisional()` 把过期临时行转正，`include_provisional=True` 显式可见。
+- **增量同步器**（`warehouse/sync.py`）——首同步全量（默认上限 8000 根），此后只拉尾部 15 根覆盖（收盘价修正/临时转正），不动更早历史；批次同步带进度回调、单标失败不中断批次，返回 added/updated/skipped/failed 汇总。默认 QFQ 口径（回测/筛选一致）。
+- **仓库健康自检**（`health_check`）——三维度体检：①疑似缺口（相邻 bar 工作日差 > 5，含节假日误报提示）；②异常跳变（复用 QFQ 对拍的板块感知跳空检测，多为除权数据需人工核查）；③最新度（>7 天未更新的过期标的）+ provisional 行统计。
+- **CLI 命令组** `easy-tdx warehouse`——`sync`（支持逗号分隔或 @文件 标的列表）、`query`（JSON 输出，`--include-provisional`）、`stats`（各标的行数/范围/临时行）、`check`（健康自检）。
+
+### 内部
+
+- `pyproject.toml` 新增 `[warehouse]` 可选依赖组；`duckdb` 加入 dev 依赖（CI 跑仓库测试）。
+- `cli/__init__.py` 注册 `warehouse` 命令组（37+1 个顶级命令）。
+
 ## [1.25.0] — 2026-09-01
 
 **防过拟合验证链版本**——补上两个下游项目（backtest-system / indicator-lab）都在自研的最大空白：样本外验证工具链。此后「回测好」可升级为「样本外也好」。升级计划第二阶段（P1），全量 1193 单测。
