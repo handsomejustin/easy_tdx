@@ -194,7 +194,9 @@ class BacktestTaskRunner:
 
         状态写入用本地 ``state`` 引用，不假设条目仍在 ``self._tasks`` 中——
         并发淘汰可能在任务运行期间移除条目。``move_to_end`` 容忍 KeyError。
-        每次状态跃迁（running/done/failed）同步落盘 SQLite。
+        每次状态跃迁（running/done/failed）在**同一把锁内**落盘 SQLite——
+        先持久化再对内存可见，杜绝「内存已 done、磁盘仍 running」的窗口
+        （慢速环境下读库方会命中该窗口）。
         """
         # 取本地引用；若已被淘汰则静默退出（无副作用）
         with self._lock:
@@ -204,7 +206,7 @@ class BacktestTaskRunner:
                 return
             state.status = "running"
             state.started_at = time.time()
-        self._persist(state)
+            self._persist_locked(state)
 
         try:
             result = func()
@@ -213,6 +215,7 @@ class BacktestTaskRunner:
                 state.result = result
                 state.status = "done"
                 state.finished_at = time.time()
+                self._persist_locked(state)
                 try:
                     self._tasks.move_to_end(task_id)
                 except KeyError:
@@ -223,11 +226,11 @@ class BacktestTaskRunner:
                 state.error = f"{type(exc).__name__}: {exc}"
                 state.status = "failed"
                 state.finished_at = time.time()
+                self._persist_locked(state)
                 try:
                     self._tasks.move_to_end(task_id)
                 except KeyError:
                     pass
-        self._persist(state)
 
     # ── SQLite 持久化辅助 ─────────────────────────────────────────────────────
 
@@ -246,11 +249,6 @@ class BacktestTaskRunner:
             )
         except Exception:  # noqa: BLE001 — 持久化故障不阻断回测主流程
             logger.exception("任务 %s 持久化失败（不影响任务本身）", state.task_id)
-
-    def _persist(self, state: TaskState) -> None:
-        """把状态快照落盘（工作线程跃迁后调用，state 已稳定）。"""
-        with self._lock:
-            self._persist_locked(state)
 
     def _restore_from_store(self, task_id: str) -> TaskState | None:
         """从磁盘恢复任务到内存（内存淘汰/进程重启后的查询兜底）。"""
