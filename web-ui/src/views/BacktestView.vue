@@ -253,21 +253,28 @@ async function onSave() {
 
       <section class="panel-section">
         <h3>附加分析</h3>
-        <label class="check-row" title="把时间轴切 7 窗独立回测，检验跨时段稳定性（每窗独立开仓）">
-          <input v-model="wfEnabled" type="checkbox" />
-          Walk-Forward 样本外验证
-        </label>
-        <div v-if="wfEnabled" class="field wf-windows">
-          <label>窗口数</label>
-          <input v-model.number="wfWindows" type="number" min="2" max="12" step="1" />
+        <div class="check-row">
+          <label
+            class="check-label"
+            title="把时间轴切 7 窗独立回测，检验跨时段稳定性（每窗独立开仓）"
+          >
+            <input v-model="wfEnabled" type="checkbox" />
+            <span>Walk-Forward 样本外验证</span>
+          </label>
+          <span v-if="wfEnabled" class="wf-windows">
+            窗口数
+            <input v-model.number="wfWindows" type="number" min="2" max="12" step="1" />
+          </span>
         </div>
-        <label
-          class="check-row"
-          title="回测+WF+适配性体检+综合评分+买入持有基准对比，一份报告"
-        >
-          <input v-model="evaluateEnabled" type="checkbox" />
-          一条龙评估
-        </label>
+        <div class="check-row">
+          <label
+            class="check-label"
+            title="回测+WF+适配性体检+综合评分+买入持有基准对比，一份报告"
+          >
+            <input v-model="evaluateEnabled" type="checkbox" />
+            <span>一条龙评估</span>
+          </label>
+        </div>
         <p class="extra-hint">勾选后随「开始回测」自动附加运行</p>
       </section>
 
@@ -414,29 +421,45 @@ async function onSave() {
   color: var(--text-dim);
   font-size: 12px;
 }
-/* 附加分析开关 */
+/* 附加分析开关：勾选框靠左、文字单行不折行，窗口数同行跟排 */
 .check-row {
   display: flex;
   align-items: center;
+  flex-wrap: nowrap;
   gap: 6px;
+  margin-bottom: 8px;
+  min-width: 0;
+}
+.check-label {
+  display: inline-flex; /* 覆盖全局 label { display: block } */
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 0; /* 覆盖全局 label 的 margin-bottom: 4px */
   font-size: 12px;
   color: var(--text);
   cursor: pointer;
-  margin-bottom: 8px;
+  white-space: nowrap; /* 文字不折行 */
 }
-.check-row input {
+.check-label input[type='checkbox'] {
+  width: auto; /* 覆盖全局 input{width:100%}——复选框被撑满整行才是折行根因 */
+  flex-shrink: 0;
+  margin: 0;
   accent-color: var(--accent, #4a9eff);
 }
 .wf-windows {
-  margin: -2px 0 8px 20px;
-  max-width: 110px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
 }
 .wf-windows input {
-  width: 100%;
+  width: 44px;
+  padding: 3px 6px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 5px 8px;
   font-size: 12px;
   color: var(--text);
 }
