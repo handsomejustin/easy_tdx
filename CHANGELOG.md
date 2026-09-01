@@ -2,6 +2,22 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.23.3] — 2026-09-01
+
+**serve 纯 API 模式 + 看板修复**。自 1.23.2 以来的增量：
+
+### 新增
+
+- **`easy-tdx serve --no-ui`**——纯 API 模式：不托管 Web UI 前端（根路径 404）、不自动打开浏览器，仅提供 `/api/v1/*` 全部 REST 端点 + SSE + Swagger 文档（`/docs`）。给 AI Agent / 程序化调用省去前端资源；`create_app(enable_ui=False)` 可程序化使用，默认行为不变。
+
+### 修复
+
+- **看板概念板块冷榜全为正值板块**——概念板块约 269 个，降序拉取 120 个时第 113-120 名仍在 +0.7% 附近，尾部截断致"冷榜"展示的是涨幅中游板块；现拉全量 500（MAC 分页 2 页请求，实测尾部 -2.35%~-3.83% 恢复真跌幅榜）。行业板块 86 个本就全量，不受影响。
+
+### 文档
+
+- README 简介区补充行情终端看板截图（web-ui-page-4）、评级徽章截图（web-ui-page-5）、CLI 三通道输出截图（cli-page-1）与 Web 使用示意（web-ui-page-6）。
+
 ## [1.23.2] — 2026-09-01
 
 **1.23.1 的质量门禁补丁**——1.23.1 的 PyPI 包与 EXE 功能完整（1078 单测全过、本地全功能冒烟），但其 tag commit 未通过 CI 的 `ruff check` / `ruff format --check` / `mypy --strict` 三道门禁（发布前漏在本地预演）。本版本补齐：

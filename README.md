@@ -33,6 +33,8 @@ easy-tdx 要做的事很简单：**把机构的数据锁砸开，扔到每个普
 
 <img src="./docs/cli-page-1.png" alt="CLI 三通道输出示例：JSON 行情数据" />
 
+<img src="./docs/web-ui-page-6.png" alt="Web API / Web UI 使用示意" />
+
 **你不懂 TCP 协议？不用。**
 **你不会写量化框架？不用。**
 **你想回测验证策略？自带引擎，不用。**
