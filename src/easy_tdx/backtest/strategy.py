@@ -255,6 +255,35 @@ class Strategy(ABC):
         每根 bar 调用一次，用户通过 self.buy()/self.sell() 生成信号。
         """
 
+    # ── 向量化快速路径钩子（v1.28） ────────────────────────────────────────────
+
+    def entry_exit_masks(self) -> tuple[NDArray, NDArray] | None:
+        """返回 (entry_mask, exit_mask) 布尔数组以启用向量化信号生成。
+
+        默认返回 None（不支持向量化，引擎走逐 bar 路径）。策略满足以下
+        约束时可覆写本方法，让 :class:`~easy_tdx.backtest.engine.BacktestEngine`
+        用 numpy 一次性产出信号数组（网格寻优提速的关键路径）：
+
+        - ``init()`` 只注册指标（副作用仅写入 ``self`` 属性）；
+        - ``next()`` 只读 ``self.data`` / 指标数组的**当根值**（或整段掩码），
+          仅调用无参 ``buy()`` / ``sell()``（size=0 全仓、无限价、无止损止盈）；
+        - 持仓判断只依赖「空仓 / 持仓」两态（``self.position["size"]`` 的
+          零与非零），无动态仓位。
+
+        语义约定（掩码与 ``next()`` 必须等价，由对拍单测守护）：
+
+        - ``entry_mask[i]`` 在**空仓**时触发买入；``exit_mask[i]`` 在**持仓**
+          时触发卖出——等价于 ``if entry and 空仓: buy() elif exit and 持仓:
+          sell()``。金叉/死叉这类交替掩码天然满足；
+        - 同一根 bar 两个掩码**不应同时为 True**；
+        - 掩码只依赖当根及更早数据（无未来函数），NaN 参与的比较按 False
+          处理（与逐 bar 路径一致）。
+
+        Returns:
+            (entry_mask, exit_mask) 与 K 线等长的 bool 数组；None = 不支持。
+        """
+        return None
+
     # ── 指标注册 ───────────────────────────────────────────────────────────────
 
     def I(  # noqa: E743
@@ -450,6 +479,11 @@ def _datetime_to_int(arr: NDArray) -> NDArray:
     """将 datetime 数组转为 int (YYYYMMDD)。
 
     向量化实现，自动处理 datetime64、object（Timestamp）和数值类型。
+    datetime 走 ``year*10000 + month*100 + day`` 整数算术而非
+    ``strftime``——strftime 是逐元素格式化（Python 层循环），在
+    ``StrategyDataProxy`` 每次 ``_bind_data`` 都要转一遍的热路径上实测
+    慢一个数量级（v1.28 性能工作的一部分；输出与 strftime 零填充完全一致，
+    NaT → NaN 的行为也一致）。
 
     Args:
         arr: datetime 数组（np.datetime64、pd.Timestamp 或数值）
@@ -460,14 +494,19 @@ def _datetime_to_int(arr: NDArray) -> NDArray:
     if len(arr) == 0:
         return np.array([], dtype=np.float64)
     arr = np.asarray(arr)
+
+    def _ymd_to_int(series: pd.Series) -> NDArray:
+        out = (series.dt.year * 10000 + series.dt.month * 100 + series.dt.day).to_numpy(
+            dtype=np.float64
+        )
+        return np.asarray(out, dtype=np.float64)
+
     # datetime64 → 向量化转换
     if arr.dtype.kind == "M":
-        return np.asarray(pd.to_datetime(arr).strftime("%Y%m%d").astype(float), dtype=np.float64)
+        return _ymd_to_int(pd.to_datetime(pd.Series(arr)))
     # object 数组（可能包含 Timestamp）
     if arr.dtype == object:
         if len(arr) > 0 and isinstance(arr[0], pd.Timestamp | np.datetime64):
-            return np.asarray(
-                pd.to_datetime(arr).strftime("%Y%m%d").astype(float), dtype=np.float64
-            )
+            return _ymd_to_int(pd.to_datetime(pd.Series(arr)))
     # 已经是数值类型
     return arr.astype(np.float64)

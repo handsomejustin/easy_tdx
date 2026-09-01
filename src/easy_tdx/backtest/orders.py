@@ -45,6 +45,12 @@ class OrderSimulator:
     slippage: float = 0.0
     slippage_model: SlippageModel | None = None
 
+    def __post_init__(self) -> None:
+        # datetime → 行号查找表（惰性构建一次）。v1.28 之前每个信号都对整列
+        # datetime 做 strftime 扫描（O(信号数×bar 数)，占全流程 ~85% 墙钟），
+        # 网格寻优每点都跑一遍 simulate，是实测最大瓶颈。
+        self._dt_lookup: dict[int, int] | None = None
+
     def simulate(
         self,
         signals: list[Signal],
@@ -165,30 +171,50 @@ class OrderSimulator:
 
         Returns:
             K 线索引，未找到返回 None
+
+        性能（v1.28）：查找表在首次调用时构建一次（O(bar 数)），此后每个
+        信号 O(1) 查询；语义与逐信号全列扫描完全一致——重复日期取首个匹配
+        （等价于原来的 ``mask.argmax()``），未命中返回 None。
         """
-        # 检查 df 中的 datetime 列类型
+        if self._dt_lookup is None:
+            self._dt_lookup = self._build_dt_lookup()
+        return self._dt_lookup.get(int(datetime_val))
+
+    def _build_dt_lookup(self) -> dict[int, int]:
+        """构建 datetime → 行号查找表（重复日期保留首个出现）。
+
+        与历史行为的对应关系：
+
+        - datetime64 列：向量化转 YYYYMMDD int 后建表（原来每个信号都
+          ``strftime`` 全列扫描一遍，是 O(信号数×bar 数) 的热点）；
+        - 数值列（int/float）：整数值等价于原 ``dt_col == datetime_val`` 的
+          直接比较（非整数 float 不会命中，与原来一致）；
+        - 其他列（object 等）：原来直接比较恒不命中、返回 None——这里同样
+          产出空表（保持行为不变，包括 object-Timestamp 列不匹配的既有行为）。
+        """
+        from easy_tdx.backtest.strategy import _datetime_to_int
+
         dt_col = self.df["datetime"]
+        lookup: dict[int, int] = {}
 
-        # 尝试直接比较（如果是 int 类型）
-        # 注意：用 to_numpy().argmax() 取位置索引，而非 idxmax()（返回 label），
-        # 因为后续 self.df.iloc[...] 按位置取行；若 df.index 非默认 RangeIndex，
-        # label != position 会导致撮合取错 bar。
-        try:
-            mask = (dt_col == datetime_val).to_numpy()
-            if mask.any():
-                return int(mask.argmax())
-        except (TypeError, ValueError):
-            pass
-
-        # 如果是 datetime 对象，转为 int 比较
         if pd.api.types.is_datetime64_any_dtype(dt_col):
-            dt_ints = dt_col.dt.strftime("%Y%m%d").astype(int)
-            mask_arr = (dt_ints == datetime_val).to_numpy()
-            if mask_arr.any():
-                return int(mask_arr.argmax())
-            return None
+            ints = _datetime_to_int(dt_col.to_numpy())
+            for i, v in enumerate(ints):
+                if v == v:  # NaT → NaN，跳过（原 strftime 同样不产出该行）
+                    lookup.setdefault(int(v), i)
+            return lookup
 
-        return None
+        arr = dt_col.to_numpy()
+        if arr.dtype.kind in "iuf":
+            for i, v in enumerate(arr):
+                # 浮点列只有整数值（20240104.0）才可能与 int 信号相等，
+                # 与原 == 比较语义一致
+                if float(v).is_integer():
+                    lookup.setdefault(int(v), i)
+            return lookup
+
+        # object / 字符串等：原实现 (dt_col == int) 恒为 False → 恒 None
+        return lookup
 
     def _resolve_exec_index(self, bar_idx: int) -> int | None:
         """根据执行模式确定成交的 K 线索引。

@@ -4,6 +4,15 @@
 
 ## [未发布]
 
+### 性能
+
+- **回测引擎信号管线提速 ×12.6（ma_cross 800 根全流程 93.6ms → 7.4ms，Windows/Py3.12 实测）**——升级计划 P4 遗留项。先写基准（`scripts/bench_engine.py`，perf_counter 中位数）再优化，profile 归因打破预期：v1.25 以为瓶颈是 `_generate_signals` 的逐 bar 循环，实测 **85% 墙钟在 `OrderSimulator._find_bar_index`**（每个信号都把整列 datetime `strftime("%Y%m%d")` 一遍，46 信号×800 根 ≈ 0.78s），另 ~10% 在 `_bind_data` 的 `_datetime_to_int`（同样 strftime 全列）。三处优化（全部保持行为逐位一致）：
+  1. **向量化信号生成快速路径**：`Strategy` 新增 `entry_exit_masks()` 钩子（显式声明 entry/exit 布尔掩码，语义约定与约束写在 docstring），19 个内置策略全部实现；引擎按掩码 + 候选事件 bar 状态机一次产出信号（逐 bar 循环退化为逐事件循环），持仓估算逐行复刻 `_update_strategy_position`（含买不足 1 手的退化路径）。约束检测 `_vectorize_eligibility` 显式可测（未实现钩子 / 缠论注入 → 回退逐 bar）；`signal_path="auto|vector|loop"` 可强制指定。信号层加速 ×1.39~1.72（800 根，四策略实测）；
+  2. **OrderSimulator 日期查找表**：`_build_dt_lookup()` 每个 `simulate()` 只转一次 datetime→行号（O(信号数×bar 数) → O(bar 数)），重复日期取首个、未命中 None、object 列恒不匹配等语义与原全列扫描逐条对齐；
+  3. **`_datetime_to_int` 去 strftime**：datetime64 走 `year*10000+month*100+day` 整数算术（输出、NaT→NaN 行为与 strftime 一致），`_bind_data` 与查找表共用。
+  效果：单标的 800 根 ma_cross 全流程 **×12.6**（macd ×11.3、boll_breakout ×11.2、rsi_reversal ×11.1）；32 点网格寻优 3.0s（按基线折算）→ 231ms。对拍单测 `test_backtest_engine_vector.py`（39 例）：19 策略 × 默认/非默认参数 × warmup/极低资金/非默认费率/指标缓存，performance/trades/equity_curve/positions 逐位一致。
+- 顺带发现（未改行为，仅记录）：`wr_reversal` 的默认阈值 -80/-20 是通达信 -100~0 惯例，而 MyTT 的 WR 为 0~100 刻度——默认参数（及边界内任意合法参数）下 entry 恒 False，策略实际不产生交易；对拍用 `skip_bounds` 参数覆盖其掩码路径，语义修正另行排期。
+
 ### 新增
 
 - **Playwright E2E 前端测试基建**（升级计划 P4-1）——web-ui 引入 `@playwright/test`（`e2e/` + `playwright.config.ts`，`npm run test:e2e`）。**mock 方案选后端合成数据而非 page.route 拦截**：`EASY_TDX_E2E_MOCK=1` 时 serve 的 lifespan 把 TDX/MAC 客户端替换为合成数据客户端（`web/e2e_mock.py`，按 (market, code) CRC32 播种的确定性随机游走，分页语义与真实 /bars 一致），回测/WF/一条龙评估/自选/策略库继续走**真实后端代码**（它们本就不依赖行情连接），SSE 由 QuoteStreamer 真轮询合成数据全链路覆盖（mock 模式下轮询降到 2s 一拍，不受交易时段限制）。用例覆盖：看板五大指数区块+SSE 价格渲染、自选增删、回测全流程（净值图/绩效表/成交记录）、「附加分析」开关（WF 逐窗柱状图+一条龙评估卡）、策略库保存；`EASY_TDX_CONFIG_DIR` 指向每轮独立临时目录（断言可写死、不污染真实 `~/.easy_tdx`）。CI frontend job 追加 E2E 步骤；`verify_ci.sh` 补 `--no-frontend` 与前端 typecheck+build+E2E 段。新增 `tests/unit/test_e2e_mock.py`（11 例）守护 mock 与真实客户端的契约。

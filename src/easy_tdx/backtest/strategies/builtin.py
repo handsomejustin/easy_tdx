@@ -9,6 +9,10 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+import numpy as np
+
 from easy_tdx.backtest.strategies.registry import (
     Param,
     ParametrizedStrategy,
@@ -69,6 +73,10 @@ class MaCrossStrategy(ParametrizedStrategy):
         elif self.dead[i] and self.position["size"] > 0:
             self.sell()
 
+    def entry_exit_masks(self) -> tuple[Any, Any]:
+        """与 next() 同源（gold/dead 即 next() 判定用的同一组掩码数组）。"""
+        return self.gold, self.dead
+
 
 # ── MACD 金叉 ──────────────────────────────────────────────────────────────────
 
@@ -106,6 +114,10 @@ class MacdStrategy(ParametrizedStrategy):
         elif self.dead[i] and self.position["size"] > 0:
             self.sell()
 
+    def entry_exit_masks(self) -> tuple[Any, Any]:
+        """与 next() 同源（gold/dead 即 next() 判定用的同一组掩码数组）。"""
+        return self.gold, self.dead
+
 
 # ── 布林带突破 ─────────────────────────────────────────────────────────────────
 
@@ -134,6 +146,11 @@ class BollBreakoutStrategy(ParametrizedStrategy):
             self.buy()
         elif close >= self.upper[i] and self.position["size"] > 0:
             self.sell()
+
+    def entry_exit_masks(self) -> tuple[Any, Any]:
+        """触及下轨进 / 触及上轨出（NaN 轨道期比较为 False，与 next() 一致）。"""
+        close = self.data.close.raw
+        return close <= self.lower, close >= self.upper
 
 
 # ── RSI 超买超卖 ───────────────────────────────────────────────────────────────
@@ -164,6 +181,11 @@ class RsiReversalStrategy(ParametrizedStrategy):
             self.buy()
         elif rsi >= self.p["overbought"] and self.position["size"] > 0:
             self.sell()
+
+    def entry_exit_masks(self) -> tuple[Any, Any]:
+        """RSI 超卖进 / 超买出（NaN 预热期比较为 False，与 next() 一致）。"""
+        rsi = np.asarray(self.rsi, dtype=np.float64)
+        return rsi <= self.p["oversold"], rsi >= self.p["overbought"]
 
 
 # ── KDJ 金叉 ───────────────────────────────────────────────────────────────────
@@ -199,6 +221,10 @@ class KdjCrossStrategy(ParametrizedStrategy):
         elif self.dead[i] and self.position["size"] > 0:
             self.sell()
 
+    def entry_exit_masks(self) -> tuple[Any, Any]:
+        """与 next() 同源（gold/dead 即 next() 判定用的同一组掩码数组）。"""
+        return self.gold, self.dead
+
 
 # ── EMA 双线交叉 ──────────────────────────────────────────────────────────────
 
@@ -227,6 +253,10 @@ class EmaCrossStrategy(ParametrizedStrategy):
             self.buy()
         elif self.dead[i] and self.position["size"] > 0:
             self.sell()
+
+    def entry_exit_masks(self) -> tuple[Any, Any]:
+        """与 next() 同源（gold/dead 即 next() 判定用的同一组掩码数组）。"""
+        return self.gold, self.dead
 
 
 # ── 三均线系统 ────────────────────────────────────────────────────────────────
@@ -257,6 +287,13 @@ class TripleMaStrategy(ParametrizedStrategy):
         elif self.ma_s[i] < self.ma_m[i] < self.ma_l[i] and self.position["size"] > 0:
             self.sell()
 
+    def entry_exit_masks(self) -> tuple[Any, Any]:
+        """均线多头排列进 / 空头排列出（链式比较逐元素展开，与 next() 一致）。"""
+        return (
+            (self.ma_s > self.ma_m) & (self.ma_m > self.ma_l),
+            (self.ma_s < self.ma_m) & (self.ma_m < self.ma_l),
+        )
+
 
 # ── 唐安奇通道（海龟）────────────────────────────────────────────────────────
 
@@ -281,6 +318,11 @@ class DonchianStrategy(ParametrizedStrategy):
             self.buy()
         elif close <= self.lower[i] and self.position["size"] > 0:
             self.sell()
+
+    def entry_exit_masks(self) -> tuple[Any, Any]:
+        """突破 N 日高进 / 跌破 N 日低出（NaN 预热期比较为 False，与 next() 一致）。"""
+        close = self.data.close.raw
+        return close >= self.upper, close <= self.lower
 
 
 # ── 肯特纳通道 ────────────────────────────────────────────────────────────────
@@ -309,6 +351,11 @@ class KeltnerStrategy(ParametrizedStrategy):
             self.buy()
         elif close <= self.lower[i] and self.position["size"] > 0:
             self.sell()
+
+    def entry_exit_masks(self) -> tuple[Any, Any]:
+        """突破上轨进 / 跌破下轨出（NaN 预热期比较为 False，与 next() 一致）。"""
+        close = self.data.close.raw
+        return close >= self.upper, close <= self.lower
 
 
 # ── BBI 多空指标 ──────────────────────────────────────────────────────────────
@@ -340,6 +387,11 @@ class BbiStrategy(ParametrizedStrategy):
         elif close < self.bbi[i] and self.position["size"] > 0:
             self.sell()
 
+    def entry_exit_masks(self) -> tuple[Any, Any]:
+        """上穿 BBI 进 / 下穿 BBI 出（NaN 预热期比较为 False，与 next() 一致）。"""
+        close = self.data.close.raw
+        return close > self.bbi, close < self.bbi
+
 
 # ── CCI 顺势指标 ──────────────────────────────────────────────────────────────
 
@@ -367,6 +419,11 @@ class CciStrategy(ParametrizedStrategy):
             self.buy()
         elif cci >= self.p["overbought"] and self.position["size"] > 0:
             self.sell()
+
+    def entry_exit_masks(self) -> tuple[Any, Any]:
+        """CCI 跌破超卖线进 / 涨破超买线出（与 next() 同一比较）。"""
+        cci = np.asarray(self.cci, dtype=np.float64)
+        return cci <= self.p["oversold"], cci >= self.p["overbought"]
 
 
 # ── WR 威廉指标 ───────────────────────────────────────────────────────────────
@@ -396,6 +453,11 @@ class WrReversalStrategy(ParametrizedStrategy):
         elif wr >= self.p["overbought"] and self.position["size"] > 0:
             self.sell()
 
+    def entry_exit_masks(self) -> tuple[Any, Any]:
+        """WR 进入超卖区进 / 超买区出（与 next() 同一比较）。"""
+        wr = np.asarray(self.wr, dtype=np.float64)
+        return wr <= self.p["oversold"], wr >= self.p["overbought"]
+
 
 # ── BIAS 乖离率 ───────────────────────────────────────────────────────────────
 
@@ -422,6 +484,12 @@ class BiasReversalStrategy(ParametrizedStrategy):
             self.buy()
         elif bias_pct >= threshold and self.position["size"] > 0:
             self.sell()
+
+    def entry_exit_masks(self) -> tuple[Any, Any]:
+        """负乖离超跌进 / 正乖离超涨出（与 next() 同一比较，阈值放大 100 倍口径）。"""
+        bias_pct = np.asarray(self.bias, dtype=np.float64) * 100
+        threshold = self.p["threshold"]
+        return bias_pct <= -threshold, bias_pct >= threshold
 
 
 # ── DMI 趋向指标 ──────────────────────────────────────────────────────────────
@@ -452,6 +520,10 @@ class DmiStrategy(ParametrizedStrategy):
         elif self.dead[i] and self.position["size"] > 0:
             self.sell()
 
+    def entry_exit_masks(self) -> tuple[Any, Any]:
+        """与 next() 同源（gold/dead 即 next() 判定用的同一组掩码数组）。"""
+        return self.gold, self.dead
+
 
 # ── TRIX 三重平滑 ─────────────────────────────────────────────────────────────
 
@@ -479,6 +551,10 @@ class TrixStrategy(ParametrizedStrategy):
         elif self.dead[i] and self.position["size"] > 0:
             self.sell()
 
+    def entry_exit_masks(self) -> tuple[Any, Any]:
+        """与 next() 同源（gold/dead 即 next() 判定用的同一组掩码数组）。"""
+        return self.gold, self.dead
+
 
 # ── EMV 简易波动 ──────────────────────────────────────────────────────────────
 
@@ -505,6 +581,11 @@ class EmvStrategy(ParametrizedStrategy):
         elif self.emv[i] < 0 and self.position["size"] > 0:
             self.sell()
 
+    def entry_exit_masks(self) -> tuple[Any, Any]:
+        """EMV 上穿 0 轴进 / 下穿 0 轴出（与 next() 同一比较）。"""
+        emv = np.asarray(self.emv, dtype=np.float64)
+        return emv > 0, emv < 0
+
 
 # ── DPO 区间震荡 ──────────────────────────────────────────────────────────────
 
@@ -530,6 +611,10 @@ class DpoStrategy(ParametrizedStrategy):
             self.buy()
         elif self.dead[i] and self.position["size"] > 0:
             self.sell()
+
+    def entry_exit_masks(self) -> tuple[Any, Any]:
+        """与 next() 同源（gold/dead 即 next() 判定用的同一组掩码数组）。"""
+        return self.gold, self.dead
 
 
 # ── ATR 通道突破 ──────────────────────────────────────────────────────────────
@@ -560,6 +645,13 @@ class AtrBreakoutStrategy(ParametrizedStrategy):
             self.buy()
         elif close <= lower and self.position["size"] > 0:
             self.sell()
+
+    def entry_exit_masks(self) -> tuple[Any, Any]:
+        """突破 均线+K×ATR 进 / 跌破 均线-K×ATR 出（与 next() 同一比较）。"""
+        close = self.data.close.raw
+        upper = self.ma + self.p["k"] * self.atr
+        lower = self.ma - self.p["k"] * self.atr
+        return close >= upper, close <= lower
 
 
 # ── FSL 分水岭指标 ────────────────────────────────────────────────────────────
@@ -595,3 +687,7 @@ class FslStrategy(ParametrizedStrategy):
             self.buy()
         elif self.dead[i] and self.position["size"] > 0:
             self.sell()
+
+    def entry_exit_masks(self) -> tuple[Any, Any]:
+        """与 next() 同源（gold/dead 即 next() 判定用的同一组掩码数组）。"""
+        return self.gold, self.dead

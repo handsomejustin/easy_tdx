@@ -1,6 +1,17 @@
 """BacktestEngine — orchestrate vectorized execution pipeline.
 
 Coordinates Strategy → OrderSimulator → PortfolioTracker → PerformanceAnalyzer.
+
+信号生成双路径（v1.28）：
+
+- **向量化快速路径**：策略实现了
+  :meth:`~easy_tdx.backtest.strategy.Strategy.entry_exit_masks` 且无缠论注入时，
+  预计算指标列后用 numpy 掩码 + 事件 bar 状态机一次性产出信号（逐 bar 的
+  Python 循环是网格寻优的实测瓶颈，见 CHANGELOG v1.25 的诚实数据）；
+- **逐 bar 路径**：不满足约束时自动回退，行为与历史版本完全一致。
+
+两条路径在同一 df + 同参数下 performance 逐位一致（对拍单测守护，
+``tests/unit/test_backtest_engine_vector.py``）。
 """
 
 from __future__ import annotations
@@ -8,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pandas as pd
 
 from easy_tdx.backtest.orders import OrderSimulator
@@ -67,6 +79,7 @@ class BacktestEngine:
         symbol: str | None = None,
         auto_fees: bool = False,
         indicator_cache: Any | None = None,
+        signal_path: str = "auto",
     ):
         """Initialize engine.
 
@@ -97,9 +110,16 @@ class BacktestEngine:
             indicator_cache: 指标计算缓存（网格寻优跨点复用，见
                 :class:`~easy_tdx.backtest.indicator_cache.IndicatorCache`）。
                 None = 每次直接计算（默认，向后兼容）。
+            signal_path: 信号生成路径。``"auto"``（默认）= 策略满足向量化约束
+                时走快速路径、否则回退逐 bar；``"vector"`` = 强制向量化
+                （不满足约束时抛 ValueError，测试/基准用）；``"loop"`` = 强制
+                逐 bar（对拍基准用）。两条路径结果逐位一致（对拍单测守护）。
 
         .. versionchanged:: 1.24
             新增 ``symbol`` / ``auto_fees`` 品种感知费率参数。
+        .. versionchanged:: 1.28
+            新增 ``signal_path`` 与向量化快速路径（约束见
+            :meth:`~easy_tdx.backtest.strategy.Strategy.entry_exit_masks`）。
         """
         self._strategy_cls = strategy if isinstance(strategy, type) else type(strategy)
         self._strategy_instance = strategy if isinstance(strategy, Strategy) else None
@@ -131,6 +151,9 @@ class BacktestEngine:
         self._execution_model = execution_model
         self._warmup_bars = max(int(warmup_bars), 0)
         self._indicator_cache = indicator_cache
+        if signal_path not in ("auto", "vector", "loop"):
+            raise ValueError(f"signal_path 取值应为 auto/vector/loop，得到 '{signal_path}'")
+        self._signal_path = signal_path
 
     def run(self, df: pd.DataFrame, chanlun_result: Any | None = None) -> BacktestResult:
         """Run backtest.
@@ -310,7 +333,19 @@ class BacktestEngine:
         # Call init
         strat._call_init()
 
-        # Generate signals bar by bar
+        # ── 向量化快速路径（v1.28）：满足约束时跳过逐 bar 循环 ──────────────
+        if self._signal_path in ("auto", "vector"):
+            eligible, reason = self._vectorize_eligibility(strat, chanlun_result)
+            if eligible:
+                signals = self._generate_signals_vector(df, strat)
+                if signals is not None:
+                    return signals
+                reason = "entry_exit_masks 形状与 K 线长度不符"
+            if self._signal_path == "vector":
+                raise ValueError(f"策略不满足向量化约束：{reason}")
+            # auto：回退逐 bar 路径（行为与历史版本一致）
+
+        # ── 逐 bar 路径（历史行为，逐字未动） ───────────────────────────────
         all_signals: list[Signal] = []
         active_stops: list[_StopCondition] = []
 
@@ -357,6 +392,89 @@ class BacktestEngine:
             all_signals.extend(combined)
 
         return all_signals
+
+    # ── 向量化快速路径（v1.28） ────────────────────────────────────────────────
+
+    def _vectorize_eligibility(
+        self, strat: Strategy, chanlun_result: Any | None
+    ) -> tuple[bool, str]:
+        """显式约束检测：策略 + 引擎配置是否可走向量化路径。
+
+        约束（可测试，见 test_backtest_engine_vector.py）：
+        1. 策略覆写了 ``entry_exit_masks``（显式声明语义等价的掩码）；
+        2. 无缠论注入（``chanlun_result`` / ``chanlun_level`` 都未设置——
+           缠论策略的 next() 依赖缠论结果，掩码无法表达）。
+
+        Returns:
+            (是否可向量化, 不可用原因描述)。
+        """
+        if type(strat).entry_exit_masks is Strategy.entry_exit_masks:
+            return False, "策略未实现 entry_exit_masks"
+        if chanlun_result is not None or self._chanlun_level is not None:
+            return False, "缠论注入（chanlun_result/chanlun_level）不支持向量化"
+        return True, ""
+
+    def _generate_signals_vector(self, df: pd.DataFrame, strat: Strategy) -> list[Signal] | None:
+        """用 entry/exit 掩码 + 事件 bar 状态机一次性产出信号。
+
+        状态机语义与逐 bar 路径严格对齐（对拍单测守护逐位一致）：
+
+        - 空仓 + ``entry[i]`` → 全仓 BUY（与 ``buy()`` 同参：size=0、无限价、
+          无止损止盈）；
+        - 持仓 + ``exit[i]`` → 全仓 SELL；
+        - 持仓估算复刻 :meth:`_update_strategy_position`：按收盘价全仓、
+          100 股整手、资金不足 1 手时仓位状态不变（后续 entry 仍可触发）；
+        - warmup 期不产生信号。
+
+        Returns:
+            信号列表；掩码形状与 K 线不符（策略实现错误）返回 None 供上层回退。
+        """
+        masks = strat.entry_exit_masks()
+        if masks is None:
+            return None
+        entry_raw, exit_raw = masks
+        entry = np.asarray(entry_raw, dtype=bool)
+        exit_ = np.asarray(exit_raw, dtype=bool)
+        n = len(df)
+        if entry.ndim != 1 or exit_.ndim != 1 or len(entry) != n or len(exit_) != n:
+            return None
+
+        dt_arr = strat._datetime_array
+        close_arr = df["close"].to_numpy(dtype=np.float64)
+        if dt_arr is None:
+            return None
+
+        # 候选事件 bar（任一掩码触发），远少于总 bar 数——逐 bar 循环退化为
+        # 逐事件循环，这是向量化收益的来源
+        candidates = np.flatnonzero(entry | exit_)
+        candidates = candidates[candidates >= self._warmup_bars]
+
+        signals: list[Signal] = []
+        cash = self._cash
+        position = 0.0
+
+        for i in candidates:
+            i_int = int(i)
+            if position == 0.0 and entry[i_int]:
+                signals.append(
+                    Signal(datetime=int(dt_arr[i_int]), direction="BUY", size=0, price=None)
+                )
+                price = close_arr[i_int]
+                shares = int(cash / (price * (1 + self._commission)) / 100) * 100
+                if shares > 0:
+                    position += shares
+                    cash -= shares * price
+            elif position > 0.0 and exit_[i_int]:
+                signals.append(
+                    Signal(datetime=int(dt_arr[i_int]), direction="SELL", size=0, price=None)
+                )
+                cash += position * close_arr[i_int]
+                position = 0.0
+
+        # 保持策略内部状态与逐 bar 路径一致（后续读取 strat._cash 的代码同构）
+        strat._cash = cash
+        strat._position_size = position
+        return signals
 
     def _check_stop_conditions(
         self,
