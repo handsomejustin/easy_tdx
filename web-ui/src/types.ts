@@ -137,6 +137,8 @@ export interface TaskState {
     | OptimizeResult
     | OptimizeAllResult
     | SignalScanResult
+    | WalkForwardResult
+    | EvaluateReport
     | null
   error: string | null
   description: string
@@ -519,4 +521,95 @@ export interface RankRow {
   price?: number
   change_pct?: number
   [key: string]: unknown
+}
+
+// ── Walk-Forward 样本外验证（v1.27 POST /backtest/wf/run/async）──────────────
+
+export interface WalkForwardWindow {
+  index: number
+  start: string
+  end: string
+  bars: number
+  total_return: number
+  sharpe: number
+  max_drawdown: number
+  total_trades: number
+  win_rate: number
+}
+
+export interface WalkForwardResult {
+  n_windows: number
+  warmup_ratio: number
+  windows: WalkForwardWindow[]
+  /** 盈利窗占比（0~1，时间稳定性核心指标） */
+  consistency: number
+  /** 各窗收益连乘 - 1 */
+  chained_return: number
+  mean_window_return: number
+  median_window_return: number
+  worst_window: number
+  best_window: number
+  mean_sharpe: number
+  worst_drawdown: number
+  total_trades: number
+}
+
+// ── 一条龙评估（v1.27 POST /backtest/evaluate/run/async）─────────────────────
+
+export interface FitnessCheckRow {
+  name: string
+  passed: boolean
+  detail: string
+}
+
+export interface FitnessSegmentRow {
+  name: string
+  start: string
+  end: string
+  bars: number
+  total_return: number
+  sharpe: number
+  max_drawdown: number
+  total_trades: number
+  win_rate: number
+}
+
+export interface FitnessReport {
+  segments: FitnessSegmentRow[]
+  checks: FitnessCheckRow[]
+  pass_ratio: number
+  passed_count: number
+  total_checks: number
+  high_fitness: boolean
+  split: number[]
+}
+
+/** 综合评分（0-100 加权：收益50/夏普15/回撤10/Sortino5/WF一致性20） */
+export interface StrategyScoreReport {
+  total: number
+  components: Record<string, number>
+  weights_used: Record<string, number>
+  wf_provided: boolean
+}
+
+export interface EvaluateBenchmarkReport {
+  buy_hold: {
+    total_return: number
+    annual_return: number
+    max_drawdown: number
+    sharpe: number
+    calmar: number
+    volatility: number
+  }
+  /** 策略总收益 - 买入持有总收益 */
+  excess_return: number
+}
+
+export interface EvaluateReport {
+  performance: Performance
+  score: StrategyScoreReport
+  walkforward: WalkForwardResult
+  fitness: FitnessReport
+  benchmark: EvaluateBenchmarkReport
+  config: Record<string, unknown>
 }

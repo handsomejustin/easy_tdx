@@ -239,6 +239,7 @@ def _create_app(
     from easy_tdx.web.routers.chanlun import router as chanlun_router
     from easy_tdx.web.routers.ex_market import router as ex_market_router
     from easy_tdx.web.routers.finance import router as finance_router
+    from easy_tdx.web.routers.formula import router as formula_router
     from easy_tdx.web.routers.indicator import router as indicator_router
     from easy_tdx.web.routers.mac_data import router as mac_data_router
     from easy_tdx.web.routers.mac_quotes import router as mac_quotes_router
@@ -253,6 +254,7 @@ def _create_app(
     app.include_router(market_router, prefix="/api/v1")
     app.include_router(bars_router, prefix="/api/v1")
     app.include_router(finance_router, prefix="/api/v1")
+    app.include_router(formula_router, prefix="/api/v1")
     app.include_router(block_router, prefix="/api/v1")
     app.include_router(chanlun_router, prefix="/api/v1")
     app.include_router(realtime_router, prefix="/api/v1")

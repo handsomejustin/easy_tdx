@@ -12,6 +12,8 @@ import {
   submitOptimizeAllTask,
   submitOptimizeTask,
   submitMultiStrategyTask,
+  submitWalkforwardTask,
+  submitEvaluateTask,
   fetchTask,
 } from '../api'
 import type {
@@ -19,6 +21,7 @@ import type {
   BacktestResult,
   Bar,
   Category,
+  EvaluateReport,
   MultiStrategyBacktestRequest,
   PortfolioBacktestRequest,
   PortfolioResult,
@@ -27,7 +30,21 @@ import type {
   OptimizeBacktestRequest,
   OptimizeResult,
   StrategySchema,
+  WalkForwardResult,
 } from '../types'
+
+/** 轮询后台任务直到终态（done 返回 result，failed/超时抛错）。 */
+async function pollTask<T>(taskId: string, timeoutMs: number, what: string): Promise<T> {
+  const start = Date.now()
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const state = await fetchTask(taskId)
+    if (state.status === 'done' && state.result) return state.result as T
+    if (state.status === 'failed') throw new Error(state.error || `${what}失败`)
+    if (Date.now() - start > timeoutMs) throw new Error(`${what}超时（${timeoutMs / 1000}s）`)
+    await new Promise((r) => setTimeout(r, 400))
+  }
+}
 
 export const useBacktestStore = defineStore('backtest', () => {
   // ── 策略 ─────────────────────────────────────────────────────────────────
@@ -79,6 +96,56 @@ export const useBacktestStore = defineStore('backtest', () => {
   function clearResult() {
     result.value = null
     error.value = ''
+  }
+
+  // ── 附加分析：Walk-Forward / 一条龙评估（v1.27） ─────────────────────────
+  const wfResult = ref<WalkForwardResult | null>(null)
+  const wfRunning = ref(false)
+  const wfError = ref<string>('')
+  const evaluateResult = ref<EvaluateReport | null>(null)
+  const evaluateRunning = ref(false)
+  const evaluateError = ref<string>('')
+
+  /** 提交 WF 样本外验证后台任务并轮询（与主回测共用同一份内联 OHLCV）。 */
+  async function runWalkforward(req: Omit<BacktestRequest, 'ohlcv'>, nWindows = 7) {
+    if (!hasBars.value) return
+    wfRunning.value = true
+    wfError.value = ''
+    wfResult.value = null
+    try {
+      const { task_id } = await submitWalkforwardTask({ ...req, ohlcv: ohlcv.value }, nWindows)
+      const body = await pollTask<{ walkforward: WalkForwardResult }>(task_id, 180_000, 'WF 验证')
+      wfResult.value = body.walkforward
+    } catch (e) {
+      wfError.value = formatError(e)
+      wfResult.value = null
+    } finally {
+      wfRunning.value = false
+    }
+  }
+
+  /** 提交一条龙评估后台任务并轮询（回测+WF+适配性+评分+基准对比）。 */
+  async function runEvaluate(req: Omit<BacktestRequest, 'ohlcv'>) {
+    if (!hasBars.value) return
+    evaluateRunning.value = true
+    evaluateError.value = ''
+    evaluateResult.value = null
+    try {
+      const { task_id } = await submitEvaluateTask({ ...req, ohlcv: ohlcv.value })
+      evaluateResult.value = await pollTask<EvaluateReport>(task_id, 300_000, '一条龙评估')
+    } catch (e) {
+      evaluateError.value = formatError(e)
+      evaluateResult.value = null
+    } finally {
+      evaluateRunning.value = false
+    }
+  }
+
+  function clearExtraAnalysis() {
+    wfResult.value = null
+    wfError.value = ''
+    evaluateResult.value = null
+    evaluateError.value = ''
   }
 
   // ── 组合回测（Phase 3） ───────────────────────────────────────────────────
@@ -259,6 +326,12 @@ export const useBacktestStore = defineStore('backtest', () => {
     optimizeContext,
     optimizeAllResult,
     optimizeAllRunning,
+    wfResult,
+    wfRunning,
+    wfError,
+    evaluateResult,
+    evaluateRunning,
+    evaluateError,
     // getters
     hasBars,
     // actions
@@ -266,6 +339,9 @@ export const useBacktestStore = defineStore('backtest', () => {
     setOhlcv,
     run,
     clearResult,
+    runWalkforward,
+    runEvaluate,
+    clearExtraAnalysis,
     runPortfolio,
     clearPortfolio,
     runMultiStrategy,

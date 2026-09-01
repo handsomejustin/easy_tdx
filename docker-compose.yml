@@ -1,0 +1,35 @@
+# easy-tdx 一键部署：API + Web UI（Docker Compose，v1.27 新增）
+#
+# 用法：
+#   docker compose up -d                 # 构建并启动（http://localhost:8000）
+#   docker compose logs -f easy-tdx
+#   docker compose down
+#
+# 说明：
+# - 镜像内安装 [web,warehouse] 可选依赖（FastAPI + DuckDB）；
+# - 数据目录（自选/策略库/任务库/K线仓库）挂载到宿主机 ./data，重建容器不丢；
+# - serve 默认 0.0.0.0:8000，自动托管 Web UI；纯 API 用法把 command 换成
+#   ["easy-tdx", "serve", "--host", "0.0.0.0", "--no-ui"]。
+
+services:
+  easy-tdx:
+    image: easy-tdx:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: easy-tdx
+    command: ["easy-tdx", "serve", "--host", "0.0.0.0", "--port", "8000", "--no-open-browser"]
+    ports:
+      - "8000:8000"
+    environment:
+      EASY_TDX_CONFIG_DIR: /data
+      TZ: Asia/Shanghai
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/openapi.json', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

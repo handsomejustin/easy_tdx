@@ -151,6 +151,33 @@ export async function submitBacktestTask(req: BacktestRequest): Promise<TaskSubm
   return (await resp.json()) as TaskSubmitResponse
 }
 
+/** 提交 Walk-Forward 样本外验证后台任务（v1.27，n_windows 默认 7）。 */
+export async function submitWalkforwardTask(
+  req: BacktestRequest,
+  nWindows = 7,
+): Promise<TaskSubmitResponse> {
+  const resp = await fetch(`${BASE}/backtest/wf/run/async?n_windows=${nWindows}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()) as TaskSubmitResponse
+}
+
+/** 提交一条龙评估后台任务（回测+WF+适配性+评分+基准对比，v1.27）。 */
+export async function submitEvaluateTask(
+  req: BacktestRequest,
+): Promise<TaskSubmitResponse> {
+  const resp = await fetch(`${BASE}/backtest/evaluate/run/async`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()) as TaskSubmitResponse
+}
+
 /** 提交组合回测后台任务，返回 task_id。 */
 export async function submitPortfolioTask(
   req: PortfolioBacktestRequest,

@@ -20,10 +20,20 @@
     print(result.performance)
 """
 
+from easy_tdx.backtest.benchmark import evaluate_strategy, run_buy_hold_benchmark  # noqa: F401
 from easy_tdx.backtest.combo import CombinationRunner, ComboResult, FactorSignals  # noqa: F401
 from easy_tdx.backtest.engine import BacktestEngine  # noqa: F401
+from easy_tdx.backtest.fitness import FitnessEngine, FitnessReport  # noqa: F401
+from easy_tdx.backtest.formula_strategy import run_formula_backtest  # noqa: F401
+from easy_tdx.backtest.grading import GradeResult, grade_performance  # noqa: F401
+from easy_tdx.backtest.rotation import RotationEngine, RotationResult  # noqa: F401
+from easy_tdx.backtest.scoring import StrategyScore, score_strategy  # noqa: F401
 from easy_tdx.backtest.strategy import Strategy, StrategyDataProxy, crossover  # noqa: F401
 from easy_tdx.backtest.types import BacktestResult, Position, Signal, Trade  # noqa: F401
+from easy_tdx.backtest.walkforward import (  # noqa: F401
+    WalkForwardEngine,
+    WalkForwardResult,
+)
 
 __all__ = [
     "BacktestEngine",
@@ -31,10 +41,23 @@ __all__ = [
     "CombinationRunner",
     "ComboResult",
     "FactorSignals",
+    "FitnessEngine",
+    "FitnessReport",
+    "GradeResult",
     "Strategy",
     "StrategyDataProxy",
+    "StrategyScore",
     "Signal",
     "Trade",
     "Position",
+    "WalkForwardEngine",
+    "WalkForwardResult",
     "crossover",
+    "evaluate_strategy",
+    "grade_performance",
+    "RotationEngine",
+    "RotationResult",
+    "run_buy_hold_benchmark",
+    "run_formula_backtest",
+    "score_strategy",
 ]

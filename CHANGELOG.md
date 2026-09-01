@@ -2,6 +2,20 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.27.0] — 2026-09-01
+
+**公式与轮动版本**——升级计划 P3 + P4（部分）落地：通达信公式解析器让写惯公式的用户零 Python 进入筛选/回测，轮动组合引擎补齐「排名换仓」组合形态，附 Docker 部署与一键门禁脚本。
+
+### 新增
+
+- **通达信公式解析器**（`formula.py`）——自建 tokenizer + 递归下降 AST + 白名单求值（**不走 Python eval**，无注入面）：支持 `:=` 中间变量 / `名称:` 命名输出、`+ - * /`（除零→NaN）、比较、`AND OR NOT`（兼容 `&& || !`）、花括号注释、中文标识符；序列别名 C/O/H/L/V/AMOUNT；函数白名单 30+（MA/EMA/SMA/HHV/LLV/REF/CROSS/LONGCROSS/IF/MACD/KDJ/RSI/BOLL/ATR…，全部后视函数，**无未来数据**）；命名布尔输出自动归类为**信号列**、数值输出归类为**排名列**；未知函数/变量报带位置的 `FormulaError`。
+- **公式回测适配器**（`backtest/formula_strategy.py`）——信号列注入 K 线 + `ColumnSignalStrategy` 逐 bar 交易；买/卖列自动挑选（「买/卖」与 BUY/SELL 名称提示优先，其次声明顺序）；信号下一根开盘成交；结果附 S-D 评级与综合评分。
+- **公式三通道**——CLI `easy-tdx formula compute|screen|backtest`（`--formula` 或 `--file`，screen 支持逗号分隔/@文件标的列表）；REST `POST /formula/validate`（语法+归类校验，无需数据）、`/formula/compute`（内联 ohlcv 或 symbol）、`/formula/backtest/run/async`、`/formula/screen/run/async`（后台任务）；Python API `run_formula_backtest()`。
+- **轮动组合引擎**（`backtest/rotation.py`）——排名定期换仓：打分函数只喂截至当日收盘的前缀数据（无未来泄漏）；固定槽位**等额**（预算 = 净值/槽数，杜绝首买全仓单票）；跌出前 `keep_rank` 名自动卖出、空槽自动补位；`daily/weekly/monthly` 刷新；可选槽内止盈止损（收盘触发、次开成交）；复用主引擎 19 项绩效 + 组合评级。内置 `momentum_score(period)` 与 `formula_score(公式)` 打分（与公式模块联动）。REST `POST /backtest/rotation/run/async`。
+- **回测页附加分析开关（Web UI）**——回测页新增「附加分析」区：勾选「Walk-Forward 样本外验证」随回测自动附加 WF 任务（窗口数可调 2~12，逐窗收益红涨绿跌柱状图 + 盈利窗占比/连乘收益/最差窗汇总卡）；勾选「一条龙评估」附加评估任务（综合评分 0-100 分项条 + 高适配徽标 + 买入持有基准对比与「跑输买入持有」警示 + 8 项适配性检查清单 + 评级复用本地口径）。两任务与主回测共用同一份内联行情、并行互不阻塞、独立错误提示；新增 `WalkForwardPanel.vue` / `EvaluatePanel.vue` 组件与 store 的 `runWalkforward`/`runEvaluate` action（统一 `pollTask` 轮询助手）；WF 端点支持 `?n_windows=` 查询参数。附带修复：WF/fitness/evaluate 报告的 numpy 标量在 REST 序列化时 400 的问题（`types.to_json_native` 源头清洗，各结果 `to_dict` 统一接入）。
+- **Docker 部署**（`Dockerfile` + `docker-compose.yml`）——python:3.12-slim，装 `[web,warehouse]` 可选依赖，`/data` 卷持久化自选/策略库/任务库/K 线仓库，带健康检查。
+- **一键门禁脚本**（`scripts/verify_ci.sh`）——ruff + ruff format + mypy strict + 全量 pytest 一条命令（`--fast` 跳过测试），可挂 git pre-push hook。
+
 ## [1.26.0] — 2026-09-01
 
 **本地数据仓库版本**——把碎片化缓存升级为统一数据底座（升级计划 P2 阶段；P2-2 评级后端化已随 1.25.0 提前交付）。此前下游项目（indicator-lab 的 DuckDB 仓库、backtest-system 的 cache/ 目录）都在自建数据层，现在 easy-tdx 原生提供。

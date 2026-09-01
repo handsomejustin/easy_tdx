@@ -7,12 +7,14 @@ import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
 import EquityChart from '../components/EquityChart.vue'
+import EvaluatePanel from '../components/EvaluatePanel.vue'
 import GradeDetails from '../components/GradeDetails.vue'
 import KlineChart from '../components/KlineChart.vue'
 import MetricTable from '../components/MetricTable.vue'
 import StrategyPicker from '../components/StrategyPicker.vue'
 import SymbolPicker from '../components/SymbolPicker.vue'
 import TradeTable from '../components/TradeTable.vue'
+import WalkForwardPanel from '../components/WalkForwardPanel.vue'
 import { formatError, saveStrategy } from '../api'
 import { detectMarket } from '../market'
 import { gradePerformance } from '../grading'
@@ -85,21 +87,35 @@ onMounted(async () => {
   if (qCategory) category.value = qCategory
 })
 
+// 附加分析开关（v1.27）：WF 样本外验证 / 一条龙评估，
+// 勾选后随「开始回测」一起提交（与主回测共用同一份内联 OHLCV）。
+const wfEnabled = ref(false)
+const wfWindows = ref(7)
+const evaluateEnabled = ref(false)
+
 // 取行情 + 回测 串联（点击「开始回测」触发）
 async function onRun() {
   store.error = ''
+  store.clearExtraAnalysis()
   // 1. 先取行情（SymbolPicker.loadBars 会校验并填充 store.ohlcv）
   const ok = await symbolPicker.value?.loadBars()
   if (!ok) return // 校验/取数失败，错误已在 store.error
   // 2. 再回测
-  await store.run({
+  const req = {
     strategy: strategy.value,
     params: params.value,
     cash: cash.value,
     commission: commission.value,
     slippage: slippage.value,
     execution: execution.value,
-  })
+  }
+  await store.run(req)
+  // 3. 附加分析：勾选的 WF / 一条龙评估并行跑（互不阻塞，各自有独立错误提示）
+  if (!store.result) return
+  const jobs: Promise<void>[] = []
+  if (wfEnabled.value) jobs.push(store.runWalkforward(req, wfWindows.value))
+  if (evaluateEnabled.value) jobs.push(store.runEvaluate(req))
+  await Promise.allSettled(jobs)
 }
 
 // ── 保存策略（把当前结果 + 配置 + 上下文存进策略库）──────────────────────────
@@ -235,12 +251,32 @@ async function onSave() {
         </div>
       </section>
 
+      <section class="panel-section">
+        <h3>附加分析</h3>
+        <label class="check-row" title="把时间轴切 7 窗独立回测，检验跨时段稳定性（每窗独立开仓）">
+          <input v-model="wfEnabled" type="checkbox" />
+          Walk-Forward 样本外验证
+        </label>
+        <div v-if="wfEnabled" class="field wf-windows">
+          <label>窗口数</label>
+          <input v-model.number="wfWindows" type="number" min="2" max="12" step="1" />
+        </div>
+        <label
+          class="check-row"
+          title="回测+WF+适配性体检+综合评分+买入持有基准对比，一份报告"
+        >
+          <input v-model="evaluateEnabled" type="checkbox" />
+          一条龙评估
+        </label>
+        <p class="extra-hint">勾选后随「开始回测」自动附加运行</p>
+      </section>
+
       <button
         class="primary run-btn"
-        :disabled="store.running"
+        :disabled="store.running || store.wfRunning || store.evaluateRunning"
         @click="onRun"
       >
-        {{ store.running ? '取行情+回测中…' : '开始回测' }}
+        {{ store.running || store.wfRunning || store.evaluateRunning ? '取行情+回测中…' : '开始回测' }}
       </button>
     </aside>
 
@@ -271,6 +307,30 @@ async function onSave() {
         <section v-if="grade" class="report-section">
           <h3>评级</h3>
           <GradeDetails :result="grade" expanded />
+        </section>
+
+        <!-- 附加分析：WF 样本外验证（v1.27） -->
+        <section
+          v-if="store.wfRunning || store.wfResult || store.wfError"
+          class="report-section"
+        >
+          <h3>Walk-Forward 样本外验证</h3>
+          <p v-if="store.wfRunning" class="loading-text">验证中…（逐窗独立回测，约需数秒）</p>
+          <div v-else-if="store.wfError" class="error-banner">⚠ {{ store.wfError }}</div>
+          <WalkForwardPanel v-else-if="store.wfResult" :wf="store.wfResult" />
+        </section>
+
+        <!-- 附加分析：一条龙评估（v1.27） -->
+        <section
+          v-if="store.evaluateRunning || store.evaluateResult || store.evaluateError"
+          class="report-section"
+        >
+          <h3>一条龙评估</h3>
+          <p v-if="store.evaluateRunning" class="loading-text">
+            评估中…（回测 + WF + 适配性 + 基准对比，约需数秒）
+          </p>
+          <div v-else-if="store.evaluateError" class="error-banner">⚠ {{ store.evaluateError }}</div>
+          <EvaluatePanel v-else-if="store.evaluateResult" :report="store.evaluateResult" />
         </section>
 
         <section class="report-section">
@@ -353,6 +413,37 @@ async function onSave() {
 .loading-text {
   color: var(--text-dim);
   font-size: 12px;
+}
+/* 附加分析开关 */
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+.check-row input {
+  accent-color: var(--accent, #4a9eff);
+}
+.wf-windows {
+  margin: -2px 0 8px 20px;
+  max-width: 110px;
+}
+.wf-windows input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 5px 8px;
+  font-size: 12px;
+  color: var(--text);
+}
+.extra-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 2px 0 0;
 }
 .run-btn {
   margin-top: auto;
