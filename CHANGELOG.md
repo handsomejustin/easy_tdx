@@ -22,6 +22,15 @@
 - **Docker 部署**（`Dockerfile` + `docker-compose.yml`）——python:3.12-slim，装 `[web,warehouse]` 可选依赖，`/data` 卷持久化自选/策略库/任务库/K 线仓库，带健康检查。
 - **一键门禁脚本**（`scripts/verify_ci.sh`）——ruff + ruff format + mypy strict + 全量 pytest 一条命令（`--fast` 跳过测试），可挂 git pre-push hook。
 
+### 修复
+
+- **CI（UP038）**——CI 经 `requirements-dev.txt` 锁定 ruff 0.11.11（UP038 生效），本地 0.16.4 已移除该规则导致漏检；10 处 `isinstance(x, (A, B))` 统一改为 PEP 604 联合类型写法（两版规则集均合规，已用 CI 同版工具链复验）。
+- **任务状态跃迁竞态**——`task_runner` 此前在锁内改内存状态后才在锁外落盘 SQLite，慢速环境（CI + coverage 插桩）读库方会命中「内存 done / 磁盘 running」窗口；改为 running/done/failed 三次跃迁均在同一把锁内**先落盘再对内存可见**（与 `submit` 的 pending 写法对齐），窗口从根上消除。
+
+### 文档
+
+- README 介绍部分补充 v1.24~v1.27 能力：防过拟合验证链、通达信公式 + 轮动组合、本地 K 线数据仓库；CLI 参考新增 `--wf`/`--evaluate` 示例与 `formula`/`warehouse` 命令组。
+
 ## [1.26.0] — 2026-09-01
 
 **本地数据仓库版本**——把碎片化缓存升级为统一数据底座（升级计划 P2 阶段；P2-2 评级后端化已随 1.25.0 提前交付）。此前下游项目（indicator-lab 的 DuckDB 仓库、backtest-system 的 cache/ 目录）都在自建数据层，现在 easy-tdx 原生提供。
