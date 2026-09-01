@@ -256,7 +256,7 @@ function onLoad(s: SavedStrategy) {
     const rawSymbol = (ctx.symbol as string) || ''
     const codeOnly = rawSymbol.includes(':') ? rawSymbol.split(':').pop()! : rawSymbol
     router.push({
-      path: '/',
+      path: '/backtest',
       query: {
         strategy: s.strategy,
         params,

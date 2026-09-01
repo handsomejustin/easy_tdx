@@ -2,12 +2,14 @@
 // 用到的：candlestick（K线）、line（净值/回撤曲线）、markPoint（买卖点标注）、heatmap（寻优热力图）。
 
 import * as echarts from 'echarts/core'
-import { BarChart, CandlestickChart, HeatmapChart, LineChart } from 'echarts/charts'
+import { BarChart, CandlestickChart, HeatmapChart, LineChart, RadarChart } from 'echarts/charts'
 import {
   DataZoomComponent,
   GridComponent,
   LegendComponent,
+  MarkLineComponent,
   MarkPointComponent,
+  RadarComponent,
   TitleComponent,
   TooltipComponent,
   VisualMapComponent,
@@ -20,12 +22,15 @@ echarts.use([
   LineChart,
   BarChart,
   HeatmapChart,
+  RadarChart,
   GridComponent,
   TooltipComponent,
   LegendComponent,
   TitleComponent,
   DataZoomComponent,
   MarkPointComponent,
+  MarkLineComponent,
+  RadarComponent,
   VisualMapComponent,
 ])
 

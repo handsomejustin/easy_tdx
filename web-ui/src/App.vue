@@ -1,21 +1,48 @@
 <script setup lang="ts">
-// 根组件：顶部标题栏 + 路由出口。
+// 根组件：侧边栏终端外壳 + 路由出口。
+// 布局借鉴专业看盘终端（侧边栏分组导航 + 底部实时连接状态徽标）。
+import { onMounted } from 'vue'
+
+import { useQuoteStore } from './stores/quotes'
+
+const quoteStore = useQuoteStore()
+onMounted(() => quoteStore.connect())
+
+const sseLabel: Record<string, string> = {
+  connecting: '连接中',
+  open: '实时',
+  closed: '离线',
+}
 </script>
 
 <template>
   <div class="app">
-    <header class="app-header">
-      <h1>easy-tdx 回测</h1>
-      <nav class="app-nav">
-        <RouterLink to="/" active-class="active">单标的回测</RouterLink>
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-name">easy-tdx</span>
+        <span class="brand-sub">行情终端</span>
+      </div>
+      <nav class="side-nav">
+        <div class="nav-group">行情</div>
+        <RouterLink to="/" exact-active-class="active">市场看板</RouterLink>
+        <RouterLink to="/watchlist" active-class="active">自选行情</RouterLink>
+        <div class="nav-group">分析</div>
+        <RouterLink to="/backtest" active-class="active">单标的回测</RouterLink>
         <RouterLink to="/portfolio" active-class="active">组合回测</RouterLink>
         <RouterLink to="/optimize" active-class="active">参数寻优</RouterLink>
         <RouterLink to="/compare" active-class="active">结果对比</RouterLink>
         <RouterLink to="/strategies" active-class="active">策略库</RouterLink>
         <RouterLink to="/signals" active-class="active">信号雷达</RouterLink>
+        <div class="nav-group">系统</div>
         <RouterLink to="/settings" active-class="active">服务器设置</RouterLink>
       </nav>
-    </header>
+      <div class="side-footer">
+        <span class="dot" :class="quoteStore.status"></span>
+        <span class="sse-label">{{ sseLabel[quoteStore.status] ?? '离线' }}</span>
+        <span v-if="quoteStore.lastTs" class="sse-ts">{{ quoteStore.lastTs.slice(11, 19) }}</span>
+        <span v-if="quoteStore.quoteCount" class="sse-n">×{{ quoteStore.quoteCount }}</span>
+      </div>
+    </aside>
     <main class="app-main">
       <RouterView />
     </main>
@@ -25,40 +52,88 @@
 <style scoped>
 .app {
   display: flex;
-  flex-direction: column;
   height: 100vh;
 }
-.app-header {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  padding: 0 20px;
-  height: 48px;
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--border);
+.sidebar {
+  width: 176px;
   flex-shrink: 0;
-}
-.app-header h1 {
-  font-size: 16px;
-  font-weight: 600;
-}
-.app-nav {
   display: flex;
-  gap: 16px;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
 }
-.app-nav a {
+.brand {
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.brand-name {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.brand-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
   color: var(--text-dim);
+}
+.side-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+.nav-group {
+  padding: 10px 16px 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.side-nav a {
+  display: block;
+  padding: 7px 16px;
+  color: var(--text-muted);
   text-decoration: none;
   font-size: 13px;
-  padding: 4px 0;
-  border-bottom: 2px solid transparent;
+  border-left: 2px solid transparent;
 }
-.app-nav a:hover {
+.side-nav a:hover {
   color: var(--text);
+  background: var(--bg-elevated);
 }
-.app-nav a.active {
+.side-nav a.active {
   color: var(--accent);
-  border-bottom-color: var(--accent);
+  border-left-color: var(--accent);
+  background: var(--bg-elevated);
+}
+.side-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+.dot.open {
+  background: var(--up);
+  box-shadow: 0 0 4px var(--up);
+}
+.dot.connecting {
+  background: var(--warn);
+}
+.sse-ts {
+  margin-left: auto;
+  font-family: var(--font-mono);
+}
+.sse-n {
+  color: var(--text-dim);
 }
 .app-main {
   flex: 1;

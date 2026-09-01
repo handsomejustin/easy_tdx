@@ -19,6 +19,9 @@ export function detectMarket(code: string): Market {
   const c = code.trim()
   if (!/^\d{6}$/.test(c)) return 'SZ'
 
+  // 通达信板块指数（沪市）：880 统计 / 881 行业 / 885 概念等
+  if (/^88[0-9]/.test(c)) return 'SH'
+
   // 北交所：43/83/87/92(含920段)/93 + 4xx/8xx（三板/小盘）
   if (/^(43|83|87|92|93|4|8)/.test(c)) return 'BJ'
 

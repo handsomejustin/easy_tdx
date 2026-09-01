@@ -17,9 +17,11 @@ from .base import BaseCommand
 def _price_decimal_digits(market: Market, code: str) -> int:
     """推断某证券报价的有效小数位数。
 
-    通达信协议中，price 及各档差分均以「厘」(0.001 元) 为基本单位编码，
-    但报价精度按品种而异：股票 2 位（分），指数/ETF/基金/可转债/国债/国债逆回购 3 位（厘）。
-    若一律按 /100 解析，ETF/指数等品种价格会被放大 10 倍（见 Issue #8）。
+    通达信协议中，price 及各档差分按品种以「分」或「厘」为基本单位编码：
+    股票/大盘指数 2 位（分；指数点位恒两位小数，如科创50 1647.53），
+    ETF/基金/可转债/国债 3 位（厘）。
+    若一律按 /100 解析，ETF 等品种价格会被放大 10 倍（见 Issue #8）；
+    反之指数按 3 位解析会缩小 10 倍（见 2026-09 看板指数修复）。
 
     decimal_point 不在行情响应包内，只能凭 market + code 代码段推断。
     注意同一代码不同市场含义不同：SZ 000001=平安银行(股票,2位)，
@@ -34,10 +36,20 @@ def _price_decimal_digits(market: Market, code: str) -> int:
     if market == Market.SH:
         if code.startswith("5"):  # 51x ETF、55x 货币基金、56x 跨境ETF、58x 科创ETF
             return 3
-        if code.startswith("000"):  # 000001 上证指数、000300 沪深300 等
+        if code.startswith("000"):
+            # 000001 上证指数、000300 沪深300、000688 科创50 等——指数系列。
+            # 实测（2026-09-01）：这些指数的报价原始单位是「分」（÷100），
+            # 点位恒为 2 位小数（科创50 1647.53 / 沪深300 4611.44）；
+            # 按 3 位（厘）解析会缩小 10 倍。深市指数（39xxxx）走默认 2 位同理。
+            return 2
+        if code.startswith("880"):
+            # 880xxx 统计指数（880005 涨跌家数等）：字段是计数语义，
+            # market_stat 依赖 ÷1000 解码（price×10 还原家数），勿动。
             return 3
-        if code.startswith("8"):  # 880xxx 行业指数
-            return 3
+        if code.startswith("88"):
+            # 881xxx 行业板块指数、885xxx 概念板块指数——同大盘指数，
+            # 点位两位小数（实测 881106 种植业 1039.93，按 3 位曾缩成 103.993）。
+            return 2
         return 2  # 60xxxx / 68xxxx 科创板 A 股
 
     # 深圳：1/3 开头的 15x/16x/18x 为基金，12x 为可转债，11x 为国债
@@ -189,7 +201,7 @@ class GetSecurityQuotesCmd(BaseCommand[list[SecurityQuote]]):
                 raise TdxDecodeError(f"security_quotes 非法 market 值: {market_b}") from e
 
             code = code_b.decode("utf-8").rstrip("\x00")
-            # 价格按品种有效小数位解析：股票/100，指数·ETF·基金/可转债/国债/1000（Issue #8）
+            # 价格按品种有效小数位解析：股票/大盘指数 ÷100，ETF/基金/债券/880 统计指数 ÷1000（Issue #8）
             divisor = 10 ** _price_decimal_digits(market, code)
             p = price_raw / divisor
 

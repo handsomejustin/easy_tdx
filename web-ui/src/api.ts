@@ -6,14 +6,20 @@ import type {
   BacktestRequest,
   BacktestResult,
   Bar,
+  BoardRow,
   Category,
+  DataFrameResponse,
+  MarketStat,
+  MinutePoint,
   MultiStrategyBacktestRequest,
   OptimizeAllBacktestRequest,
   OptimizeBacktestRequest,
   PortfolioBacktestRequest,
+  RankRow,
   SavedStrategy,
   SavedStrategyCreate,
   SavedStrategyListResponse,
+  SecurityQuote,
   ServerHostInfo,
   ServerHostListResponse,
   ServerSwitchResult,
@@ -23,6 +29,7 @@ import type {
   TaskListResponse,
   TaskState,
   TaskSubmitResponse,
+  WatchlistResponse,
 } from './types'
 
 const BASE = '/api/v1'
@@ -348,4 +355,225 @@ export async function switchServerHost(host: string): Promise<ServerSwitchResult
   })
   if (!resp.ok) await throwError(resp)
   return (await resp.json()) as ServerSwitchResult
+}
+
+// ── 行情终端 ────────────────────────────────────────────────────────────────
+
+/** 批量拉实时五档（REST 一次性；持续刷新走 SSE，见 stores/quotes.ts）。
+ *  注意：后端路由是 POST /quotes（market router 挂在 /api/v1 前缀下）。 */
+export async function fetchQuotes(symbols: Array<{ market: string; code: string }>): Promise<SecurityQuote[]> {
+  const resp = await fetch(`${BASE}/quotes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stocks: symbols }),
+  })
+  if (!resp.ok) await throwError(resp)
+  const body = (await resp.json()) as DataFrameResponse
+  return body.data.map(normalizeQuote)
+}
+
+/** 后端 quotes 行 → SecurityQuote（补 symbol 键；数值列容错 null）。 */
+function normalizeQuote(row: Record<string, unknown>): SecurityQuote {
+  const market = String(row.market ?? '')
+  const code = String(row.code ?? '')
+  const num = (v: unknown): number | null => {
+    const n = Number(v)
+    return v == null || Number.isNaN(n) ? null : n
+  }
+  const q = { ...row } as Record<string, unknown>
+  q.symbol = `${market}${code}`
+  for (const k of Object.keys(q)) {
+    if (k === 'symbol' || k === 'market' || k === 'code' || k === 'server_time') continue
+    q[k] = num(q[k])
+  }
+  return q as unknown as SecurityQuote
+}
+
+/** 全市场涨跌统计（涨/跌/平/涨停/跌停家数 + 总成交）。 */
+export async function fetchMarketStat(): Promise<MarketStat> {
+  const resp = await fetch(`${BASE}/market/stat`)
+  if (!resp.ok) await throwError(resp)
+  const body = (await resp.json()) as DataFrameResponse
+  const row = body.data[0] ?? {}
+  const num = (v: unknown): number => Number(v ?? 0)
+  return {
+    up_count: num(row.up_count),
+    down_count: num(row.down_count),
+    neutral_count: num(row.neutral_count),
+    suspended_count: num(row.suspended_count),
+    total_count: num(row.total_count),
+    total_amount: num(row.total_amount),
+    total_volume: num(row.total_volume),
+    total_market_cap: num(row.total_market_cap),
+    limit_up_count: num(row.limit_up_count),
+    limit_down_count: num(row.limit_down_count),
+  }
+}
+
+/** 今日分时（240 点：价格 + 每分钟量）。 */
+export async function fetchMinute(market: string, code: string): Promise<MinutePoint[]> {
+  const params = new URLSearchParams({ market, code })
+  const resp = await fetch(`${BASE}/minute?${params}`)
+  if (!resp.ok) await throwError(resp)
+  const body = (await resp.json()) as DataFrameResponse
+  return body.data.map((row) => ({
+    datetime: String(row.datetime ?? ''),
+    price: Number(row.price ?? 0),
+    vol: Number(row.vol ?? 0),
+  }))
+}
+
+/** 历史某日分时（date: YYYYMMDD 整数，如 20260829）。 */
+export async function fetchHistoryMinute(
+  market: string,
+  code: string,
+  date: number,
+): Promise<MinutePoint[]> {
+  const params = new URLSearchParams({ market, code, date: String(date) })
+  const resp = await fetch(`${BASE}/minute/history?${params}`)
+  if (!resp.ok) await throwError(resp)
+  const body = (await resp.json()) as DataFrameResponse
+  return body.data.map((row) => ({
+    datetime: String(row.datetime ?? ''),
+    price: Number(row.price ?? 0),
+    vol: Number(row.vol ?? 0),
+  }))
+}
+
+/** 指数日 K（/bars/index；指数代码在个股接口可能返回空，用它兜底）。 */
+export async function fetchIndexBars(
+  market: string,
+  code: string,
+  count = 250,
+): Promise<Bar[]> {
+  const params = new URLSearchParams({ market, code, category: 'DAY', count: String(count) })
+  const resp = await fetch(`${BASE}/bars/index?${params}`)
+  if (!resp.ok) await throwError(resp)
+  const body = (await resp.json()) as DataFrameResponse
+  return body.data.map((row) => ({
+    datetime: String(row.datetime ?? row.date ?? '').slice(0, 19).replace(' ', 'T'),
+    open: Number(row.open),
+    high: Number(row.high),
+    low: Number(row.low),
+    close: Number(row.close),
+    vol: Number(row.vol),
+    amount: Number(row.amount ?? 0),
+  }))
+}
+
+/** 板块列表（MAC 协议；CHANGE_PCT 排序时涨跌幅 = price/pre_close - 1 自行计算）。 */
+export async function fetchBoards(boardType = 'HY', count = 60): Promise<BoardRow[]> {
+  const params = new URLSearchParams({ board_type: boardType, count: String(count) })
+  const resp = await fetch(`${BASE}/board-mac/list?${params}`)
+  if (!resp.ok) await throwError(resp)
+  const body = (await resp.json()) as DataFrameResponse
+  return body.data.map((row) => {
+    const r = { ...row }
+    const price = Number(r.price ?? 0)
+    const pre = Number(r.pre_close ?? 0)
+    r.change_pct = pre > 0 ? (price / pre - 1) * 100 : Number(r.change_pct ?? 0)
+    return r as BoardRow
+  })
+}
+
+/** 市场异动流（火箭发射/大笔买入/封涨停板/打开跌停板/快速反弹等）。 */
+export async function fetchUnusual(market: 'SH' | 'SZ', count = 50): Promise<Record<string, unknown>[]> {
+  const params = new URLSearchParams({ market, count: String(count) })
+  const resp = await fetch(`${BASE}/mac/unusual?${params}`)
+  if (!resp.ok) await throwError(resp)
+  const body = (await resp.json()) as DataFrameResponse
+  return body.data
+}
+
+/** 排行榜（MAC 排行行情）。
+ *  MAC 协议价格列是 close（无 price/change_pct），这里统一归一化为
+ *  price/change_pct，渲染端不再做多候选探测。sortBy 对应后端 SortType。 */
+export async function fetchRankList(
+  sortOrder: 'DESC' | 'ASC',
+  count = 20,
+  sortBy = 'CHANGE_PCT',
+): Promise<RankRow[]> {
+  const params = new URLSearchParams({
+    category: 'A',
+    sort_type: sortBy,
+    sort_order: sortOrder,
+    count: String(count),
+  })
+  const resp = await fetch(`${BASE}/mac/quote-list?${params}`)
+  if (!resp.ok) await throwError(resp)
+  const body = (await resp.json()) as DataFrameResponse
+  return body.data.map((row) => {
+    const close = Number(row.close ?? row.price ?? 0)
+    const pre = Number(row.pre_close ?? 0)
+    const r = { ...row } as Record<string, unknown>
+    r.price = close
+    r.change_pct = pre > 0 ? (close / pre - 1) * 100 : 0
+    r.market = Number(row.market) === 1 ? 'SH' : 'SZ'
+    return r as RankRow
+  })
+}
+
+/** 查询证券中文名称（MAC 协议个股快照；BJ 市场可能不支持，失败返回空）。 */
+export async function fetchSymbolName(market: string, code: string): Promise<string> {
+  try {
+    const params = new URLSearchParams({ market, code })
+    const resp = await fetch(`${BASE}/mac/symbol-info?${params}`)
+    if (!resp.ok) return ''
+    const body = (await resp.json()) as DataFrameResponse
+    return String(body.data[0]?.name ?? '')
+  } catch {
+    return ''
+  }
+}
+
+/** 板块成分股（MAC 协议；按涨跌幅排序，列与排行行情同构，做同款归一化）。 */
+export async function fetchBoardMembers(
+  boardSymbol: string,
+  count = 100,
+  sortOrder: 'DESC' | 'ASC' = 'DESC',
+): Promise<RankRow[]> {
+  const params = new URLSearchParams({
+    board_symbol: boardSymbol,
+    count: String(count),
+    sort_type: 'CHANGE_PCT',
+    sort_order: sortOrder,
+  })
+  const resp = await fetch(`${BASE}/board-mac/members?${params}`)
+  if (!resp.ok) await throwError(resp)
+  const body = (await resp.json()) as DataFrameResponse
+  return body.data.map((row) => {
+    const close = Number(row.close ?? row.price ?? 0)
+    const pre = Number(row.pre_close ?? 0)
+    const r = { ...row } as Record<string, unknown>
+    r.price = close
+    r.change_pct = pre > 0 ? (close / pre - 1) * 100 : 0
+    const m = Number(row.market)
+    r.market = m === 1 ? 'SH' : m === 2 ? 'BJ' : 'SZ'
+    return r as RankRow
+  })
+}
+
+// ── 自选 ────────────────────────────────────────────────────────────────────
+
+/** 列出全部自选。 */
+export async function fetchWatchlist(): Promise<WatchlistResponse> {
+  const resp = await fetch(`${BASE}/watchlist`)
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()) as WatchlistResponse
+}
+
+/** 加入自选（幂等）。 */
+export async function addWatchItem(market: string, code: string, name = ''): Promise<void> {
+  const resp = await fetch(`${BASE}/watchlist`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ market, code, name }),
+  })
+  if (!resp.ok) await throwError(resp)
+}
+
+/** 移除自选。 */
+export async function removeWatchItem(market: string, code: string): Promise<void> {
+  const resp = await fetch(`${BASE}/watchlist/${market}/${code}`, { method: 'DELETE' })
+  if (!resp.ok) await throwError(resp)
 }

@@ -79,11 +79,14 @@ def test_create_app_returns_fastapi_instance():
     assert app.title == "easy-tdx API"
 
     # Check routers are mounted
-    routes = [r.path for r in app.routes]
+    # FastAPI 0.141+ 的 app.routes 含 _IncludedRouter（无 path 属性），改用
+    # OpenAPI schema 验证（WebSocket 不进 schema，由 test_full_app_routes_registered 覆盖）
+    routes = list(app.openapi()["paths"].keys())
     assert any("/api/v1/security" in r for r in routes)
     assert any("/api/v1/bars" in r for r in routes)
     assert any("/api/v1/chanlun" in r for r in routes)
-    assert any("/ws/realtime" in r for r in routes)
+    assert any("/api/v1/watchlist" in r for r in routes)
+    assert any("/api/v1/stream/quotes" in r for r in routes)
 
 
 def test_deps_get_client_type():
@@ -503,7 +506,10 @@ def test_full_app_routes_registered():
     from easy_tdx.web import create_app
 
     app = create_app()
-    all_paths = [r.path for r in app.routes]
+    # FastAPI 0.141+ 的 include_router 是 _IncludedRouter 延迟对象，app.routes
+    # 不再平铺子路由；用 OpenAPI schema 验证注册结果（面向行为而非内部结构）。
+    # WebSocket 路由不进 OpenAPI，单独用 _IncludedRouter 展开验证。
+    all_paths = list(app.openapi()["paths"].keys())
     expected_prefixes = [
         "/api/v1/security",
         "/api/v1/bars",
@@ -512,11 +518,27 @@ def test_full_app_routes_registered():
         "/api/v1/chanlun",
         "/api/v1/announcements",
         "/api/v1/sina/financial-report",
-        "/ws/realtime",
+        "/api/v1/watchlist",
+        "/api/v1/stream/quotes",
     ]
     for prefix in expected_prefixes:
         matched = any(prefix in p for p in all_paths)
         assert matched, f"Expected route with prefix '{prefix}' not found in {all_paths}"
+
+    # WebSocket 路由验证：经 _IncludedRouter.original_router 展开找 ws 路径
+    ws_paths: list[str] = []
+
+    def _collect(routes: list) -> None:
+        for r in routes:
+            path = getattr(r, "path", None)
+            if path:
+                ws_paths.append(path)
+            orig = getattr(r, "original_router", None)
+            if orig is not None:
+                _collect(getattr(orig, "routes", []))
+
+    _collect(app.routes)
+    assert any("/ws/realtime" in p for p in ws_paths), f"WS route missing in {ws_paths}"
 
 
 def test_openapi_schema_generated():

@@ -104,3 +104,59 @@ label {
 a {
   color: var(--accent);
 }
+
+/* 行情涨跌着色（format.dirClass 的落点） */
+.up {
+  color: var(--up);
+}
+.down {
+  color: var(--down);
+}
+.flat {
+  color: var(--text-muted);
+}
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* 通用面板卡片（看板/自选页网格单元） */
+.card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  overflow: auto;
+}
+.card h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+/* 行情数据表 */
+.qtable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.qtable th {
+  text-align: right;
+  color: var(--text-dim);
+  font-weight: 500;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.qtable td {
+  text-align: right;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+.qtable th:first-child,
+.qtable td:first-child {
+  text-align: left;
+  font-family: inherit;
+}

@@ -80,6 +80,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     app.state.tdx_client = client
 
+    # --- 实时行情 SSE 推送器（共享轮询 + fan-out） ---
+    try:
+        from easy_tdx.models.enums import Market
+        from easy_tdx.web.quote_streamer import QuoteStreamer
+        from easy_tdx.web.watchlist_store import get_watchlist_store
+
+        store = get_watchlist_store()
+
+        async def _watch_symbols():
+            # SQLite 存 "SH"/"SZ"/"BJ" 字符串，轮询器需要 Market 枚举
+            return [(Market[mkt], code) for mkt, code in store.symbols()]
+
+        streamer = QuoteStreamer(client.get_security_quotes, _watch_symbols)
+        streamer.start()
+        app.state.quote_streamer = streamer
+    except Exception:
+        logger.warning("QuoteStreamer 启动失败 — SSE 推送不可用", exc_info=True)
+        app.state.quote_streamer = None
+
     # --- MAC 协议客户端 ---
     mac_client = None
     enable_mac = getattr(app.state, "enable_mac", True)
@@ -111,6 +130,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.ex_client = ex_client
 
     yield
+
+    # --- 关闭实时行情推送器 ---
+    streamer = getattr(app.state, "quote_streamer", None)
+    if streamer is not None:
+        try:
+            await streamer.stop()
+        except Exception:
+            logger.warning("QuoteStreamer stop failed", exc_info=True)
 
     # --- 依次关闭 ---
     for name, cli in [
@@ -214,6 +241,8 @@ def _create_app(
     from easy_tdx.web.routers.server import router as server_router
     from easy_tdx.web.routers.sina import router as sina_router
     from easy_tdx.web.routers.strategies import router as strategies_router
+    from easy_tdx.web.routers.stream import router as stream_router
+    from easy_tdx.web.routers.watchlist import router as watchlist_router
 
     app.include_router(market_router, prefix="/api/v1")
     app.include_router(bars_router, prefix="/api/v1")
@@ -239,6 +268,10 @@ def _create_app(
     app.include_router(strategies_router, prefix="/api/v1")
     # 服务器设置路由（列出/测速/切换 TDX host）
     app.include_router(server_router, prefix="/api/v1")
+    # 自选股路由（SQLite 持久化，纯 CRUD，不依赖行情连接）
+    app.include_router(watchlist_router, prefix="/api/v1")
+    # 实时行情 SSE 路由（依赖 lifespan 里的 QuoteStreamer）
+    app.include_router(stream_router, prefix="/api/v1")
 
     # --- 前端 dist 托管（生产/打包态同源服务，开发态可缺省） ---
     # 必须在所有 API 路由注册之后：StaticFiles(html=True) 挂在 "/" 会吞掉

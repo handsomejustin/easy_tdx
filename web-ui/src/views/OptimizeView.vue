@@ -2,8 +2,8 @@
 // 参数寻优主页面：左配置（选标的 + 策略 + 寻优参数）/ 右报告（排名表 + 热力图）。
 // 取行情已整合进「开始寻优」。另有「一键寻优所有策略」：用各策略预设网格逐策略寻优再全局排名。
 
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
 import GradeBadge from '../components/GradeBadge.vue'
 import OptimizeHeatmap from '../components/OptimizeHeatmap.vue'
@@ -18,6 +18,7 @@ import { useBacktestStore } from '../stores/backtest'
 
 const store = useBacktestStore()
 const router = useRouter()
+const route = useRoute()
 
 // SymbolPicker 实例引用，用于触发取行情
 const symbolPicker = ref<InstanceType<typeof SymbolPicker> | null>(null)
@@ -86,10 +87,22 @@ const selectedStrategy = computed(
   () => store.strategies.find((s) => s.name === strategy.value) ?? null,
 )
 
-onMounted(() => {
+onMounted(async () => {
   store.loadStrategies().catch((e) => {
     store.error = `加载策略列表失败：${e instanceof Error ? e.message : e}`
   })
+
+  // 个股弹窗「一键寻优」入口：/optimize?code=601088&autoAll=1
+  // 填入代码后自动触发「一键寻优所有策略」（等 nextTick 让 SymbolPicker
+  // 的 v-model 同步，onRunAll 里的 loadBars 才会取到正确标的）。
+  const qCode = String(route.query.code ?? '')
+  if (route.query.autoAll === '1' && /^\d{6}$/.test(qCode)) {
+    code.value = qCode
+    await nextTick()
+    if (!store.optimizeRunning && !store.optimizeAllRunning) {
+      onRunAll()
+    }
+  }
 })
 
 // 网格点数（前端预校验，提示用户）
@@ -172,12 +185,12 @@ function buildBacktestQuery(strategyName: string, params: Record<string, number 
 // 点击排名表「查看」→ 跳转单标的页用该参数回测
 function onViewParams(params: Record<string, number | string>) {
   // 通过 query 传递参数，单标的页接收后自动填充
-  router.push({ path: '/', query: buildBacktestQuery(strategy.value, params) })
+  router.push({ path: '/backtest', query: buildBacktestQuery(strategy.value, params) })
 }
 
 // 一键寻优结果点击「查看」→ 跳转单标的页用该策略 + 参数回测
 function onViewAll(strategyName: string, params: Record<string, number | string>) {
-  router.push({ path: '/', query: buildBacktestQuery(strategyName, params) })
+  router.push({ path: '/backtest', query: buildBacktestQuery(strategyName, params) })
 }
 
 function pct(v: number | null | undefined): string {

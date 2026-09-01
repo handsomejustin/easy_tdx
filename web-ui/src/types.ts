@@ -403,3 +403,120 @@ export interface ServerSwitchResult {
   host: string
   message: string
 }
+
+// ── 行情终端：实时五档（SSE / POST /api/v1/security/quotes） ─────────────────
+
+/** 单只标的实时五档行情（后端 SecurityQuote 白名单投影，SSE 与 REST 同构）。 */
+export interface SecurityQuote {
+  symbol: string // "SH600000"
+  market: string // SH/SZ/BJ
+  code: string
+  price: number | null
+  pre_close: number | null
+  open: number | null
+  high: number | null
+  low: number | null
+  vol: number | null // 总成交量（手）
+  cur_vol: number | null
+  amount: number | null // 成交额（元）
+  s_vol: number | null // 内盘
+  b_vol: number | null // 外盘
+  rise_speed: number | null // 涨速
+  limit_up: number | null
+  limit_down: number | null
+  decimal_point: number | null
+  server_time: string
+  trading_status: number | null
+  bid1: number | null
+  bid_vol1: number | null
+  bid2: number | null
+  bid_vol2: number | null
+  bid3: number | null
+  bid_vol3: number | null
+  bid4: number | null
+  bid_vol4: number | null
+  bid5: number | null
+  bid_vol5: number | null
+  ask1: number | null
+  ask_vol1: number | null
+  ask2: number | null
+  ask_vol2: number | null
+  ask3: number | null
+  ask_vol3: number | null
+  ask4: number | null
+  ask_vol4: number | null
+  ask5: number | null
+  ask_vol5: number | null
+}
+
+/** SSE 消息：quotes_updated / hello。 */
+export interface SseMessage {
+  type: 'quotes_updated' | 'hello'
+  ts?: string
+  count?: number
+  quotes?: SecurityQuote[]
+  subscribers?: number
+}
+
+// ── 行情终端：市场统计（GET /api/v1/market/stat） ────────────────────────────
+
+export interface MarketStat {
+  up_count: number
+  down_count: number
+  neutral_count: number
+  suspended_count: number
+  total_count: number
+  total_amount: number
+  total_volume: number
+  total_market_cap: number
+  limit_up_count: number
+  limit_down_count: number
+}
+
+// ── 行情终端：分时（GET /api/v1/minute） ─────────────────────────────────────
+
+export interface MinutePoint {
+  datetime: string
+  price: number
+  vol: number
+}
+
+// ── 行情终端：自选（GET/POST/DELETE /api/v1/watchlist） ──────────────────────
+
+export interface WatchItem {
+  market: string
+  code: string
+  symbol: string // SH600000
+  name: string
+  group_name: string
+  created_at: string
+  sort_order: number
+}
+
+export interface WatchlistResponse {
+  items: WatchItem[]
+  count: number
+}
+
+// ── 行情终端：板块列表（GET /api/v1/board-mac/list，MAC 协议，防御式取列） ────
+
+/** 板块行（MAC 协议字段随版本浮动，全部可选，渲染端容错）。 */
+export interface BoardRow {
+  code?: string
+  name?: string
+  price?: number
+  pre_close?: number
+  change_pct?: number
+  sort_value?: number
+  [key: string]: unknown
+}
+
+// ── 行情终端：排行行情（GET /api/v1/mac/quote-list，MAC 协议，防御式取列） ────
+
+export interface RankRow {
+  code?: string
+  name?: string
+  price?: number
+  change_pct?: number
+  [key: string]: unknown
+}

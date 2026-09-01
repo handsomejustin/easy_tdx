@@ -126,7 +126,7 @@ function signalSeq(r: SignalScanRow): string {
 function onLoad(r: SignalScanRow) {
   const codeOnly = r.symbol.includes(':') ? r.symbol.split(':').pop()! : r.symbol
   router.push({
-    path: '/',
+    path: '/backtest',
     query: {
       strategy: r.strategy,
       params: JSON.stringify(r.params),

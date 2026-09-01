@@ -233,23 +233,29 @@ def _build_quote_body(market: int, code: str, price_raw: int) -> bytes:
 
 
 def test_security_quotes_decimal_point_classification():
-    """Issue #8：价格小数位按 market+code 代码段推断。
+    """Issue #8 + 看板指数修复：价格小数位按 market+code 代码段推断。
 
     同一代码不同市场含义不同：SZ 000001=平安银行(股票,2位)，
-    SH 000001=上证指数(3位)，故必须结合市场判断。
+    SH 000001=上证指数，故必须结合市场判断。
+    大盘指数点位恒两位小数（2026-09-01 实测：科创50 1647.53、沪深300 4611.44、
+    上证 3979.89），报价原始单位为「分」；曾按 3 位（厘）解析导致看板指数缩小 10 倍。
     """
     from easy_tdx.commands.security_quotes import _price_decimal_digits
     from easy_tdx.models.enums import Market
 
-    # ETF / 基金 / 可转债 / 国债 / 指数 -> 3 位（厘）
+    # ETF / 基金 / 可转债 / 国债 / 880 统计指数 -> 3 位（厘）
     assert _price_decimal_digits(Market.SZ, "159922") == 3  # 深 ETF
     assert _price_decimal_digits(Market.SZ, "161725") == 3  # 深 LOF 基金
     assert _price_decimal_digits(Market.SZ, "128095") == 3  # 深 可转债
     assert _price_decimal_digits(Market.SZ, "111002") == 3  # 深 国债
     assert _price_decimal_digits(Market.SH, "510300") == 3  # 沪 ETF
     assert _price_decimal_digits(Market.SH, "511990") == 3  # 沪 货币基金
-    assert _price_decimal_digits(Market.SH, "000001") == 3  # 上证指数
-    assert _price_decimal_digits(Market.SH, "000300") == 3  # 沪深 300 指数
+    assert _price_decimal_digits(Market.SH, "880005") == 3  # 统计指数（market_stat 依赖 3 位语义）
+
+    # 大盘指数 -> 2 位（分，点位恒两位小数）
+    assert _price_decimal_digits(Market.SH, "000001") == 2  # 上证指数
+    assert _price_decimal_digits(Market.SH, "000300") == 2  # 沪深 300
+    assert _price_decimal_digits(Market.SZ, "399001") == 2  # 深证成指
 
     # 股票 -> 2 位（分）
     assert _price_decimal_digits(Market.SZ, "000001") == 2  # 深主板（平安银行）
@@ -290,16 +296,20 @@ def test_security_quotes_stock_price_unchanged():
     assert abs(q.price - 9.89) < 1e-9
 
 
-def test_security_quotes_index_price_3_digits():
-    """Issue #8：上证指数 SH000001 现价 3123.456 → 按 3 位小数解析。"""
+def test_security_quotes_index_price_2_digits():
+    """看板指数修复：上证指数 SH000001 现价 3979.89 → 按 2 位小数（分）解析。
+
+    实测（2026-09-01）：SH 000/880 系列 decimal_point 报 3，但 000 系大盘指数
+    的原始单位是分。3123456 → 31234.56。
+    """
     from easy_tdx.commands.security_quotes import GetSecurityQuotesCmd
     from easy_tdx.models.enums import Market
 
     body = _build_quote_body(int(Market.SH), "000001", 3123456)
     q = GetSecurityQuotesCmd([(Market.SH, "000001")]).parse_response(body)[0]
 
-    assert q.decimal_point == 3
-    assert abs(q.price - 3123.456) < 1e-6
+    assert q.decimal_point == 2
+    assert abs(q.price - 31234.56) < 1e-6
 
 
 # ---------------------------------------------------------------------------
