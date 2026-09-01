@@ -291,7 +291,9 @@ function coldBoards(list: BoardRow[]): BoardRow[] {
 async function loadBoards() {
   boardsError.value = ''
   try {
-    const [hy, gn] = await Promise.all([fetchBoards('HY', 120), fetchBoards('GN', 120)])
+    // 概念板块约 270 个：必须拉全量才能覆盖跌幅区（曾拉 120 导致
+    // 冷榜全是 +0.7% 附近的正值板块）；行业仅 86 个，120 已全量。
+    const [hy, gn] = await Promise.all([fetchBoards('HY', 120), fetchBoards('GN', 500)])
     industryBoards.value = hy
     conceptBoards.value = gn
   } catch (e) {
