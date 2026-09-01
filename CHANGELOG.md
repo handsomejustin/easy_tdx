@@ -13,6 +13,22 @@
 
 - `RealtimeDataFeed` stop-before-start 竞态：`run_async`/`run_sync` 首行会把 `_running` 重置为 True，若 `stop()` 在任务首次调度前调用，停止请求被覆盖、任务永不退出（RealtimeStreamHub 换标的重建 feed 时必现死锁）。引入独立 `_stop_requested` 标志，启动前已请求停止则直接返回；`tests/unit/test_realtime_feed.py` 补 2 个回归用例。
 
+## [1.27.1] — 2026-09-01
+
+**v1.27.0 的维护版**——一项 UI 修复 + WebSocket 实时推送落地（随独立排期提交收录）。
+
+### 修复
+
+- **回测页「附加分析」开关折行**——全局样式 ``input,select,textarea{width:100%}``（style.css）把勾选框撑满整行（实测 156px），文字被挤到下一行折行、窗口数控件块状堆叠；修复：复选框显式 ``width:auto`` 恢复原生 13px、勾选框+文字+窗口数同行单行布局（``white-space:nowrap``）、显式覆盖全局 ``label{display:block}``。Chrome DevTools 实机验证：两行均单行、区域零横向溢出。
+
+### 新增（随独立排期提交收录）
+
+- **`/ws/realtime/{symbol}` WebSocket 实时推送接通**（e58de78）——README 既有 TODO 落地：按需轮询 hub（订阅才拉取、无人订阅自动休眠）、多客户端并发订阅 fan-out、退订竞态处理，附冒烟脚本与 284 行单测。
+
+### 测试
+
+- 时段门控用例的时间相关 flaky 修复（bec231e）——固定 23:00-23:59 模拟盘外改为动态构造未来 1 分钟时段，任何时刻运行都成立。
+
 ## [1.27.0] — 2026-09-01
 
 **公式与轮动版本**——升级计划 P3 + P4（部分）落地：通达信公式解析器让写惯公式的用户零 Python 进入筛选/回测，轮动组合引擎补齐「排名换仓」组合形态，附 Docker 部署与一键门禁脚本。
