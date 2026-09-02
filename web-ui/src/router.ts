@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 import BacktestView from './views/BacktestView.vue'
+import CcpmView from './views/CcpmView.vue'
 import CompareView from './views/CompareView.vue'
 import CoreLeadersView from './views/CoreLeadersView.vue'
 import DashboardView from './views/DashboardView.vue'
@@ -32,6 +33,8 @@ const routes = [
   { path: '/ai-history', name: 'ai-history', component: LlmHistoryView },
   // 核心龙头池（universe=core 的 159 只名单）
   { path: '/leaders', name: 'leaders', component: CoreLeadersView },
+  // 中金所成交持仓排名（独立数据源，每日收盘后发布）
+  { path: '/ccpm', name: 'ccpm', component: CcpmView },
   // 兜底：未注册路径（如把 API 路径当页面访问）回看板，不再渲染空白
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]

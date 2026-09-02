@@ -762,3 +762,46 @@ export interface CoreLeaderRow {
   name: string
   market: string
 }
+
+// ── 中金所成交持仓排名（GET /api/v1/ccpm/*） ─────────────────────────────────
+
+/** 品种元数据（含给新手的科普文案）。 */
+export interface CcpmProductMeta {
+  code: string
+  name: string
+  category: string
+  underlying: string
+  underlying_code: string
+  unit: string
+  intro: string
+}
+
+export interface CcpmProductsResponse {
+  products: CcpmProductMeta[]
+  count: number
+}
+
+/** 排名行（宽表：合约 × 排名 对齐三类排名；单位均为「手」）。 */
+export interface CcpmRankRow {
+  trading_day: string
+  product: string
+  instrument: string
+  rank: number
+  vol_member: string | null
+  vol: number | null
+  vol_chg: number | null
+  long_member: string | null
+  long_pos: number | null
+  long_chg: number | null
+  short_member: string | null
+  short_pos: number | null
+  short_chg: number | null
+}
+
+export interface CcpmRankResponse {
+  trading_day: string
+  product: string
+  product_name: string
+  data: CcpmRankRow[]
+  count: number
+}

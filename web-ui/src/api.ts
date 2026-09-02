@@ -9,6 +9,8 @@ import type {
   BoardRow,
   Category,
   CoreLeaderRow,
+  CcpmProductsResponse,
+  CcpmRankResponse,
   DataFrameResponse,
   LlmChatResponse,
   LlmChatContext,
@@ -745,4 +747,21 @@ export async function fetchCoreLeaders(): Promise<CoreLeaderRow[]> {
   if (!resp.ok) await throwError(resp)
   const body = (await resp.json()) as DataFrameResponse
   return body.data as unknown as CoreLeaderRow[]
+}
+
+/** 中金所成交持仓排名：品种列表（含科普元数据）。 */
+export async function fetchCcpmProducts(): Promise<CcpmProductsResponse> {
+  const resp = await fetch(`${BASE}/ccpm/products`)
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()) as CcpmProductsResponse
+}
+
+/** 中金所成交持仓排名：按品种 + 交易日抓取（date 缺省自动回溯最近有数据的交易日）。 */
+export async function fetchCcpmRank(product: string, date?: string): Promise<CcpmRankResponse> {
+  const params = new URLSearchParams()
+  params.set('product', product)
+  if (date) params.set('date', date)
+  const resp = await fetch(`${BASE}/ccpm/rank?${params.toString()}`)
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()) as CcpmRankResponse
 }

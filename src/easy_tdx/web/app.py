@@ -288,6 +288,7 @@ def _create_app(
     from easy_tdx.web.routers.bars import router as bars_router
     from easy_tdx.web.routers.block import router as block_router
     from easy_tdx.web.routers.board_mac import router as board_mac_router
+    from easy_tdx.web.routers.ccpm import router as ccpm_router
     from easy_tdx.web.routers.chanlun import router as chanlun_router
     from easy_tdx.web.routers.ex_market import router as ex_market_router
     from easy_tdx.web.routers.finance import router as finance_router
@@ -323,6 +324,8 @@ def _create_app(
     app.include_router(announcement_router, prefix="/api/v1")
     # 新浪财报三表路由（独立数据源）
     app.include_router(sina_router, prefix="/api/v1")
+    # 中金所成交持仓排名路由（独立数据源，官网 ccpm 每日前 20 名会员）
+    app.include_router(ccpm_router, prefix="/api/v1")
     # 回测路由（纯计算，不依赖行情连接 lifespan）
     app.include_router(backtest_router, prefix="/api/v1")
     # 策略库路由（SQLite 持久化，纯数据 CRUD）

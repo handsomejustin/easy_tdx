@@ -18,6 +18,7 @@ from .cmd_board import (
     board_summary,
 )
 from .cmd_capital import capital_flow
+from .cmd_ccpm import ccpm
 from .cmd_chanlun import chanlun
 from .cmd_company import company_info, company_info_content, finance_info
 from .cmd_ex import ex
@@ -77,6 +78,7 @@ cli.add_command(board_change_ranking)
 cli.add_command(board_summary)
 cli.add_command(belong_board)
 cli.add_command(capital_flow)
+cli.add_command(ccpm)
 cli.add_command(unusual)
 cli.add_command(market_stat)
 cli.add_command(server_info)

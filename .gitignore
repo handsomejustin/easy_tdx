@@ -37,3 +37,6 @@ audit-report-*.html
 web-ui/e2e/.results/
 web-ui/test-results/
 web-ui/playwright-report/
+
+# ZCode agent 会话目录（本地，不入库）
+.zcode/
