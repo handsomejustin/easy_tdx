@@ -239,6 +239,97 @@ _reg(
     "FK 趋势指标（EMA(2) 突破斜率外推 EMA(42)，动量偏离检测）",
 )
 
+# ── V4.3 无未来函数指标（全部只引用当期及历史数据，信号不漂移） ──────────
+
+# 趋势/止损类
+_reg(
+    "SUPERTREND",
+    ("close", "high", "low"),
+    ("SUPERTREND", "ST_DIR"),
+    MyTT.SUPERTREND,
+    {"N": 10, "M": 3.0},
+    "SUPERTREND 超级趋势（ATR 通道趋势跟踪，兼移动止损；ST_DIR=1多/-1空）",
+)
+_reg(
+    "CHANDELIER",
+    ("close", "high", "low"),
+    ("CHDL_LONG", "CHDL_SHORT"),
+    MyTT.CHANDELIER,
+    {"N": 22, "M": 22, "K": 3.0},
+    "CHANDELIER 吊灯止损（多头/空头 ATR 跟踪止损位）",
+)
+_reg("HMA", ("close",), ("HMA",), MyTT.HMA, {"N": 16}, "HMA 赫尔均线（低滞后不重绘）")
+_reg(
+    "KAMA",
+    ("close",),
+    ("KAMA",),
+    MyTT.KAMA,
+    {"N": 10, "FAST": 2, "SLOW": 30},
+    "KAMA 考夫曼自适应均线（趋势市贴价/震荡市走平）",
+)
+_reg(
+    "ICHIMOKU",
+    ("high", "low", "close"),
+    ("IC_TENKAN", "IC_KIJUN", "IC_SPAN_A", "IC_SPAN_B", "IC_CHIKOU"),
+    MyTT.ICHIMOKU,
+    {"P1": 9, "P2": 26, "P3": 52, "SHIFT": 26},
+    "ICHIMOKU 一目均衡表（迟行带 IC_CHIKOU 仅作图示，当期信号请用转换/基准线与先行带）",
+)
+
+# 动量/振荡类
+_reg(
+    "UOS",
+    ("close", "high", "low"),
+    ("UOS", "UOS_MA"),
+    MyTT.UOS,
+    {"P1": 7, "P2": 14, "P3": 28, "M": 6},
+    "UOS 终极指标（7/14/28 三周期加权动量）",
+)
+_reg("CMO", ("close",), ("CMO",), MyTT.CMO, {"N": 14}, "CMO 钱德动量振荡器")
+_reg(
+    "TSI", ("close",), ("TSI", "TSI_MA"), MyTT.TSI, {"R": 25, "S": 13, "M": 13}, "TSI 真实强度指数"
+)
+_reg(
+    "FISHER",
+    ("high", "low"),
+    ("FISHER", "FISHER_TRG"),
+    MyTT.FISHER,
+    {"N": 9},
+    "FISHER 费雪变换（区间位置正态化，拐点尖锐）",
+)
+
+# 波动率/状态识别类
+_reg(
+    "SQUEEZE",
+    ("close", "high", "low"),
+    ("SQZ_ON", "SQZ_MOM"),
+    MyTT.SQUEEZE,
+    {"N": 20, "BB": 2.0, "KC": 1.5},
+    "SQUEEZE TTM 挤压动量（布林收进肯特纳=挤压态，SQZ_MOM 为线性回归动量）",
+)
+_reg(
+    "CHOP",
+    ("close", "high", "low"),
+    ("CHOP",),
+    MyTT.CHOP,
+    {"N": 14},
+    "CHOP 盘整指数（>61.8 震荡 / <38.2 趋势）",
+)
+_reg(
+    "BBP",
+    ("close",),
+    ("BBP",),
+    MyTT.BBP,
+    {"N": 20, "P": 2},
+    "BBP 布林位置 %B（0=下轨，50=中轨，100=上轨）",
+)
+_reg("BBW", ("close",), ("BBW",), MyTT.BBW, {"N": 20, "P": 2}, "BBW 布林带宽（收窄=变盘预警）")
+
+# 量能/资金类
+_reg("AD", ("close", "high", "low", "vol"), ("AD",), MyTT.AD, {}, "AD 累积/派发线")
+_reg("CMF", ("close", "high", "low", "vol"), ("CMF",), MyTT.CMF, {"N": 20}, "CMF 佳庆资金流量")
+_reg("EFI", ("close", "vol"), ("EFI",), MyTT.EFI, {"N": 13}, "EFI 艾尔德强力指数")
+
 
 def list_indicators() -> list[dict[str, object]]:
     """返回所有可用指标的元数据。"""

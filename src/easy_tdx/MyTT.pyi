@@ -110,7 +110,76 @@ def FSL(
     VOL: npt.ArrayLike,
     CAPITAL: float,
 ) -> tuple[NDArray, NDArray]: ...
-def ZIG(S: npt.ArrayLike, X: float = ...) -> NDArray: ...
+
+# ── V4.3 无未来函数指标 ─────────────────────────────────────────────────────
+
+def HMA(S: npt.ArrayLike, N: int = ...) -> NDArray: ...
+def KAMA(S: npt.ArrayLike, N: int = ..., FAST: int = ..., SLOW: int = ...) -> NDArray: ...
+def SUPERTREND(
+    CLOSE: npt.ArrayLike,
+    HIGH: npt.ArrayLike,
+    LOW: npt.ArrayLike,
+    N: int = ...,
+    M: float = ...,
+) -> tuple[NDArray, npt.NDArray[np.int32]]: ...
+def CHANDELIER(
+    CLOSE: npt.ArrayLike,
+    HIGH: npt.ArrayLike,
+    LOW: npt.ArrayLike,
+    N: int = ...,
+    M: int = ...,
+    K: float = ...,
+) -> tuple[NDArray, NDArray]: ...
+def ICHIMOKU(
+    HIGH: npt.ArrayLike,
+    LOW: npt.ArrayLike,
+    CLOSE: npt.ArrayLike,
+    P1: int = ...,
+    P2: int = ...,
+    P3: int = ...,
+    SHIFT: int = ...,
+) -> tuple[NDArray, NDArray, NDArray, NDArray, NDArray]: ...
+def UOS(
+    CLOSE: npt.ArrayLike,
+    HIGH: npt.ArrayLike,
+    LOW: npt.ArrayLike,
+    P1: int = ...,
+    P2: int = ...,
+    P3: int = ...,
+    M: int = ...,
+) -> tuple[NDArray, NDArray]: ...
+def CMO(CLOSE: npt.ArrayLike, N: int = ...) -> NDArray: ...
+def TSI(
+    CLOSE: npt.ArrayLike,
+    R: int = ...,
+    S: int = ...,
+    M: int = ...,
+) -> tuple[NDArray, NDArray]: ...
+def FISHER(
+    HIGH: npt.ArrayLike,
+    LOW: npt.ArrayLike,
+    N: int = ...,
+) -> tuple[NDArray, NDArray]: ...
+def SQUEEZE(
+    CLOSE: npt.ArrayLike,
+    HIGH: npt.ArrayLike,
+    LOW: npt.ArrayLike,
+    N: int = ...,
+    BB: float = ...,
+    KC: float = ...,
+) -> tuple[npt.NDArray[np.bool_], NDArray]: ...
+def CHOP(HIGH: npt.ArrayLike, LOW: npt.ArrayLike, CLOSE: npt.ArrayLike, N: int = ...) -> NDArray: ...
+def AD(CLOSE: npt.ArrayLike, HIGH: npt.ArrayLike, LOW: npt.ArrayLike, VOL: npt.ArrayLike) -> NDArray: ...
+def CMF(
+    CLOSE: npt.ArrayLike,
+    HIGH: npt.ArrayLike,
+    LOW: npt.ArrayLike,
+    VOL: npt.ArrayLike,
+    N: int = ...,
+) -> NDArray: ...
+def EFI(CLOSE: npt.ArrayLike, VOL: npt.ArrayLike, N: int = ...) -> NDArray: ...
+def BBP(CLOSE: npt.ArrayLike, N: int = ..., P: float = ...) -> NDArray: ...
+def BBW(CLOSE: npt.ArrayLike, N: int = ..., P: float = ...) -> NDArray: ...
 
 # ── Utility Functions ────────────────────────────────────────────────────────
 

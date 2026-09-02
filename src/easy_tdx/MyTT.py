@@ -16,6 +16,8 @@
 # V4.0  2026-06-02 handsomejustin 新增 ZHUOYAO,BIAS_SIGNAL两个自创函数
 # V4.1  2026-06-14 新增 SAR(抛物线转向), VWAP(成交量加权均价), AROON(阿隆指标); 注册 FK
 # V4.2  2026-07-09 新增 FSL(分水岭指标)
+# V4.3  2026-09-03 新增无未来函数指标16个：HMA,KAMA,SUPERTREND,CHANDELIER,ICHIMOKU,
+#             UOS,CMO,TSI,FISHER,SQUEEZE,CHOP,AD,CMF,EFI,BBP,BBW（全部只引用当期及历史数据）
 
 # 以下所有函数如无特别说明，输入参数S均为numpy序列或者列表list，N为整型int
 # 应用层1级函数完美兼容通达信或同花顺，具体使用方法请参考通达信
@@ -569,6 +571,210 @@ def FSL(CLOSE, VOL, CAPITAL):  # 分水岭指标：多空趋势强弱分界（SW
     A = MIN(A, 1.0)  # 模拟通达信 DMA(X,A) 内部钳制 A<=1，避免序列因子越界发散
     SWS = DMA(EMA(CLOSE, 12), A)
     return RD(SWL), RD(SWS)
+
+
+# ── V4.3 新增：无未来函数指标（只引用当期及历史数据，信号不漂移） ────────────
+def HMA(S, N=16):  # Hull 赫尔均线：WMA(2*WMA(N/2)-WMA(N), sqrt(N))，低滞后且不重绘
+    return WMA(2 * WMA(S, N // 2) - WMA(S, N), max(int(round(np.sqrt(N))), 1))
+
+
+def KAMA(S, N=10, FAST=2, SLOW=30):  # 考夫曼自适应均线：效率比驱动平滑系数（贴价/走平自适应）
+    S = np.asarray(S, dtype=float)
+    change = np.abs(S - REF(S, N))  # N 周期净变化
+    volatility = SUM(np.abs(DIFF(S)), N)  # N 周期路径总波动
+    with np.errstate(divide="ignore", invalid="ignore"):
+        er = np.where(volatility > 0, change / volatility, 0.0)  # 效率比 0~1
+    er = np.where(np.isnan(change) | np.isnan(volatility), np.nan, er)  # 预热段保持 NaN
+    fast_sc = 2.0 / (FAST + 1)
+    slow_sc = 2.0 / (SLOW + 1)
+    sc = (er * (fast_sc - slow_sc) + slow_sc) ** 2  # 平滑系数（ER 高→贴价，ER 低→走平）
+    out = np.full(len(S), np.nan)
+    valid = np.flatnonzero(~np.isnan(sc))
+    if len(valid):
+        start = valid[0]
+        out[start] = S[start]
+        for i in range(start + 1, len(S)):
+            out[i] = out[i - 1] + sc[i] * (S[i] - out[i - 1])
+    return out
+
+
+def SUPERTREND(CLOSE, HIGH, LOW, N=10, M=3.0):  # 超级趋势：HL2±M*ATR 递推锁带，穿带翻多空
+    CLOSE = np.asarray(CLOSE, dtype=float)
+    HIGH = np.asarray(HIGH, dtype=float)
+    LOW = np.asarray(LOW, dtype=float)
+    n = len(CLOSE)
+    sar_like = np.full(n, np.nan)
+    if n == 0:
+        return sar_like, np.zeros(0, dtype=int)
+    # Wilder 平滑 ATR（与 TradingView ta.rma 同口径）；首根 TR 用自身 H-L
+    prev_c = np.concatenate(([CLOSE[0]], CLOSE[:-1]))
+    tr = MAX(MAX(HIGH - LOW, ABS(HIGH - prev_c)), ABS(LOW - prev_c))
+    atr = np.empty(n)
+    atr[0] = tr[0]
+    for i in range(1, n):
+        atr[i] = atr[i - 1] + (tr[i] - atr[i - 1]) / N
+    hl2 = (HIGH + LOW) / 2
+    basic_up = hl2 + M * atr
+    basic_dn = hl2 - M * atr
+    # 递推锁带：带只朝价格方向收紧，反向放宽被前收盘穿越时重置
+    final_up = basic_up.copy()
+    final_dn = basic_dn.copy()
+    for i in range(1, n):
+        final_up[i] = (
+            basic_up[i]
+            if (basic_up[i] < final_up[i - 1] or CLOSE[i - 1] > final_up[i - 1])
+            else final_up[i - 1]
+        )
+        final_dn[i] = (
+            basic_dn[i]
+            if (basic_dn[i] > final_dn[i - 1] or CLOSE[i - 1] < final_dn[i - 1])
+            else final_dn[i - 1]
+        )
+    direction = np.ones(n, dtype=int)  # 1=多头（ST=下轨），-1=空头（ST=上轨）
+    for i in range(1, n):
+        if direction[i - 1] == 1:
+            direction[i] = -1 if CLOSE[i] < final_dn[i] else 1
+        else:
+            direction[i] = 1 if CLOSE[i] > final_up[i] else -1
+    st = np.where(direction == 1, final_dn, final_up)
+    return st, direction
+
+
+def CHANDELIER(CLOSE, HIGH, LOW, N=22, M=22, K=3.0):  # 吊灯止损：多头 HHV-K*ATR / 空头 LLV+K*ATR
+    atr = ATR(CLOSE, HIGH, LOW, M)
+    long_stop = HHV(HIGH, N) - atr * K
+    short_stop = LLV(LOW, N) + atr * K
+    return long_stop, short_stop
+
+
+def ICHIMOKU(HIGH, LOW, CLOSE, P1=9, P2=26, P3=52, SHIFT=26):  # 一目均衡表：五线一云
+    tenkan = (HHV(HIGH, P1) + LLV(LOW, P1)) / 2  # 转换线
+    kijun = (HHV(HIGH, P2) + LLV(LOW, P2)) / 2  # 基准线
+    span_a = REF((tenkan + kijun) / 2, SHIFT)  # 先行带A：SHIFT期前的值画到当前（仅过去数据）
+    span_b = REF((HHV(HIGH, P3) + LLV(LOW, P3)) / 2, SHIFT)  # 先行带B
+    chikou = REF(CLOSE, -SHIFT)  # 迟行带：当前收盘画回SHIFT期前，仅作图示（当期信号禁用）
+    return tenkan, kijun, span_a, span_b, chikou
+
+
+def UOS(CLOSE, HIGH, LOW, P1=7, P2=14, P3=28, M=6):  # 终极指标：7/14/28 三周期 BP/TR 加权动量
+    th = MAX(HIGH, REF(CLOSE, 1))  # 真高
+    tl = MIN(LOW, REF(CLOSE, 1))  # 真低
+    bp = CLOSE - tl  # 买压
+    tr = th - tl  # 真波幅
+
+    def _avg(p):  # SMA(BP,p)/SMA(TR,p)，分母为零（一字段）时取中性 0.5
+        num, den = MA(bp, p), MA(tr, p)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratio = np.where(den > 0, num / den, 0.5)
+        return np.where(np.isnan(num) | np.isnan(den), np.nan, ratio)
+
+    uos = 100 * (4 * _avg(P1) + 2 * _avg(P2) + _avg(P3)) / 7
+    uos_ma = MA(uos, M)
+    return RD(uos), RD(uos_ma)
+
+
+def CMO(CLOSE, N=14):  # 钱德动量振荡器：(涨幅和-跌幅和)/总波幅*100，比RSI更锐利对称
+    dif = DIFF(CLOSE)
+    up = SUM(MAX(dif, 0), N)
+    dn = SUM(MAX(-dif, 0), N)
+    total = up + dn
+    with np.errstate(divide="ignore", invalid="ignore"):
+        cmo = np.where(total > 0, (up - dn) / total * 100, 0.0)
+    return RD(np.where(np.isnan(total), np.nan, cmo))
+
+
+def TSI(CLOSE, R=25, S=13, M=13):  # 真实强度指数：动量双重EMA平滑归一（William Blau）
+    m = DIFF(CLOSE)
+    num = EMA(EMA(m, R), S)
+    den = EMA(EMA(ABS(m), R), S)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        tsi = np.where(den != 0, 100 * num / den, 0.0)
+    tsi = np.where(np.isnan(num) | np.isnan(den), np.nan, tsi)
+    return RD(tsi), RD(EMA(tsi, M))
+
+
+def FISHER(HIGH, LOW, N=9):  # 费雪变换（John Ehlers）：区间位置正态化，拐点尖锐
+    price = (HIGH + LOW) / 2.0
+    highest = HHV(price, N)
+    lowest = LLV(price, N)
+    rng = highest - lowest
+    with np.errstate(divide="ignore", invalid="ignore"):
+        raw = np.where(rng > 0, 2.0 * (price - lowest) / rng - 1.0, 0.0)  # 归一化到 -1~1
+    norm = np.where(np.isnan(rng), np.nan, raw)
+    n = len(price)
+    value = np.full(n, np.nan)
+    fisher = np.full(n, np.nan)
+    for i in range(n):
+        if np.isnan(norm[i]):
+            continue
+        prev_v = 0.0 if np.isnan(value[i - 1]) else value[i - 1]
+        prev_f = 0.0 if np.isnan(fisher[i - 1]) else fisher[i - 1]
+        v = 0.33 * norm[i] + 0.67 * prev_v
+        v = max(-0.999, min(0.999, v))  # 钳制避免 ln 发散
+        value[i] = v
+        fisher[i] = 0.5 * np.log((1 + v) / (1 - v)) + 0.5 * prev_f
+    return fisher, REF(fisher, 1)  # 第二返回值为触发线（前一期值）
+
+
+def SQUEEZE(CLOSE, HIGH, LOW, N=20, BB=2.0, KC=1.5):  # TTM 挤压动量：布林收进肯特纳，回归动量定方向
+    mid = MA(CLOSE, N)
+    dev = STD(CLOSE, N) * BB
+    tr = MAX(MAX(HIGH - LOW, ABS(HIGH - REF(CLOSE, 1))), ABS(LOW - REF(CLOSE, 1)))
+    range_ma = MA(tr, N)
+    # 挤压判定：布林带（±dev）整体落在肯特纳通道（±KC×range_ma）内部（NaN 预热期比较为 False）
+    sqz_on = dev < KC * range_ma
+    # 动量：中价偏离 (HH+LL)/2 与 SMA(C,N) 的均值，取线性回归当前拟合值
+    delta = CLOSE - ((HHV(HIGH, N) + LLV(LOW, N)) / 2 + mid) / 2
+    mom = FORCAST(delta, N)
+    return sqz_on, RD(mom)
+
+
+def CHOP(HIGH, LOW, CLOSE, N=14):  # 盘整指数：>61.8 震荡 / <38.2 趋势（ΣTR/区间 对数缩放到 0~100）
+    tr = MAX(MAX(HIGH - LOW, ABS(HIGH - REF(CLOSE, 1))), ABS(LOW - REF(CLOSE, 1)))
+    tr_sum = SUM(tr, N)
+    rng = HHV(HIGH, N) - LLV(LOW, N)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = np.where((tr_sum > 0) & (rng > 0), tr_sum / rng, np.nan)
+    return 100 * np.log10(ratio) / np.log10(N)
+
+
+def AD(CLOSE, HIGH, LOW, VOL):  # 累积/派发线（Marc Chaikin）：CLV*VOL 累计，OBV 的精细化版
+    rng = HIGH - LOW
+    with np.errstate(divide="ignore", invalid="ignore"):
+        clv = np.where(rng > 0, ((CLOSE - LOW) - (HIGH - CLOSE)) / rng, 0.0)  # 收盘位置 -1~1
+    return SUM(clv * VOL, 0)
+
+
+def CMF(CLOSE, HIGH, LOW, VOL, N=20):  # 佳庆资金流量：N日 CLV*VOL 之和 / N日成交量之和
+    rng = HIGH - LOW
+    with np.errstate(divide="ignore", invalid="ignore"):
+        clv = np.where(rng > 0, ((CLOSE - LOW) - (HIGH - CLOSE)) / rng, 0.0)
+    mfv_sum = SUM(clv * VOL, N)
+    vol_sum = SUM(VOL, N)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        cmf = np.where(vol_sum > 0, mfv_sum / vol_sum, 0.0)
+    return np.where(np.isnan(vol_sum) | np.isnan(mfv_sum), np.nan, cmf)
+
+
+def EFI(CLOSE, VOL, N=13):  # 艾尔德强力指数：EMA(ΔC×V)，同时融合方向/幅度/成交量三维
+    return EMA(DIFF(CLOSE) * VOL, N)
+
+
+def BBP(CLOSE, N=20, P=2):  # 布林位置 %B：收盘在带内位置百分比（0=下轨，50=中轨，100=上轨）
+    mid = MA(CLOSE, N)
+    dev = STD(CLOSE, N) * P
+    width = 2 * dev
+    with np.errstate(divide="ignore", invalid="ignore"):
+        pos = np.where(width > 0, (CLOSE - (mid - dev)) / width * 100, 50.0)
+    return RD(np.where(np.isnan(width), np.nan, pos))
+
+
+def BBW(CLOSE, N=20, P=2):  # 布林带宽：(上轨-下轨)/中轨*100，收窄=波动挤压/变盘预警
+    mid = MA(CLOSE, N)
+    dev = STD(CLOSE, N) * P
+    with np.errstate(divide="ignore", invalid="ignore"):
+        width = np.where(mid > 0, 2 * dev / mid * 100, np.nan)
+    return RD(width)
 
 
 # 望大家能提交更多指标和函数  https://github.com/mpquant/MyTT

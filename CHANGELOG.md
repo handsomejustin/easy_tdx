@@ -2,6 +2,29 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.30.2] — 2026-09-03
+
+**无未来函数指标扩容 16 个 + WebUI 回测策略补齐至 54 个**——本轮从互联网主流指标库（TradingView 热榜 / StockCharts / 通达信社区）甄别出一批**计算上只引用当期及历史数据、信号不漂移**的经典指标补进 MyTT，并把回测端"有指标无策略"的缺口全部填平：此前 WebUI 回测下拉只有 19 个内置策略，34 个注册指标里近半数"看得见指标、跑不了回测"——现在**50 个注册指标、54 个内置策略一一对应**，回测页下拉、CLI、Web API 三端自动同步。
+
+### 新增（指标，MyTT V4.3，16 个函数）
+
+- **趋势/止损类**：`SUPERTREND` 超级趋势（Wilder ATR 递推锁带，带线即移动止损，2025 年 TradingView 各"最佳指标"榜单常客）、`CHANDELIER` 吊灯止损（Chuck LeBeau，HHV−K×ATR 经典离场位）、`HMA` 赫尔均线（低滞后不重绘）、`KAMA` 考夫曼自适应均线（效率比驱动：趋势市贴价、震荡市自动走平）、`ICHIMOKU` 一目均衡表（五线一云；先行带用 26 期前的值画到当前位置，只引用过去数据——**迟行带 CHIKOU 按定义引用未来收盘，仅作图示对齐，当期信号严禁使用**，已在 docstring 与注册描述中显著标注）。
+- **动量/振荡类**：`UOS` 终极指标（Larry Williams，7/14/28 三周期加权）、`CMO` 钱德动量振荡器、`TSI` 真实强度指数（双重 EMA 平滑，深回调钝化少）、`FISHER` 费雪变换（John Ehlers，拐点尖锐无钝化）。
+- **波动率/状态识别类**：`SQUEEZE` TTM 挤压动量（布林带收进肯特纳通道=挤压态 + 线性回归动量定方向）、`CHOP` 盘整指数（>61.8 震荡 / <38.2 趋势，策略侧稀缺的"行情状态开关"）、`BBP` 布林 %B 位置、`BBW` 布林带宽（收窄=变盘预警）。
+- **量能/资金类**：`AD` 累积/派发线（Marc Chaikin）、`CMF` 佳庆资金流量、`EFI` 艾尔德强力指数——补齐此前最薄弱的"资金流向"一块。
+- 明确排除项维持 v1.30.1 的口径：ZigZag 家族、`FINDHIGH/FINDLOW/BACKSET` 等通达信未来函数、需右侧 K 线确认的 Bill Williams Fractals、需要 tick 级数据的 Volume Profile 均不引入。
+
+### 新增（策略，35 个，内置策略 19 → 54）
+
+- **存量指标补策略（19 个）**：`psy_reversal` / `mtm_cross` / `roc_zero` / `expma_cross` / `dfma_cross` / `cr_reversal` / `xsii_breakout` / `obv_cross` / `vr_reversal` / `mass_cross` / `mfi_reversal` / `brar_reversal` / `asi_cross` / `zhuoyao_trend`（多周期涨幅共振）/ `bias_signal_cross` / `sar_follow` / `vwap_cross` / `aroon_cross` / `fk_reversal`。
+- **新指标首发策略（16 个）**：`supertrend`（方向翻转跟随）/ `kama_cross` / `hma_cross` / `chandelier`（通道突破进场+吊灯止损离场）/ `ichimoku_cross`（转换/基准线金叉+云层位置确认）/ `uos_reversal` / `cmo_reversal` / `tsi_cross` / `fisher_cross` / `squeeze_breakout`（挤压解除+动量方向）/ `chop_trend`（趋态开关+均线方向）/ `ad_cross` / `cmf_zero` / `efi_zero` / `bbp_reversal` / `bbw_squeeze`。全部实现 `entry_exit_masks`，走上 v1.28 的向量化快速路径。
+
+### 测试与防回归
+
+- **无未来函数前缀一致性回归（`TestNoLookahead`）**：把 200 根 K 线截断到前 120 根，16 个新指标的输出在重叠段必须与"仅用前缀数据计算"逐位一致——未来函数的致命特征是后到数据改写历史输出，任何引用 t+1 之后数据的实现当场爆红。该测试与黄金基线、向量化对拍构成三重防线。
+- 向量化对拍扩至 74 例全绿（54 策略逐 bar vs 向量化逐位一致且全部实际产生交易）；黄金基线 `backtest_metrics.json` 重生成至 54 策略全量锁定，**19 个存量策略数字一位未动**（存量行为零漂移）。`test_mytt.py` 新增 47 例数值正确性测试（范围/预热/公式口径/一字板除零保护）。
+- 文档同步：README 策略计数 19 → 54，《回测系统完全上手手册》陈旧的"18 个内置策略"修正。
+
 ## [1.30.1] — 2026-09-03
 
 **彻底移除 ZIG 之字转向指标与 `zig_breakout` 策略**——ZIG 是教科书级的**未来函数**：波峰/波谷拐点只有在**其后**的走势反向走满 X% 确认转向后才会**回溯标出**，也就是说序列里每个拐点的位置都用到了"当时不可能知道"的未来信息。把它当买卖信号回测，等于允许策略在波谷那一天精准买入、在见顶前一天精准卖出——收益必然严重虚高、参数寻优必然过拟合，回测结果与实盘表现脱节，**这正是本工具最要防的失真**。

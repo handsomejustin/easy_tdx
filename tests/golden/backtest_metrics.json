@@ -90,6 +90,45 @@
     }
   },
   "strategies": {
+    "ad_cross": {
+      "cvar_95": 0.024286411493930567,
+      "max_consecutive_losses": 2,
+      "max_consecutive_wins": 7,
+      "max_drawdown": 0.12904549392252831,
+      "sharpe": 1.413959529316044,
+      "sqn": 1.9143440657904827,
+      "total_return": 0.5433184647040252,
+      "total_trades": 16,
+      "ulcer_index": 0.04114422319311987,
+      "var_95": 0.018706317214833772,
+      "win_rate": 0.75
+    },
+    "aroon_cross": {
+      "cvar_95": 0.029266225981937833,
+      "max_consecutive_losses": 1,
+      "max_consecutive_wins": 1,
+      "max_drawdown": 0.23484266406886486,
+      "sharpe": -0.1318253497365565,
+      "sqn": -0.02853515598272609,
+      "total_return": -0.026907343025617925,
+      "total_trades": 8,
+      "ulcer_index": 0.11536620900391767,
+      "var_95": 0.02282875179249166,
+      "win_rate": 0.5
+    },
+    "asi_cross": {
+      "cvar_95": 0.02981959329970092,
+      "max_consecutive_losses": 3,
+      "max_consecutive_wins": 7,
+      "max_drawdown": 0.10955462389011326,
+      "sharpe": 0.7869328181478238,
+      "sqn": 1.285955774339363,
+      "total_return": 0.31630572526536627,
+      "total_trades": 37,
+      "ulcer_index": 0.051165506301142354,
+      "var_95": 0.020699239050410923,
+      "win_rate": 0.6216216216216216
+    },
     "atr_breakout": {
       "cvar_95": 0.029816014464276553,
       "max_consecutive_losses": 2,
@@ -116,6 +155,32 @@
       "var_95": 0.02185464362709669,
       "win_rate": 0.43243243243243246
     },
+    "bbp_reversal": {
+      "cvar_95": 0.025123143703972416,
+      "max_consecutive_losses": 1,
+      "max_consecutive_wins": 2,
+      "max_drawdown": 0.12529045393048568,
+      "sharpe": -0.08270429911478913,
+      "sqn": 0.984709712259246,
+      "total_return": 0.00949379410277551,
+      "total_trades": 3,
+      "ulcer_index": 0.039203351555811915,
+      "var_95": 0.015350573492733575,
+      "win_rate": 0.6666666666666666
+    },
+    "bbw_squeeze": {
+      "cvar_95": 0.024332883581541946,
+      "max_consecutive_losses": 6,
+      "max_consecutive_wins": 3,
+      "max_drawdown": 0.15870878255389867,
+      "sharpe": -0.4216428614980978,
+      "sqn": -0.5443884480781064,
+      "total_return": -0.059449894173721374,
+      "total_trades": 14,
+      "ulcer_index": 0.07851315060195874,
+      "var_95": 0.014460430360468098,
+      "win_rate": 0.35714285714285715
+    },
     "bias_reversal": {
       "cvar_95": 0.031800618199536355,
       "max_consecutive_losses": 4,
@@ -128,6 +193,19 @@
       "ulcer_index": 0.1949515199887598,
       "var_95": 0.02439437484336824,
       "win_rate": 0.5111111111111111
+    },
+    "bias_signal_cross": {
+      "cvar_95": 0.02748879702227868,
+      "max_consecutive_losses": 4,
+      "max_consecutive_wins": 3,
+      "max_drawdown": 0.2938157158635232,
+      "sharpe": -0.17985871928985922,
+      "sqn": -0.03800371473682254,
+      "total_return": -0.03295246594055856,
+      "total_trades": 10,
+      "ulcer_index": 0.1651695141252374,
+      "var_95": 0.021475132232438594,
+      "win_rate": 0.5
     },
     "boll_breakout": {
       "cvar_95": 0.025123143703972416,
@@ -142,6 +220,19 @@
       "var_95": 0.015350573492733575,
       "win_rate": 0.6666666666666666
     },
+    "brar_reversal": {
+      "cvar_95": -0.0,
+      "max_consecutive_losses": 0,
+      "max_consecutive_wins": 0,
+      "max_drawdown": 0.0,
+      "sharpe": 0.0,
+      "sqn": 0.0,
+      "total_return": 0.0,
+      "total_trades": 0,
+      "ulcer_index": 0.0,
+      "var_95": -0.0,
+      "win_rate": 0.0
+    },
     "cci": {
       "cvar_95": 0.028065506761634905,
       "max_consecutive_losses": 1,
@@ -154,6 +245,84 @@
       "ulcer_index": 0.0895732932132124,
       "var_95": 0.019114854583397116,
       "win_rate": 0.6363636363636364
+    },
+    "chandelier": {
+      "cvar_95": -0.0,
+      "max_consecutive_losses": 0,
+      "max_consecutive_wins": 0,
+      "max_drawdown": 0.0,
+      "sharpe": 0.0,
+      "sqn": 0.0,
+      "total_return": 0.0,
+      "total_trades": 0,
+      "ulcer_index": 0.0,
+      "var_95": -0.0,
+      "win_rate": 0.0
+    },
+    "chop_trend": {
+      "cvar_95": 0.016521228683029757,
+      "max_consecutive_losses": 2,
+      "max_consecutive_wins": 1,
+      "max_drawdown": 0.1197429207500985,
+      "sharpe": 0.23777478167962413,
+      "sqn": 0.8450262324842597,
+      "total_return": 0.08186349084625855,
+      "total_trades": 4,
+      "ulcer_index": 0.02939434967310675,
+      "var_95": 0.007369600793270218,
+      "win_rate": 0.5
+    },
+    "cmf_zero": {
+      "cvar_95": 0.024141735522224646,
+      "max_consecutive_losses": 2,
+      "max_consecutive_wins": 5,
+      "max_drawdown": 0.14344144457956093,
+      "sharpe": 0.9133320420008789,
+      "sqn": 1.5782396113650308,
+      "total_return": 0.32189557881670994,
+      "total_trades": 20,
+      "ulcer_index": 0.05122369616579118,
+      "var_95": 0.0180655722025719,
+      "win_rate": 0.7
+    },
+    "cmo_reversal": {
+      "cvar_95": 0.026729960510057743,
+      "max_consecutive_losses": 1,
+      "max_consecutive_wins": 2,
+      "max_drawdown": 0.16495853483792264,
+      "sharpe": 0.6275440425539472,
+      "sqn": 1.8403059687214964,
+      "total_return": 0.2359516039506322,
+      "total_trades": 3,
+      "ulcer_index": 0.06452564310085397,
+      "var_95": 0.01934233590561444,
+      "win_rate": 0.6666666666666666
+    },
+    "cr_reversal": {
+      "cvar_95": 0.02369389369181201,
+      "max_consecutive_losses": 0,
+      "max_consecutive_wins": 0,
+      "max_drawdown": 0.12556824942616718,
+      "sharpe": 0.13618190785650225,
+      "sqn": 0.0,
+      "total_return": 0.06417970182278632,
+      "total_trades": 0,
+      "ulcer_index": 0.023595036704376637,
+      "var_95": 0.01255926432583018,
+      "win_rate": 0.0
+    },
+    "dfma_cross": {
+      "cvar_95": 0.0258934274012887,
+      "max_consecutive_losses": 4,
+      "max_consecutive_wins": 2,
+      "max_drawdown": 0.22430138432687624,
+      "sharpe": -0.2451029943989093,
+      "sqn": -0.21296181317887017,
+      "total_return": -0.047787872823673916,
+      "total_trades": 12,
+      "ulcer_index": 0.12547066912166988,
+      "var_95": 0.02065490866252133,
+      "win_rate": 0.4166666666666667
     },
     "dmi": {
       "cvar_95": 0.029255190955404537,
@@ -194,6 +363,19 @@
       "var_95": 0.019685727992254924,
       "win_rate": 0.45
     },
+    "efi_zero": {
+      "cvar_95": 0.029368306602455728,
+      "max_consecutive_losses": 6,
+      "max_consecutive_wins": 3,
+      "max_drawdown": 0.12386834887621843,
+      "sharpe": 0.1310163040019758,
+      "sqn": 0.354718917262971,
+      "total_return": 0.058226194433868006,
+      "total_trades": 29,
+      "ulcer_index": 0.06909264613158413,
+      "var_95": 0.022919408952405854,
+      "win_rate": 0.3793103448275862
+    },
     "ema_cross": {
       "cvar_95": 0.030512787117540286,
       "max_consecutive_losses": 5,
@@ -220,6 +402,45 @@
       "var_95": 0.02157076164724241,
       "win_rate": 0.32142857142857145
     },
+    "expma_cross": {
+      "cvar_95": 0.032018722856295576,
+      "max_consecutive_losses": 4,
+      "max_consecutive_wins": 1,
+      "max_drawdown": 0.3291585898907232,
+      "sharpe": -1.1723060706959245,
+      "sqn": -2.9049331578730926,
+      "total_return": -0.30675148747892034,
+      "total_trades": 7,
+      "ulcer_index": 0.18255002434586737,
+      "var_95": 0.024497075615117908,
+      "win_rate": 0.14285714285714285
+    },
+    "fisher_cross": {
+      "cvar_95": 0.027142953781316027,
+      "max_consecutive_losses": 4,
+      "max_consecutive_wins": 6,
+      "max_drawdown": 0.13242479869280652,
+      "sharpe": 0.7747655122625644,
+      "sqn": 1.2258640743172122,
+      "total_return": 0.3000150148326932,
+      "total_trades": 39,
+      "ulcer_index": 0.050503189087610034,
+      "var_95": 0.019196177653336477,
+      "win_rate": 0.5128205128205128
+    },
+    "fk_reversal": {
+      "cvar_95": 0.027673675923482476,
+      "max_consecutive_losses": 3,
+      "max_consecutive_wins": 3,
+      "max_drawdown": 0.1374258713555942,
+      "sharpe": 0.05310588929298746,
+      "sqn": 0.2609297927675816,
+      "total_return": 0.03098826668855792,
+      "total_trades": 19,
+      "ulcer_index": 0.06681780689649293,
+      "var_95": 0.021675988751594637,
+      "win_rate": 0.42105263157894735
+    },
     "fsl": {
       "cvar_95": 0.028932815510588083,
       "max_consecutive_losses": 5,
@@ -232,6 +453,45 @@
       "ulcer_index": 0.08345129720689942,
       "var_95": 0.022744109351729155,
       "win_rate": 0.35714285714285715
+    },
+    "hma_cross": {
+      "cvar_95": 0.02601608749612084,
+      "max_consecutive_losses": 4,
+      "max_consecutive_wins": 5,
+      "max_drawdown": 0.14013863361462378,
+      "sharpe": 0.9018510804449479,
+      "sqn": 1.3059591751970854,
+      "total_return": 0.32817705633540206,
+      "total_trades": 19,
+      "ulcer_index": 0.0731080920454242,
+      "var_95": 0.0191409819205396,
+      "win_rate": 0.631578947368421
+    },
+    "ichimoku_cross": {
+      "cvar_95": 0.030953331370946267,
+      "max_consecutive_losses": 1,
+      "max_consecutive_wins": 1,
+      "max_drawdown": 0.21803844858131277,
+      "sharpe": -0.1390386894303238,
+      "sqn": -0.09653804098207303,
+      "total_return": -0.02512157114818303,
+      "total_trades": 3,
+      "ulcer_index": 0.08946241642268053,
+      "var_95": 0.023037962387550195,
+      "win_rate": 0.3333333333333333
+    },
+    "kama_cross": {
+      "cvar_95": 0.029047612117214912,
+      "max_consecutive_losses": 4,
+      "max_consecutive_wins": 3,
+      "max_drawdown": 0.12857725100336337,
+      "sharpe": 0.32104883660224726,
+      "sqn": 0.7764180118662009,
+      "total_return": 0.12589848610890342,
+      "total_trades": 28,
+      "ulcer_index": 0.06905462712627519,
+      "var_95": 0.022124546340830314,
+      "win_rate": 0.42857142857142855
     },
     "kdj_cross": {
       "cvar_95": 0.027898201822013535,
@@ -285,6 +545,84 @@
       "var_95": 0.02189769434012649,
       "win_rate": 0.35294117647058826
     },
+    "mass_cross": {
+      "cvar_95": 0.03054297901767067,
+      "max_consecutive_losses": 2,
+      "max_consecutive_wins": 3,
+      "max_drawdown": 0.18266006667782547,
+      "sharpe": -0.14300372942671147,
+      "sqn": -0.00020527251510869655,
+      "total_return": -0.027331098242567076,
+      "total_trades": 19,
+      "ulcer_index": 0.09032412136723328,
+      "var_95": 0.02275460045342278,
+      "win_rate": 0.5789473684210527
+    },
+    "mfi_reversal": {
+      "cvar_95": 0.03034753275884507,
+      "max_consecutive_losses": 0,
+      "max_consecutive_wins": 2,
+      "max_drawdown": 0.2549569044138692,
+      "sharpe": 0.44061001264676536,
+      "sqn": 2.139161183716703,
+      "total_return": 0.1876926316446088,
+      "total_trades": 2,
+      "ulcer_index": 0.13667491572629412,
+      "var_95": 0.02415090052701228,
+      "win_rate": 1.0
+    },
+    "mtm_cross": {
+      "cvar_95": 0.02750195617227611,
+      "max_consecutive_losses": 4,
+      "max_consecutive_wins": 4,
+      "max_drawdown": 0.11827463808180305,
+      "sharpe": 0.3325814486269132,
+      "sqn": 0.7509810732371223,
+      "total_return": 0.12604681721555666,
+      "total_trades": 41,
+      "ulcer_index": 0.06304678610789029,
+      "var_95": 0.019735845693466002,
+      "win_rate": 0.5365853658536586
+    },
+    "obv_cross": {
+      "cvar_95": 0.027762055897527498,
+      "max_consecutive_losses": 5,
+      "max_consecutive_wins": 3,
+      "max_drawdown": 0.23680264438544252,
+      "sharpe": -0.5559242026190786,
+      "sqn": -0.5854574307963847,
+      "total_return": -0.14813287593396007,
+      "total_trades": 28,
+      "ulcer_index": 0.12848631836406813,
+      "var_95": 0.02210768744086329,
+      "win_rate": 0.42857142857142855
+    },
+    "psy_reversal": {
+      "cvar_95": 0.02891784823229219,
+      "max_consecutive_losses": 2,
+      "max_consecutive_wins": 0,
+      "max_drawdown": 0.16281839827998396,
+      "sharpe": -0.1335645556612112,
+      "sqn": -3.036213974648354,
+      "total_return": -0.02547860131516233,
+      "total_trades": 2,
+      "ulcer_index": 0.07622136686886101,
+      "var_95": 0.02124766218780112,
+      "win_rate": 0.0
+    },
+    "roc_zero": {
+      "cvar_95": 0.028767825863300883,
+      "max_consecutive_losses": 7,
+      "max_consecutive_wins": 4,
+      "max_drawdown": 0.18493301021337408,
+      "sharpe": -0.31536772495096077,
+      "sqn": -0.4545879597619188,
+      "total_return": -0.08338098843843589,
+      "total_trades": 29,
+      "ulcer_index": 0.09798341426090898,
+      "var_95": 0.0218502235858578,
+      "win_rate": 0.3103448275862069
+    },
     "rsi_reversal": {
       "cvar_95": 0.030776659581515254,
       "max_consecutive_losses": 1,
@@ -297,6 +635,45 @@
       "ulcer_index": 0.09450845521195947,
       "var_95": 0.024060510820245292,
       "win_rate": 0.5
+    },
+    "sar_follow": {
+      "cvar_95": 0.02857107698245897,
+      "max_consecutive_losses": 4,
+      "max_consecutive_wins": 3,
+      "max_drawdown": 0.1898358700030981,
+      "sharpe": -0.19331831081777617,
+      "sqn": -0.10641340723878887,
+      "total_return": -0.04272895317218284,
+      "total_trades": 18,
+      "ulcer_index": 0.09655157548485278,
+      "var_95": 0.021467949126669807,
+      "win_rate": 0.5
+    },
+    "squeeze_breakout": {
+      "cvar_95": 0.024742251658719575,
+      "max_consecutive_losses": 3,
+      "max_consecutive_wins": 1,
+      "max_drawdown": 0.21733278570085734,
+      "sharpe": -0.9308991323778134,
+      "sqn": -1.0480133746814557,
+      "total_return": -0.14111036967684343,
+      "total_trades": 4,
+      "ulcer_index": 0.1320941903542238,
+      "var_95": 0.013420945706258479,
+      "win_rate": 0.25
+    },
+    "supertrend": {
+      "cvar_95": 0.03072730738114505,
+      "max_consecutive_losses": 5,
+      "max_consecutive_wins": 1,
+      "max_drawdown": 0.28689785114697847,
+      "sharpe": -0.4953361337737291,
+      "sqn": -0.7107356522879448,
+      "total_return": -0.13704473609360412,
+      "total_trades": 9,
+      "ulcer_index": 0.1646826003824428,
+      "var_95": 0.02294677360521743,
+      "win_rate": 0.2222222222222222
     },
     "triple_ma": {
       "cvar_95": 0.030748053405195853,
@@ -324,6 +701,58 @@
       "var_95": 0.021929213323307422,
       "win_rate": 0.5
     },
+    "tsi_cross": {
+      "cvar_95": 0.028194974350123875,
+      "max_consecutive_losses": 7,
+      "max_consecutive_wins": 2,
+      "max_drawdown": 0.17090407134804525,
+      "sharpe": -0.4846436640713545,
+      "sqn": -0.7878323795262339,
+      "total_return": -0.13001127539228385,
+      "total_trades": 15,
+      "ulcer_index": 0.10515558844327079,
+      "var_95": 0.022322699465880603,
+      "win_rate": 0.3333333333333333
+    },
+    "uos_reversal": {
+      "cvar_95": 0.030193757775442014,
+      "max_consecutive_losses": 0,
+      "max_consecutive_wins": 1,
+      "max_drawdown": 0.16294320323774955,
+      "sharpe": 0.44386948720403563,
+      "sqn": 0.0,
+      "total_return": 0.1801330140672519,
+      "total_trades": 1,
+      "ulcer_index": 0.06537062768285902,
+      "var_95": 0.02347496839245481,
+      "win_rate": 1.0
+    },
+    "vr_reversal": {
+      "cvar_95": 0.0004713577549215952,
+      "max_consecutive_losses": 0,
+      "max_consecutive_wins": 1,
+      "max_drawdown": 0.06396617092173154,
+      "sharpe": -0.03368193863407347,
+      "sqn": 0.0,
+      "total_return": 0.04095785734355717,
+      "total_trades": 1,
+      "ulcer_index": 0.009850103065533909,
+      "var_95": -0.0,
+      "win_rate": 1.0
+    },
+    "vwap_cross": {
+      "cvar_95": 0.029302922491254713,
+      "max_consecutive_losses": 8,
+      "max_consecutive_wins": 3,
+      "max_drawdown": 0.16046654742962813,
+      "sharpe": -0.009907074763182101,
+      "sqn": 0.1445122693129962,
+      "total_return": 0.011710672435813363,
+      "total_trades": 21,
+      "ulcer_index": 0.08439886174470289,
+      "var_95": 0.022126808733294197,
+      "win_rate": 0.38095238095238093
+    },
     "wr_reversal": {
       "cvar_95": -0.0,
       "max_consecutive_losses": 0,
@@ -336,6 +765,32 @@
       "ulcer_index": 0.0,
       "var_95": -0.0,
       "win_rate": 0.0
+    },
+    "xsii_breakout": {
+      "cvar_95": 0.02864695342561932,
+      "max_consecutive_losses": 3,
+      "max_consecutive_wins": 3,
+      "max_drawdown": 0.1495877433127484,
+      "sharpe": -0.09431845461633159,
+      "sqn": 0.14548639609968736,
+      "total_return": -0.013129418686880778,
+      "total_trades": 16,
+      "ulcer_index": 0.07348301348613494,
+      "var_95": 0.021802116298984472,
+      "win_rate": 0.4375
+    },
+    "zhuoyao_trend": {
+      "cvar_95": 0.030356181136770456,
+      "max_consecutive_losses": 2,
+      "max_consecutive_wins": 2,
+      "max_drawdown": 0.25518084654756473,
+      "sharpe": -0.574715368538664,
+      "sqn": -1.2971641853791143,
+      "total_return": -0.12930241173833024,
+      "total_trades": 5,
+      "ulcer_index": 0.13655713750977927,
+      "var_95": 0.021555547544702937,
+      "win_rate": 0.4
     }
   }
 }
