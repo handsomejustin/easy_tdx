@@ -110,6 +110,10 @@ class DataFrameResponse(BaseModel):
                     assert isinstance(k, str)
                     if hasattr(v, "isoformat"):
                         clean_row[k] = v.isoformat()
+                    elif isinstance(v, float) and v != v:
+                        # NaN → null：缺失值（如指数分钟线 vol，pandas 惯例 NaN），
+                        # 而 Starlette JSONResponse 为 allow_nan=False，透传会 500
+                        clean_row[k] = None
                     elif hasattr(v, "item"):
                         # numpy scalar → Python native
                         clean_row[k] = v.item()

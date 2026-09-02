@@ -2,6 +2,22 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.28.2] — 2026-09-02
+
+**修复指数/个股 K 线 vol 字段的三类协议语义错误**（[#64](https://github.com/handsomejustin/easy_tdx/issues/64)）——通达信服务端 K 线记录的第一个 4 字节字段（一直被当作成交量透传）的语义随周期/品种变化，此前原样返回错误数据。本轮通过逐字节拆包原始报文 + 新浪实时行情/东方财富分钟 K 三方交叉验证锁定规律后，在协议解析层（`GetIndexBarsCmd` / `GetSecurityBarsCmd` 的 `parse_response`，同步/异步客户端共用）统一修正。
+
+### 修复
+
+- **指数分钟线（MIN_1/3/5/15/30/60，含 880xxx 板块指数）vol 实为成交额/100**——报文中两个字段分别是「成交额(百元)」与「成交额(元)」，恒差 100 倍（实测比值 0.9999996~0.9999999，剩余偏差仅为 4 字节自定义浮点的解码噪声），**真实的分钟成交量根本不在报文中**（对照：上证指数 2026-09-02 15:00 的 5min bar，东财真实成交量 13,954,814 手 / 成交额 208.75 亿元，协议 f1 返回的 208,748,512 ≈ amount/100，即 issue 反馈的现场）。修复后 vol 置 **NaN**（Web API 序列化为 `null`）而非拿成交额冒充成交量；`amount` 保持成交额(元)不变。
+- **指数与个股的周/月/季/年线 vol 恰好少 100 倍**——服务端该字段为真实成交量/100（铁证：上证指数本周 8/31+9/1+9/2 三个日线 vol 合计 1,666,668,288 手，周线 f1 返回 16,666,683；浦发银行周线 2,693,885×100 = 269,388,500 vs 三日日线合计 269,388,528 股，均精确到解码噪声）。修复后 ×100 还原，与日线单位对齐（指数=手、个股=股）。日线（cat 4）与 cat 9（"日线变体"——枚举名误标为 YEAR，实测返回日线粒度数据，真年线是 cat 11）不受影响。
+- **`DataFrameResponse` 对 NaN 透传导致潜在 500**（`src/easy_tdx/web/schemas.py`）——Starlette `JSONResponse` 为 `allow_nan=False`，DataFrame 中任何 NaN（含本次指数分钟线 vol）直接抛异常返回 500。序列化统一 NaN → `null`。
+- 语义与单位已在 `get_index_bars` / `get_security_bars`（含异步版）与 `/bars`、`/bars/index` 路由 docstring（OpenAPI 文档）写明。附带发现（本轮未改行为，仅记录）：指数分时接口 `get_minute_time_data` 的 vol 列为成交额(万元)（全日合计 ≈ 日成交额/10000，个股分时则正常为股）；`KlineCategory.YEAR=9` 实为日线变体、真年线是 `YEAR_ALT=11`，`/bars?category=YEAR` 目前实际返回日线数据。
+
+### 测试
+
+- 新增 `tests/unit/test_bars_vol_semantics.py`（7 例）：指数分钟线（6 个分钟周期 ×单条/多条对齐）vol=NaN 且 amount 不变、指数与个股周/月/季/年 ×100、日线与 cat 9 原样、`DataFrameResponse` NaN→null；报文用实抓原始字节构造（`0x4D4713FE`/`0x509B87A0` 为 2026-09-02 真实字段值）。
+- 新增 `scripts/verify_issue64.py`：连真实服务器的验收脚本，输出各周期 vol/amount 及 amt/vol 比值、分钟线 f1 vs amount/100 偏差、指数分时 vol 全日合计对照，供回归复测。
+
 ## [1.28.1] — 2026-09-02
 
 **Web UI 新手友好化 + AI 解读导出**——回测报告的两个「看不懂」出口：名词解释折叠帮助（新手向）与 AI 解读 Prompt 一键导出（LLM 辅助解读），另修复 Walk-Forward 窗口数据被序列化成字符串的后端 bug。

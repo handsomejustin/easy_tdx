@@ -540,6 +540,9 @@ class TdxClient:
                 上午最后一根 5min 标 11:25、下午第一根标 13:00）；``"end"`` = bar 右端点
                 （= 开始 + 周期时长，与 Tushare/同花顺对齐，上午最后一根标 11:30）。
                 仅对分钟级周期生效；日线及以上不受影响。
+
+        vol 单位：分钟线/日线为成交量(股)；周/月/季/年线服务端原样返回的是
+        真实成交量/100，解析层已 ×100 还原为股。
         """
         cmd = GetSecurityBarsCmd(market, code, category, start, count)
         bars = self._execute(cmd)
@@ -575,6 +578,11 @@ class TdxClient:
 
         Args:
             bar_time: 见 :meth:`get_security_bars`，分钟级周期时间戳可对齐 Tushare 右端点。
+
+        vol 单位：日线与周/月/季/年线为成交量(手)（周及以上周期服务端原样
+        返回真实成交量/100，解析层已 ×100 还原）；**分钟线协议不提供成交量**
+        （报文中该字段实为成交额/100，与 amount 冗余），vol 为 NaN——请勿将
+        其当作成交量使用，Web API 中序列化为 ``null``。
         """
         cmd = GetIndexBarsCmd(market, code, category, start, count)
         bars = self._execute(cmd)

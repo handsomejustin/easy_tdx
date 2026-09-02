@@ -14,6 +14,48 @@ from .base import BaseCommand
 
 _log = logging.getLogger(__name__)
 
+# --------------------------------------------------------------------------- #
+# vol 字段语义修正（issue #64，2026-09-02 实测并对照新浪实时行情/东方财富验证）
+#
+# 通达信服务端对 K 线记录里第一个 4 字节字段（下称 f1， universally 被当作
+# 成交量）的语义随周期/品种变化，直接透传会返回错误数据：
+#
+#   指数分钟线（MIN_1/3/5/15/30/60，含 880xxx 板块指数）：
+#     f1 ≈ amount/100（成交额百元），f2 = 成交额(元) —— 两个字段都是成交额，
+#     真实的分钟成交量不在报文中（对照东财：15:00 上证指数 5min bar 真实
+#     成交量 13,954,814 手，协议 f1 返回 208,748,512 ≈ amount/100）。
+#     → vol 置 NaN，不拿成交额冒充成交量。
+#
+#   指数与个股的周/月/季/年线（5/6/10/11）：
+#     f1 = 真实成交量/100（上证指数本周 3 个交易日日线 vol 合计 1,666,668,288
+#     手，周线 f1 返回 16,666,683，恰好 ÷100；浦发周线/月线同理精确对账）。
+#     → ×100 还原，与日线单位对齐（指数=手、个股=股）。
+#
+#   日线（4）与 cat 9：cat 9 实为"日线变体"（实测返回日线粒度，非年线，
+#   尽管枚举名误标为 YEAR），f1 = 真实成交量，无需修正。
+# --------------------------------------------------------------------------- #
+
+_MINUTE_CATS = frozenset(
+    int(c)
+    for c in (
+        KlineCategory.MIN_1,
+        KlineCategory.MIN_3,
+        KlineCategory.MIN_5,
+        KlineCategory.MIN_15,
+        KlineCategory.MIN_30,
+        KlineCategory.MIN_60,
+    )
+)
+_WEEK_PLUS_CATS = frozenset(
+    int(c)
+    for c in (
+        KlineCategory.WEEK,
+        KlineCategory.MONTH,
+        KlineCategory.SEASON,
+        KlineCategory.YEAR_ALT,  # cat 11 = 真年线；cat 9（枚举名 YEAR）是日线变体
+    )
+)
+
 
 class GetSecurityBarsCmd(BaseCommand[list[SecurityBar]]):
     """获取指定股票的 K 线数据。
@@ -24,6 +66,9 @@ class GetSecurityBarsCmd(BaseCommand[list[SecurityBar]]):
         category: K线周期
         start:    起始行（0 = 最新；分页时递增）
         count:    返回条数（最多 800）
+
+    vol 字段语义：分钟线/日线为成交量(股)；周/月/季/年线服务端返回的
+    是真实成交量/100，解析层已 ×100 还原为股（见模块头部注释）。
     """
 
     def __init__(
@@ -114,6 +159,10 @@ class GetSecurityBarsCmd(BaseCommand[list[SecurityBar]]):
             low_abs = open_abs + low_diff
             pre_diff_base = open_abs + close_diff
 
+            # 周/月/季/年线：服务端 vol 字段为真实成交量/100，×100 还原
+            if cat in _WEEK_PLUS_CATS:
+                vol *= 100.0
+
             bars.append(
                 SecurityBar(
                     open=open_abs / 1000.0,
@@ -139,6 +188,11 @@ class GetIndexBarsCmd(GetSecurityBarsCmd):
 
     请求格式与股票 K 线相同，但响应每条记录在 vol+amt 后多 4 字节
     （上涨家数 uint16 + 下跌家数 uint16），必须跳过否则后续记录错位。
+
+    vol 字段语义（与服务端行为对齐，见模块头部注释）：
+      - 日线：成交量(手)；
+      - 周/月/季/年线：解析层已 ×100 还原为成交量(手)；
+      - 分钟线：协议不提供成交量（f1 实为成交额百元），vol 为 NaN。
     """
 
     def parse_response(self, body: bytes) -> list[SecurityBar]:
@@ -187,6 +241,15 @@ class GetIndexBarsCmd(GetSecurityBarsCmd):
             high_abs = open_abs + high_diff
             low_abs = open_abs + low_diff
             pre_diff_base = open_abs + close_diff
+
+            # 指数 vol 语义修正：
+            #   周/月/季/年线：服务端 vol 字段为真实成交量/100，×100 还原；
+            #   分钟线：f1 实为成交额(百元)（与 amount 冗余），真实分钟成交量
+            #   协议不提供，置 NaN 而非拿成交额冒充成交量。
+            if cat in _WEEK_PLUS_CATS:
+                vol *= 100.0
+            elif cat in _MINUTE_CATS:
+                vol = float("nan")
 
             bars.append(
                 SecurityBar(

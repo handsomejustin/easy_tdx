@@ -95,6 +95,9 @@ async def security_bars(
     优先走 AsyncMacClient.get_stock_kline（支持 NONE/QFQ/HFQ 复权 + QFQ 负价兜底）；
     MAC 主机未连接时自动回退 AsyncTdxClient.get_security_bars（无复权，adjust 参数忽略）。
     输出契约与旧版一致：日线返回 ``date`` 列，分钟线返回 ``datetime`` 列。
+
+    vol 单位：分钟线/日线 = 成交量(股)；周/月/季/年线服务端原样返回真实
+    成交量/100，回退路径（标准 TdxClient）已 ×100 还原为股。
     """
     cat = category_from_str(category)
     if mac_client is not None:
@@ -135,7 +138,12 @@ async def index_bars(
     ),
     client: Any = Depends(get_client),
 ) -> DataFrameResponse:
-    """获取指数K线数据。"""
+    """获取指数K线数据。
+
+    vol 单位：日线/周线/月线/季线/年线 = 成交量(手)（周及以上周期服务端
+    原样返回真实成交量/100，已 ×100 还原）；**分钟线协议不提供成交量**
+    （报文中该字段实为成交额/100），vol 为 ``null``，请勿当作成交量使用。
+    """
     df = await client.get_index_bars(
         market_from_str(market), code, category_from_str(category), start, count, bar_time=bar_time
     )
