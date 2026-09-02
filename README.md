@@ -1474,6 +1474,16 @@ with MacClient.from_best_host() as c:
     df = c.get_server_info()                     # 服务器交易时段
 ```
 
+`get_unusual` 返回列含 `unusual_type`（类型码）与 `desc`（中文描述），共 19 种类型
+（主力买卖/加速拉升/急速拉升/盘中强弱/竞价异动/涨跌停/大单盘口等）。类型码→名称
+可用顶层常量映射：
+
+```python
+from easy_tdx import UNUSUAL_TYPE_NAMES
+
+df["type_name"] = df["unusual_type"].map(UNUSUAL_TYPE_NAMES)
+```
+
 ### 扩展市场
 
 ```python

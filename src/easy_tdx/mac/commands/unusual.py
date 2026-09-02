@@ -8,9 +8,34 @@ from ...codec.mac_frame import build_mac_request
 from ...commands.base import BaseCommand
 from ..models import UnusualItem
 
+# 异动类型 → 粗粒度名称映射（Issue #62）。
+# 0x15/0x16/0x1D/0x1E 语义由 2026-09-01 全市场 12871 条实测锚定，详见
+# docs/protocol-unknown-fields.md「市场异动（0x1237）异动类型」一节。
+UNUSUAL_TYPE_NAMES: dict[int, str] = {
+    0x03: "主力买入卖出",
+    0x04: "加速拉升",
+    0x05: "加速下跌",
+    0x06: "低位反弹",
+    0x07: "高位回落",
+    0x08: "撑杆跳高",
+    0x09: "平台跳水",
+    0x0A: "单笔冲涨跌",
+    0x0B: "区间放量",
+    0x0C: "区间缩量",
+    0x10: "大单托盘",
+    0x11: "大单压盘",
+    0x12: "大单锁盘",
+    0x13: "竞价试盘",
+    0x14: "涨跌停",
+    0x15: "竞价/尾盘异动",
+    0x16: "盘中强势弱势",
+    0x1D: "急速拉升",
+    0x1E: "急速下跌",
+}
 
-def _describe_unusual(unusual_type: int, data: bytes) -> tuple[str, str]:
-    """根据异动类型解析描述和数值。"""
+
+def _describe_unusual(unusual_type: int, data: bytes, hour: int = 9) -> tuple[str, str]:
+    """根据异动类型解析描述和数值。hour 用于区分竞价/尾盘双时刻信号（0x15）。"""
     if len(data) < 13:
         return "", ""
     v1, v2, v3, v4 = struct.unpack_from("<B2fI", data)
@@ -56,8 +81,14 @@ def _describe_unusual(unusual_type: int, data: bytes) -> tuple[str, str]:
         desc = "大单锁盘"
         val = ""
     elif unusual_type == 0x13:
-        desc = "竞价试买"
-        val = f"{v2:.2f}/{v3:.2f}"
+        # 竞价试盘（09:15~09:20 触发）：v1=0x00 试买（申报价高于昨收）/ 0x01 试卖
+        # （低于昨收）；v2 为申报价，v3 为竞价量（手）。方向规律 2026-09-02
+        # 全量 552 条对照昨收 549 条一致（2 条恰等于昨收的边界 + 1 条异常）。
+        if v1 == 0x01:
+            desc = "竞价试卖"
+        else:
+            desc = "竞价试买"
+        val = f"{v2:.2f}/{v3:.0f}手"
     elif unusual_type == 0x14:
         direction = "涨" if v1 == 0x00 else "跌"
         if len(data) >= 10:
@@ -75,6 +106,31 @@ def _describe_unusual(unusual_type: int, data: bytes) -> tuple[str, str]:
         else:
             desc = f"涨跌停({direction})"
         val = f"{v2_alt:.2f}/{v3_alt:.2f}"
+    elif unusual_type == 0x15:
+        # 竞价/尾盘异动：开盘竞价（09:25）与收盘（15:00）两个撮合时刻都会触发。
+        # v1=0x02 拉升 / 0x03 下跌 / 0x01 平稳（±0.5% 分档）；v2 为时段尾段价格
+        # 变动（相对昨收），v3 为该时段成交量（手）。
+        stage = "竞价" if hour < 12 else "尾盘"
+        if v1 == 0x02:
+            desc = f"{stage}拉升"
+        elif v1 == 0x03:
+            desc = f"{stage}下跌"
+        elif v1 == 0x01:
+            desc = f"{stage}平稳"
+        else:
+            desc = f"{stage}异动"
+        val = f"{v2 * 100:.2f}%/{v3:.0f}手"
+    elif unusual_type == 0x16:
+        # 盘中强势/弱势：v2 = 触发时涨跌幅（09:25 样本与开盘涨幅 49/49 精确一致），
+        # v1 为带符号强弱等级（0x01~0x03 强势 1~3 级，0xFD~0xFF 弱势 1~3 级）。
+        desc = "盘中强势" if v2 >= 0 else "盘中弱势"
+        val = f"{v2 * 100:.2f}%"
+    elif unusual_type == 0x1D:
+        desc = "急速拉升"
+        val = f"{v2 * 100:.2f}%"
+    elif unusual_type == 0x1E:
+        desc = "急速下跌"
+        val = f"{v2 * 100:.2f}%"
     else:
         desc = f"异动类型{unusual_type:#04x}"
         val = ""
@@ -129,9 +185,9 @@ class UnusualCmd(BaseCommand[list[UnusualItem]]):
                 "<H6sBBBHH", body, offset, f"unusual record[{i}]"
             )
 
-            desc, value = _describe_unusual(unusual_type, body[offset + 15 : offset + 28])
-
             hour, minute_sec = unpack_from("<BH", body, offset + 29, f"unusual time[{i}]")
+
+            desc, value = _describe_unusual(unusual_type, body[offset + 15 : offset + 28], hour)
 
             results.append(
                 UnusualItem(

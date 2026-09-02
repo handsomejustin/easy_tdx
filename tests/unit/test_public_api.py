@@ -72,6 +72,7 @@ _EXPECTED_KIND: dict[str, str] = {
     "CALC_HOSTS": "constant",
     "MAC_HOSTS": "constant",
     "XDXR_CATEGORY_NAMES": "constant",
+    "UNUSUAL_TYPE_NAMES": "constant",
 }
 
 
