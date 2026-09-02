@@ -22,7 +22,8 @@ else:
 class PerformanceAnalyzer:
     """绩效分析器。
 
-    从资金曲线和交易记录计算 19 项绩效指标。
+    从资金曲线和交易记录计算 25 项绩效指标（19 项经典指标 + 6 项
+    深度风险指标：Ulcer / VaR / CVaR / SQN / 最大连胜连亏，v1.28 新增）。
 
     Attributes:
         ANNUAL_DAYS: 年化交易日数（默认 252）
@@ -55,7 +56,7 @@ class PerformanceAnalyzer:
         """计算绩效指标。
 
         Returns:
-            包含 19 项指标的字典：
+            包含 25 项指标的字典：
             - total_return: 总收益率
             - annual_return: 年化收益率
             - max_drawdown: 最大回撤
@@ -75,6 +76,14 @@ class PerformanceAnalyzer:
             - max_loss: 最大亏损
             - avg_holding_days: 平均持仓天数（FIFO 配对、按 size 加权，日历日口径）
             - volatility: 年化波动率
+            - ulcer_index: Ulcer 指数（回撤深度平方均值的开方，综合反映
+              回撤深度与持续时间，越小持有体验越好）
+            - var_95: 95% 日 VaR（历史分位数法，正数表示单日最大损失幅度）
+            - cvar_95: 95% 日 CVaR / 期望损失（尾部 5% 日收益均值，正数）
+            - sqn: 系统质量数（Van Tharp SQN = √N × 单笔收益率均值/标准差，
+              >2 可用、>4 优秀、>6 极佳的经验分档）
+            - max_consecutive_wins: 最大连胜笔数（按 SELL 成交顺序统计）
+            - max_consecutive_losses: 最大连亏笔数
         """
         # 边界检查
         if len(self._equity_curve) < 2:
@@ -211,6 +220,28 @@ class PerformanceAnalyzer:
         # 19. 年化波动率
         volatility = np.std(daily_ret) * np.sqrt(self.ANNUAL_DAYS)
 
+        # 20. Ulcer 指数（Martin：√(mean(回撤幅度²))，深度与持续时间加权）
+        ulcer_index = float(np.sqrt(np.mean(drawdown_pct**2)))
+
+        # 21. 95% 日 VaR（历史分位数法；正数表示损失幅度，便于直觉解读）
+        var_95 = float(-np.percentile(daily_ret, 5))
+
+        # 22. 95% 日 CVaR（VaR 之外尾部收益的均值；样本不足时退化为 VaR）
+        tail = daily_ret[daily_ret <= -var_95]
+        cvar_95 = float(-np.mean(tail)) if len(tail) > 0 else var_95
+
+        # 23. SQN 系统质量数（√N × 单笔收益率均值 / 标准差）
+        valid_tr = trade_returns[np.isfinite(trade_returns)]
+        if len(valid_tr) >= 2 and np.std(valid_tr) > 1e-12:
+            sqn = float(np.sqrt(len(valid_tr)) * np.mean(valid_tr) / np.std(valid_tr))
+        else:
+            sqn = 0.0
+
+        # 24/25. 最大连胜/连亏（与 win_rate 同口径：按 SELL 成交顺序）
+        max_consecutive_wins, max_consecutive_losses = self._max_win_lose_streaks(
+            sell_trades["pnl"].to_numpy(dtype=np.float64)
+        )
+
         return {
             "total_return": total_return,
             "annual_return": annual_return,
@@ -231,6 +262,12 @@ class PerformanceAnalyzer:
             "max_loss": max_loss,
             "avg_holding_days": avg_holding_days,
             "volatility": volatility,
+            "ulcer_index": ulcer_index,
+            "var_95": var_95,
+            "cvar_95": cvar_95,
+            "sqn": sqn,
+            "max_consecutive_wins": max_consecutive_wins,
+            "max_consecutive_losses": max_consecutive_losses,
             # 别名键（兼容常见叫法，避免 .get('sharpe_ratio') 等误用返回 0）
             "sharpe_ratio": sharpe,
             "start_cash": float(total[0]),
@@ -371,7 +408,37 @@ class PerformanceAnalyzer:
             "max_loss": 0.0,
             "avg_holding_days": 0.0,
             "volatility": 0.0,
+            "ulcer_index": 0.0,
+            "var_95": 0.0,
+            "cvar_95": 0.0,
+            "sqn": 0.0,
+            "max_consecutive_wins": 0,
+            "max_consecutive_losses": 0,
             "sharpe_ratio": 0.0,
             "start_cash": 0.0,
             "end_value": 0.0,
         }
+
+    @staticmethod
+    def _max_win_lose_streaks(pnl_seq: NDArray) -> tuple[int, int]:
+        """按成交顺序统计最大连胜/连亏笔数。
+
+        pnl > 0 记为胜，pnl <= 0 记为负（与 win_rate 的胜/负口径一致）。
+
+        Args:
+            pnl_seq: SELL 成交的 pnl 序列（时间升序）
+
+        Returns:
+            (最大连胜笔数, 最大连亏笔数)
+        """
+        max_wins = max_losses = cur_wins = cur_losses = 0
+        for pnl in pnl_seq:
+            if pnl > 0:
+                cur_wins += 1
+                cur_losses = 0
+                max_wins = max(max_wins, cur_wins)
+            else:
+                cur_losses += 1
+                cur_wins = 0
+                max_losses = max(max_losses, cur_losses)
+        return int(max_wins), int(max_losses)

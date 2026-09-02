@@ -32,6 +32,29 @@ const scoreComponents = computed(() => {
 const grade = computed(() => gradePerformance(props.report.performance))
 
 const excess = computed(() => props.report.benchmark.excess_return)
+
+/** v1.28 CAPM/主动管理指标（老报告缺省时不渲染该行；good=null 为中性不着色） */
+const capm = computed(() => {
+  const b = props.report.benchmark
+  if (b.alpha === undefined || b.beta === undefined) return null
+  return [
+    { label: 'α 年化超额', value: b.alpha, fmt: 'percent', good: (b.alpha ?? 0) >= 0 },
+    { label: 'β 敏感度', value: b.beta, fmt: 'ratio', good: null },
+    {
+      label: '信息比率',
+      value: b.information_ratio ?? 0,
+      fmt: 'ratio',
+      good: (b.information_ratio ?? 0) >= 0,
+    },
+    { label: '跟踪误差', value: b.tracking_error ?? 0, fmt: 'percent', good: null },
+  ]
+})
+
+function fmtCapm(v: number, fmt: string): string {
+  if (!Number.isFinite(v)) return '-'
+  if (fmt === 'percent') return `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`
+  return v.toFixed(2)
+}
 </script>
 
 <template>
@@ -85,6 +108,15 @@ const excess = computed(() => props.report.benchmark.excess_return)
         <span class="stat-label">超额收益</span>
         <span :class="excess >= 0 ? 'pos' : 'neg'" class="mono">
           {{ excess >= 0 ? '+' : '' }}{{ (excess * 100).toFixed(2) }}%
+        </span>
+      </div>
+    </div>
+    <!-- v1.28：CAPM / 主动管理对比（α/β/信息比率/跟踪误差） -->
+    <div v-if="capm" class="bench-row bench-row-4">
+      <div v-for="c in capm" :key="c.label" class="bench-cell">
+        <span class="stat-label">{{ c.label }}</span>
+        <span class="mono" :class="c.good === null ? '' : c.good ? 'pos' : 'neg'">
+          {{ fmtCapm(c.value, c.fmt) }}
         </span>
       </div>
     </div>
@@ -200,6 +232,9 @@ const excess = computed(() => props.report.benchmark.excess_return)
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
   margin-bottom: 6px;
+}
+.bench-row-4 {
+  grid-template-columns: repeat(4, 1fr);
 }
 .bench-cell {
   display: flex;

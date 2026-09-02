@@ -307,19 +307,43 @@ class Strategy(ABC):
         price: float | None = None,
         stop_loss: float | None = None,
         take_profit: float | None = None,
+        trail_stop: float | None = None,
+        stop_loss_pct: float | None = None,
+        take_profit_pct: float | None = None,
     ) -> None:
-        """生成买入信号。
+        """生成买入信号（可携带 bracket 止损/止盈/移动止损，OCO 联动）。
+
+        akquant ``place_bracket`` 风格：进出场一体化，不必再手写止损监控。
+        三条退出线任一触发即全部失效（OCO），由引擎逐 bar 监控并自动
+        生成 SELL（``source="stop"``，延迟到下一根开盘成交，消除前视偏差）。
 
         Args:
             size: 交易数量（0 = 全仓，由引擎计算）
             price: 限价（None = 市价单）
-            stop_loss: 止损价（None = 不设置）
-            take_profit: 止盈价（None = 不设置）
+            stop_loss: 止损价（绝对价；与 stop_loss_pct 同时给时绝对价优先）
+            take_profit: 止盈价（绝对价；与 take_profit_pct 同时给时绝对价优先）
+            trail_stop: 移动止损百分比（如 0.08 = 自持仓期间最高收盘价
+                回撤 8% 触发）。固定 stop_loss 优先于移动止损。
+            stop_loss_pct: 止损百分比（相对当前收盘价，如 0.05 = 跌 5% 止损）
+            take_profit_pct: 止盈百分比（相对当前收盘价，如 0.10 = 涨 10% 止盈）
+
+        Examples:
+            >>> # 买入并带 5% 止损 / 10% 止盈（自动换算价格）
+            ... self.buy(stop_loss_pct=0.05, take_profit_pct=0.10)
+            >>> # 买入并带 8% 移动止损（涨得越多止损线跟得越高）
+            ... self.buy(trail_stop=0.08)
         """
         if self._data_proxy is None:
             raise RuntimeError("策略未绑定数据，请先调用 _bind_data()")
         if self._datetime_array is None:
             raise RuntimeError("数据未正确初始化")
+
+        # 百分比便捷参数 → 绝对价（显式绝对价优先）
+        ref_price = price if price is not None else float(self.data.close[0])
+        if stop_loss is None and stop_loss_pct is not None:
+            stop_loss = ref_price * (1.0 - stop_loss_pct)
+        if take_profit is None and take_profit_pct is not None:
+            take_profit = ref_price * (1.0 + take_profit_pct)
 
         signal = Signal(
             datetime=int(self._datetime_array[self._bar_index]),
@@ -328,6 +352,7 @@ class Strategy(ABC):
             price=price,
             stop_loss=stop_loss,
             take_profit=take_profit,
+            trail_stop=trail_stop,
         )
         self._signals.append(signal)
 
