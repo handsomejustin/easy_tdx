@@ -5,7 +5,10 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import echarts from '../echarts-setup'
+import { wfGlossary } from '../data/glossary'
 import type { WalkForwardResult } from '../types'
+import GlossaryList from './GlossaryList.vue'
+import HelpCollapse from './HelpCollapse.vue'
 
 const props = defineProps<{
   wf: WalkForwardResult
@@ -122,6 +125,9 @@ watch(
       稳健策略的盈利窗占比应 ≥ 50%。
     </p>
     <div ref="container" class="wf-chart"></div>
+    <HelpCollapse label="名词解释：切窗 / 每窗独立开仓 / 盈利窗占比…">
+      <GlossaryList :sections="wfGlossary" />
+    </HelpCollapse>
   </div>
 </template>
 

@@ -2,6 +2,24 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.28.1] — 2026-09-02
+
+**Web UI 新手友好化 + AI 解读导出**——回测报告的两个「看不懂」出口：名词解释折叠帮助（新手向）与 AI 解读 Prompt 一键导出（LLM 辅助解读），另修复 Walk-Forward 窗口数据被序列化成字符串的后端 bug。
+
+### 新增
+
+- **名词解释折叠帮助**（Web UI）——Walk-Forward 样本外验证 / 一条龙评估 / 绩效指标三个报告框底部各内置「? 名词解释」按钮：默认收起、点击展开，共 33 个词条覆盖全部 25 项绩效指标与 WF / 评估术语（每窗独立开仓、盈利窗占比、连乘收益、Ulcer 指数、卡玛比率、α/β/信息比率、适配性体检等）。每条按「一句话定义 → 公式 → 细节 → 怎么看（阈值与经验法则）」组织，重点粗体亮色、阈值橙色粗体、细节细体暗色的字重层级；文案口径与后端实现逐项对齐（WF 预热区 30%、综合评分权重 50/15/10/5/20、体检 8 项 ≥75% 高适配、卡玛 = 年化收益 ÷ 最大回撤等）。新增通用组件 `HelpCollapse`（平滑展开动画；折叠态叠加 `visibility:hidden`，对无障碍树与自动化真正隐藏）与 `GlossaryList`（`**粗体**` 内联标记解析，词条数据集中 `web-ui/src/data/glossary.ts`）。
+- **AI 解读 Prompt 一键导出**（Web UI）——回测报告工具栏新增「🤖 AI 解读」：把当前报告实时组装成结构化 markdown 提示词（角色设定 + 六步解读框架 + 回测配置 + 25 项指标 + 净值概览 + WF 逐窗明细 + 一条龙评估 + 评级 + 最近 8 笔成交 + 免责），一键复制 / 下载 .md，发给任意 LLM（ChatGPT / Claude / DeepSeek / 豆包…）即可获得针对性解读。文风指令经三轮实测迭代：要求「做了十几年量化的老手朋友聊天」口吻、禁八股句式（「事实是」「总的来说」等）、优点毛病都讲、婉转不下判决书、800 字内、只引用报告已有数字，并以 **0-10 信心分**收尾（统一行动刻度：0-3 放弃 / 4-6 继续改 / 7-8 小仓试错 / 9+ 逐步加仓）。可选段落（WF / 评估 / 评级）按数据有无自动拼接，未跑不出现。生成器为纯函数 `web-ui/src/aiPrompt.ts`（仅 type-only 本地导入，node:test 可直跑）。
+- 单测 `web-ui/src/__tests__/aiPrompt.test.ts`（2 例）：25 项指标行齐全、可选段按需拼接、WF 窗口字符串值防御性转换回归锁定。
+
+### 修复
+
+- **`to_json_native` 有限 python float 被序列化成字符串**（`src/easy_tdx/backtest/types.py`）——有限 float 此前会落到末尾的 `str()` 兜底（np.float64 分支则正常转数字）；Walk-Forward 窗口字段恰好都经 `float()` 包装全部中招，REST JSON 里逐窗 `total_return` / `sharpe` / `max_drawdown` / `win_rate` 变成字符串，前端严格判型处显示 `-`（AI 解读 Prompt 逐窗数据缺失、LLM 无法引用）。修复后有限 python float 与 np.float64 同口径保持数字、NaN → None。前端 Prompt 组装同步加 `Number()` 防御性转换，兼容仍在缓存的旧任务结果。
+
+### 测试
+
+- E2E 新增 2 例：名词解释默认折叠 / 点击展开（词条与面板统计标签同名场景用类名作用域定位，规避 strict mode 冲突）、AI 弹窗内容打包断言（textarea 用 `toHaveValue` 而非 `toContainText`）。既有「盈利窗占比」「综合评分」「对比买入持有」等全局 `getByText` 断言收窄到对应容器（词条文案含同名词）。Playwright 本轮以 `PYTHONPATH=src` 对仓库后端运行，序列化修复被 E2E 真实覆盖。
+
 ## [1.28.0] — 2026-09-02
 
 **深度风险报告 + 移动止损 + 黄金测试**（借鉴 [akquant](https://github.com/akfamily/akquant)）——把专业量化框架的「报告深度」与「测试 rigor」搬到散户工具上，三通道（CLI / Web API / Web UI）同步输出。同版本收录 Playwright E2E 前端测试基建与 WebSocket 实时推送联动（升级计划 P4-1 / P4-2）。

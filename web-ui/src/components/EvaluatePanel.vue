@@ -5,7 +5,10 @@
 import { computed } from 'vue'
 
 import GradeDetails from './GradeDetails.vue'
+import GlossaryList from './GlossaryList.vue'
+import HelpCollapse from './HelpCollapse.vue'
 import { gradePerformance } from '../grading'
+import { evaluateGlossary } from '../data/glossary'
 import type { EvaluateReport } from '../types'
 
 const props = defineProps<{
@@ -137,6 +140,11 @@ function fmtCapm(v: number, fmt: string): string {
     <!-- 评级（复用本地评级，与后端字段口径一致） -->
     <h4 class="sub-title">评级（不看收益率）</h4>
     <GradeDetails :result="grade" />
+
+    <!-- 名词解释（默认折叠，新手向） -->
+    <HelpCollapse label="名词解释：综合评分 / 高适配 / α·β·IR / 适配性体检…">
+      <GlossaryList :sections="evaluateGlossary" />
+    </HelpCollapse>
   </div>
 </template>
 

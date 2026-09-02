@@ -17,7 +17,8 @@ import TradeTable from '../components/TradeTable.vue'
 import WalkForwardPanel from '../components/WalkForwardPanel.vue'
 import { formatError, saveStrategy } from '../api'
 import { detectMarket } from '../market'
-import { gradePerformance } from '../grading'
+import { GRADE_META, gradePerformance } from '../grading'
+import { buildAiPrompt } from '../aiPrompt'
 import type { Category, ExecutionMode } from '../types'
 import { useBacktestStore } from '../stores/backtest'
 
@@ -199,6 +200,62 @@ async function onSave() {
     saving.value = false
   }
 }
+
+// ── AI 解读 Prompt（把当前报告组装成提示词，发给任意 LLM 解读）──────────────
+const showAiModal = ref(false)
+const aiMsg = ref('')
+
+/** 实时组装：附加分析（WF/评估）跑完后内容自动变全 */
+const aiPromptText = computed(() => {
+  if (!store.result) return ''
+  return buildAiPrompt({
+    symbol: fullSymbol(code.value),
+    category: category.value,
+    startDate: startDate.value,
+    endDate: endDate.value,
+    bars: store.ohlcv.length,
+    strategyLabel: strategyLabel.value,
+    params: params.value,
+    cash: cash.value,
+    commission: commission.value,
+    slippage: slippage.value,
+    execution: execution.value,
+    result: store.result,
+    wf: store.wfResult,
+    evaluate: store.evaluateResult,
+    grade: grade.value,
+    gradeHint: grade.value ? GRADE_META[grade.value.grade].hint : undefined,
+  })
+})
+
+function openAiModal() {
+  aiMsg.value = ''
+  showAiModal.value = true
+}
+
+async function copyAiPrompt() {
+  try {
+    await navigator.clipboard.writeText(aiPromptText.value)
+    aiMsg.value = '✓ 已复制，粘贴给任意 AI 助手即可'
+  } catch {
+    // 剪贴板 API 不可用时退回选中文本，让用户手动 Ctrl+C
+    const el = document.querySelector<HTMLTextAreaElement>('.ai-prompt-area')
+    el?.focus()
+    el?.select()
+    aiMsg.value = document.execCommand('copy') ? '✓ 已复制' : '已全选文本，请按 Ctrl+C 复制'
+  }
+}
+
+function downloadAiPrompt() {
+  const blob = new Blob([aiPromptText.value], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `AI解读_${code.value}_${strategy.value}.md`
+  a.click()
+  URL.revokeObjectURL(url)
+  aiMsg.value = '✓ 已下载 .md 文件'
+}
 </script>
 
 <template>
@@ -298,6 +355,7 @@ async function onSave() {
       <div v-if="store.result" class="report-content">
         <div class="result-toolbar">
           <button class="ghost" @click="openSaveForm">💾 保存策略</button>
+          <button class="ghost" @click="openAiModal">🤖 AI 解读</button>
           <span v-if="saveMsg" class="save-msg">{{ saveMsg }}</span>
         </div>
 
@@ -380,6 +438,33 @@ async function onSave() {
           <button class="primary" :disabled="saving || !saveName.trim()" @click="onSave">
             {{ saving ? '保存中…' : '保存' }}
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI 解读 Prompt 对话框 -->
+    <div v-if="showAiModal" class="modal-overlay" @click.self="showAiModal = false">
+      <div class="modal modal-wide">
+        <h3>🤖 AI 解读 Prompt</h3>
+        <p class="modal-desc">
+          已把当前回测报告组装成提示词。复制后发给任意 AI 助手（ChatGPT / Claude /
+          DeepSeek / 豆包…），即可获得针对性解读与改进建议。
+          <template v-if="wfEnabled || evaluateEnabled">
+            建议等附加分析跑完再复制，Walk-Forward / 一条龙评估的数据会一并打包。
+          </template>
+        </p>
+        <textarea
+          :value="aiPromptText"
+          class="ai-prompt-area"
+          readonly
+          rows="16"
+          spellcheck="false"
+        ></textarea>
+        <span v-if="aiMsg" class="ai-msg">{{ aiMsg }}</span>
+        <div class="modal-actions">
+          <button class="ghost" @click="showAiModal = false">关闭</button>
+          <button class="ghost" @click="downloadAiPrompt">⬇ 下载 .md</button>
+          <button class="primary" @click="copyAiPrompt">复制 Prompt</button>
         </div>
       </div>
     </div>
@@ -619,5 +704,28 @@ async function onSave() {
 .modal-actions .ghost:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* AI 解读 Prompt 对话框（比保存对话框更宽，内容等宽小字可滚动） */
+.modal-wide {
+  width: 640px;
+}
+.ai-prompt-area {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  white-space: pre;
+  overflow: auto;
+  max-height: 55vh;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  color: var(--text-muted);
+  resize: vertical;
+}
+.ai-msg {
+  font-size: 12px;
+  color: var(--up);
 }
 </style>

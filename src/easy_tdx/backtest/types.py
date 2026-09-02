@@ -123,8 +123,11 @@ def to_json_native(obj: Any) -> Any:
         return f if math.isfinite(f) else None
     if isinstance(obj, np.bool_):
         return bool(obj)
-    if isinstance(obj, float) and not math.isfinite(obj):
-        return None
+    if isinstance(obj, float):
+        # 有限 python float 保持数字（与 np.float64 分支同口径）。
+        # 此前有限 float 会落到末尾的 str() 兜底，导致 WF 窗口等
+        # 经 float() 包装的字段被序列化成字符串（前端严格判型时显示 "-"）。
+        return obj if math.isfinite(obj) else None
     if obj is None or isinstance(obj, str | int | bool):
         return obj
     if hasattr(obj, "isoformat"):

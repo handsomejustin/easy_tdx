@@ -4,7 +4,10 @@
 
 import { computed } from 'vue'
 
+import { metricsGlossary } from '../data/glossary'
 import type { Performance } from '../types'
+import GlossaryList from './GlossaryList.vue'
+import HelpCollapse from './HelpCollapse.vue'
 
 const props = defineProps<{
   perf: Performance
@@ -85,22 +88,32 @@ function valueClass(row: MetricRow): string {
 </script>
 
 <template>
-  <div class="metric-grid">
-    <div v-for="[group, rows] in groups" :key="group" class="metric-group">
-      <h4 class="group-title">{{ group }}</h4>
-      <div class="metric-rows">
-        <div v-for="row in rows" :key="row.key" class="metric-row">
-          <span class="metric-label">{{ row.label }}</span>
-          <span class="metric-value" :class="valueClass(row)">
-            {{ formatVal(row, perf[row.key]) }}
-          </span>
+  <div class="metric-wrap">
+    <div class="metric-grid">
+      <div v-for="[group, rows] in groups" :key="group" class="metric-group">
+        <h4 class="group-title">{{ group }}</h4>
+        <div class="metric-rows">
+          <div v-for="row in rows" :key="row.key" class="metric-row">
+            <span class="metric-label">{{ row.label }}</span>
+            <span class="metric-value" :class="valueClass(row)">
+              {{ formatVal(row, perf[row.key]) }}
+            </span>
+          </div>
         </div>
       </div>
     </div>
+    <!-- 名词解释（默认折叠，新手向）：每个指标是什么、怎么算、怎么看 -->
+    <HelpCollapse label="名词解释：夏普 / 卡玛 / Ulcer / VaR / SQN…">
+      <GlossaryList :sections="metricsGlossary" />
+    </HelpCollapse>
   </div>
 </template>
 
 <style scoped>
+.metric-wrap {
+  display: flex;
+  flex-direction: column;
+}
 .metric-grid {
   display: flex;
   gap: 20px;
