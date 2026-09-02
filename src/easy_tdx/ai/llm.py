@@ -201,8 +201,7 @@ def resolve_config(cfg: LlmConfig | None = None) -> LlmConfig:
         c.model = preset.default_model
     if not c.api_url or not c.model:
         raise ValueError(
-            f"LLM 配置不完整：provider={c.provider} 缺少 api_url 或 model，"
-            "请在 AI 设置中补全"
+            f"LLM 配置不完整：provider={c.provider} 缺少 api_url 或 model，请在 AI 设置中补全"
         )
     return c
 

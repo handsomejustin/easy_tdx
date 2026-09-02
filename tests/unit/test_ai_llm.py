@@ -146,9 +146,7 @@ class TestClient:
 
         def fake_urlopen(req, timeout):
             body = io.BytesIO(b'{"error":"bad key"}')
-            raise urllib.error.HTTPError(
-                req.full_url, 401, "Unauthorized", hdrs=None, fp=body
-            )
+            raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", hdrs=None, fp=body)
 
         monkeypatch.setattr(llm_mod.urllib.request, "urlopen", fake_urlopen)
         with pytest.raises(LlmError, match="401") as ei:
@@ -164,8 +162,15 @@ class TestClient:
 
 def test_provider_presets_cover_major_vendors():
     vendors = [
-        "deepseek", "qwen", "zhipu", "kimi", "minimax",
-        "openai", "claude", "ollama", "custom",
+        "deepseek",
+        "qwen",
+        "zhipu",
+        "kimi",
+        "minimax",
+        "openai",
+        "claude",
+        "ollama",
+        "custom",
     ]
     for pid in vendors:
         assert pid in PROVIDER_PRESETS, pid
@@ -224,6 +229,7 @@ class TestAsyncChatTask:
             async def _slow():
                 await asyncio.sleep(0.05)
                 return f"解读:{prompt[:8]}"
+
             return _slow()
 
         monkeypatch.setattr(LlmClient, "chat", fake_chat)
@@ -254,6 +260,7 @@ class TestAsyncChatTask:
         def fake_chat(self, prompt, system_prompt=None):
             async def _boom():
                 raise LlmError("请求超时（180s 内无响应）")
+
             return _boom()
 
         monkeypatch.setattr(LlmClient, "chat", fake_chat)
@@ -304,8 +311,9 @@ class TestAsyncChatTask:
                 "start_date": "2024-01-01",
                 "end_date": "2025-01-01",
             }
-            tid = c.post("/api/v1/llm/chat/async",
-                         json={"prompt": "报告", "context": ctx}).json()["task_id"]
+            tid = c.post("/api/v1/llm/chat/async", json={"prompt": "报告", "context": ctx}).json()[
+                "task_id"
+            ]
             for _ in range(50):
                 st = c.get(f"/api/v1/llm/chat/tasks/{tid}").json()
                 if st["status"] in ("done", "failed"):
@@ -373,8 +381,14 @@ class TestThinkingModelBlankContent:
     """
 
     def _client(self, max_tokens: int = 4000) -> LlmClient:
-        return LlmClient(LlmConfig(provider="zhipu", api_key="sk-x-1234567890",
-                                   model="glm-5.3-flash", max_tokens=max_tokens))
+        return LlmClient(
+            LlmConfig(
+                provider="zhipu",
+                api_key="sk-x-1234567890",
+                model="glm-5.3-flash",
+                max_tokens=max_tokens,
+            )
+        )
 
     def test_normal_content_wins_over_reasoning(self):
         msg = {"content": "正文", "reasoning_content": "思考…", "role": "assistant"}
@@ -403,8 +417,14 @@ class TestThinkingModelBlankContent:
 
         def fake_post(url, headers, payload, timeout):
             blank = chr(10) + "  " + chr(10)
-            return {"choices": [{"message": {"content": blank, "reasoning_content": "r"},
-                                 "finish_reason": "length"}]}
+            return {
+                "choices": [
+                    {
+                        "message": {"content": blank, "reasoning_content": "r"},
+                        "finish_reason": "length",
+                    }
+                ]
+            }
 
         monkeypatch.setattr(llm_mod, "_post_json", fake_post)
         with pytest.raises(LlmError, match="思考链"):

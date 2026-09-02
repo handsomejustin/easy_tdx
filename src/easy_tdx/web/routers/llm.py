@@ -65,12 +65,8 @@ class LlmChatRequest(BaseModel):
 
     prompt: str = Field(..., min_length=1, max_length=200_000)
     system_prompt: str | None = Field(None, description="None = 用配置里的默认系统提示")
-    override: LlmConfigUpdate | None = Field(
-        None, description="临时覆盖配置（不落盘，仅本次调用）"
-    )
-    context: LlmChatContext | None = Field(
-        None, description="策略上下文（随成功解读一并落历史库）"
-    )
+    override: LlmConfigUpdate | None = Field(None, description="临时覆盖配置（不落盘，仅本次调用）")
+    context: LlmChatContext | None = Field(None, description="策略上下文（随成功解读一并落历史库）")
 
 
 def _merge_api_key(submitted: str, current: str) -> str:
@@ -153,7 +149,11 @@ async def update_llm_config(req: LlmConfigUpdate) -> dict[str, Any]:
 
 
 def _record_history(
-    provider: str, model: str, prompt: str, reply: str, elapsed: float,
+    provider: str,
+    model: str,
+    prompt: str,
+    reply: str,
+    elapsed: float,
     ctx: LlmChatContext | None,
 ) -> None:
     """成功解读旁路落库（llm_history.db）。失败只记日志，不影响解读结果。"""
@@ -217,8 +217,12 @@ async def llm_chat_async(req: LlmChatRequest) -> TaskSubmitResponse:
         _record_history(
             client.config.provider, client.config.model, req.prompt, reply, elapsed, req.context
         )
-        return {"reply": reply, "model": client.config.model, "provider": client.config.provider,
-                "elapsed": elapsed}
+        return {
+            "reply": reply,
+            "model": client.config.model,
+            "provider": client.config.provider,
+            "elapsed": elapsed,
+        }
 
     runner = get_runner()
     task_id = runner.submit(_run, description=desc)

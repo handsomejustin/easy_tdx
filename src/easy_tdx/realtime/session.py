@@ -66,8 +66,7 @@ def session_info(now: datetime | None = None, *, tz: tzinfo | None = None) -> di
     return {
         "is_trading_time": is_trading_time(t),
         "sessions": [
-            {"start": s.strftime("%H:%M"), "end": e.strftime("%H:%M")}
-            for s, e in SESSION_WINDOWS
+            {"start": s.strftime("%H:%M"), "end": e.strftime("%H:%M")} for s, e in SESSION_WINDOWS
         ],
         "session_desc": SESSION_DESC,
         "server_time": t.isoformat(timespec="seconds"),

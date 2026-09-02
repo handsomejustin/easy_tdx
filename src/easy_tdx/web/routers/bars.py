@@ -206,7 +206,11 @@ async def _fetch_120m(
             _MAX_BARS_PER_FETCH // 2,
         )
     df = await client.get_security_bars(
-        market_from_str(market), code, category_from_str("MIN_60"), start, fetch_n,
+        market_from_str(market),
+        code,
+        category_from_str("MIN_60"),
+        start,
+        fetch_n,
         bar_time=bar_time,
     )
     return _resample_pairs(df, count)
