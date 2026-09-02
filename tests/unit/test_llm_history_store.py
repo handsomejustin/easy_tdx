@@ -31,18 +31,18 @@ class TestLlmHistoryStore:
     def test_context_roundtrip(self, store):
         store.add(
             _rec(
-                strategy="zig_breakout",
-                strategy_label="ZIG 右侧突破回补",
+                strategy="macd",
+                strategy_label="MACD 金叉",
                 symbol="600519",
                 category="DAY",
-                params={"zig_delta": 5.0, "confirm_pct": 2.0},
+                params={"short": 12, "long": 26},
                 start_date="2024-01-01",
                 end_date="2025-01-01",
             )
         )
         it = store.list_all()[0]
-        assert it.strategy == "zig_breakout" and it.symbol == "600519"
-        assert it.params == {"zig_delta": 5.0, "confirm_pct": 2.0}  # JSON 往返保真
+        assert it.strategy == "macd" and it.symbol == "600519"
+        assert it.params == {"short": 12, "long": 26}  # JSON 往返保真
         assert it.start_date == "2024-01-01"
 
     def test_corrupt_params_json_tolerated(self, store, tmp_path):

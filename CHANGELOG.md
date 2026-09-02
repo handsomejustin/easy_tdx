@@ -2,6 +2,16 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.30.1] — 2026-09-03
+
+**彻底移除 ZIG 之字转向指标与 `zig_breakout` 策略**——ZIG 是教科书级的**未来函数**：波峰/波谷拐点只有在**其后**的走势反向走满 X% 确认转向后才会**回溯标出**，也就是说序列里每个拐点的位置都用到了"当时不可能知道"的未来信息。把它当买卖信号回测，等于允许策略在波谷那一天精准买入、在见顶前一天精准卖出——收益必然严重虚高、参数寻优必然过拟合，回测结果与实盘表现脱节，**这正是本工具最要防的失真**。
+
+### 移除
+
+- **为什么必须删，而不是加警示**——v1.29 引入时已尝试用「硬止损 + 右侧突破确认进场」两层保护对冲前视偏差，但那只能**缓解**而非**消除**：`zig_breakout` 的建仓信号"ZIG 向上启动（波谷确认）"本质上仍是偷看未来的产物，建立其上的任何回测数字、寻优选参、AI 解读都自带系统性偏差。铁证就在本项目自己的黄金基线里：`zig_breakout` 在固定样本上胜率 **100%**、总收益 **+88.2%**、夏普 **1.73**——一组完美得不像真话的数字，恰恰是前视偏差的签名（实盘信号天然滞后于回测拐点，实盘表现只会大幅劣于回测）。回测工具的生命线是"数字可信"：与其留着一个数字必然失真的指标靠 docstring 警告自律（挡不住复制粘贴），不如删掉——**宁可少一个指标，不给用户一个实盘必然打脸的完美陷阱**。
+- **移除范围（三端同步消失）**——① `MyTT.ZIG` 指标函数（`src/easy_tdx/MyTT.py`）；② 内置策略 `zig_breakout`（`backtest/strategies/builtin.py` 注册表删除后，CLI 回测、Web API、WebUI 回测策略下拉与对比页自动不再出现）；③ 参数寻优预设网格（`presets.py`）与「一键寻优所有策略」中的对应条目；④ 仓库根示例策略 `strategies/zig_breakout.py`（`--strategy-file` 入口）；⑤ 单测 `test_mytt_zig.py` / `test_zig_strategy.py` 删除，向量化对拍测试的路径依赖白名单随之清空（其余全部 19 个内置策略均可向量化对拍），黄金基线 `backtest_metrics.json` 移除 zig_breakout 条目（其余策略零漂移）；⑥ README / strategies/README / 架构文档中的相关说明。
+- **兼容性影响（有意为之）**——外部脚本 `from easy_tdx.MyTT import ZIG` 将抛 `ImportError`，引用 `zig_breakout` 的回测命令 / API 调用将报"策略不存在"：**快速失败好过静默失真**。需要之字转向类形态分析的用户，可自行基于已确认 K 线实现不含未来函数的右侧确认版本，或改用海龟突破（`turtle_breakout`）/ 唐奇安通道（`donchian`）等天然右侧的策略。
+
 ## [1.29.2] — 2026-09-02
 
 **可编辑安装失效时给出友好报错**（[#58](https://github.com/handsomejustin/easy_tdx/discussions/58)）——`pip install -e .` 会在 site-packages 写入 `_editable_impl_easy_tdx.pth`（内容为仓库 `src/` 绝对路径）。仓库目录被移动/重命名/重新 clone 或该文件丢失后，`easy-tdx` 只会抛出一句无法定位的 `No module named 'easy_tdx.cli'`：`easy_tdx` 本体因 site-packages 里的 `web/dist` 命名空间碎片仍可导入，报错极具误导性（实测复现，失效态 `easy_tdx.__path__` 只剩 site-packages 碎片路径）。

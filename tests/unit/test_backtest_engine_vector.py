@@ -302,18 +302,12 @@ def test_auto_falls_back_on_mask_shape_mismatch() -> None:
 def test_vector_path_actually_used_for_builtins() -> None:
     """默认 signal_path='auto' 下内置策略确实走了向量化（防止回退被掩盖）。
 
-    例外白名单：信号依赖路径状态（无法用静态掩码等价表达）的策略，
-    引擎对它们走逐 bar 回放（与 next() 完全一致），属设计而非回退。
+    若某策略信号依赖路径状态（无法用静态掩码等价表达），应在此说明并
+    考虑引擎走逐 bar 回放的白名单机制（当前无此类策略）。
     """
     from easy_tdx.backtest.strategy import Strategy as Base
 
-    # zig_breakout 的 _breakout_level（见顶清仓后记录的前高）随持仓路径
-    # 变化，掩码不可表达；见 builtin.py 该策略的注释
-    path_dependent = {"zig_breakout"}
-
     for name in get_registry().names():
-        if name in path_dependent:
-            continue
         strat_cls = get_registry().get(name).strategy_cls
         assert strat_cls.entry_exit_masks is not Base.entry_exit_masks, (
             f"{name} 未实现 entry_exit_masks，auto 将永远走逐 bar"

@@ -30,7 +30,6 @@ from easy_tdx.MyTT import (
     EMA,
     EMV,
     FSL,
-    HHV,
     KDJ,
     KTN,
     MA,
@@ -39,7 +38,6 @@ from easy_tdx.MyTT import (
     TAQ,
     TRIX,
     WR,
-    ZIG,
 )
 
 __all__: list[str] = []  # 注册副作用即可，无需导出符号
@@ -693,113 +691,3 @@ class FslStrategy(ParametrizedStrategy):
     def entry_exit_masks(self) -> tuple[Any, Any]:
         """与 next() 同源（gold/dead 即 next() 判定用的同一组掩码数组）。"""
         return self.gold, self.dead
-
-
-# ── ZIG 右侧突破回补 ─────────────────────────────────────────────────────────
-
-
-@register_strategy(
-    name="zig_breakout",
-    label="ZIG 右侧突破回补",
-    description=(
-        "ZIG 向上启动（波谷确认）全仓买入；ZIG 见顶回落清仓并记录 N 日最高点，"
-        "其后收盘突破前高×(1+确认比例) 时右侧回补。两路径买入均带硬止损，"
-        "对冲 ZIG 波谷确认的前视偏差（未来函数，实盘信号会滞后）。"
-    ),
-)
-class ZigBreakoutStrategy(ParametrizedStrategy):
-    """ZIG 右侧突破回补（Re-entry on Breakout + 硬止损保护）。
-
-    ZIG 是未来函数：波峰/波谷只有在其后走势确认转向才回溯标出，回测里
-    "波谷启动"信号天然偷看未来。本策略用两层保护缓解而非消除该偏差：
-
-    1. 买入即挂 ``stop_loss_pct`` 硬止损（引擎逐 bar 监控，跌破自动平仓），
-       假波谷不至于深套；
-    2. 卖出后不追 ZIG 新波谷，而是等价格**右侧突破**前高确认_pct 再回补，
-       把"猜底"换成"确认后进场"。
-
-    交易逻辑::
-
-        空仓 + ZIG 上行            → 全仓买入（带止损）
-        持仓 + ZIG 下行（见顶）    → 全仓卖出，记录 HHV(high, N) 为前高
-        空仓 + 收盘 ≥ 前高×(1+确认) → 右侧回补（带止损）
-
-    注意：``_breakout_level`` 随持仓路径变化，信号不可向量化，故不实现
-    ``entry_exit_masks``——引擎自动走逐 bar 回放路径（与 next() 完全一致）。
-    """
-
-    params = [
-        Param(
-            "zig_delta",
-            float,
-            default=10.0,
-            min_value=0.5,
-            max_value=50.0,
-            label="ZIG转向阈值%",
-        ),
-        Param(
-            "confirm_pct",
-            float,
-            default=2.0,
-            min_value=0.1,
-            max_value=20.0,
-            label="突破确认比例%",
-        ),
-        Param("hhv_period", int, default=20, min_value=5, max_value=120, label="前高周期"),
-        Param(
-            "stop_loss_pct",
-            float,
-            default=3.0,
-            min_value=0.0,
-            max_value=30.0,
-            label="硬止损%",
-        ),
-    ]
-
-    def init(self) -> None:
-        self.zig = self.I(ZIG, self.data.close, self.p["zig_delta"])
-        self.hhv = self.I(HHV, self.data.high, self.p["hhv_period"])
-        # 见顶清仓时记录的前高（0 = 未记录，等待首次建仓-见顶周期）
-        self._breakout_level: float = 0.0
-
-    def next(self) -> None:
-        i = self._bar_index
-        if i == 0:
-            return
-
-        cur_close = float(self.data.close[0])
-        cur_zig = float(self.zig[i])
-        prev_zig = float(self.zig[i - 1])
-        cur_pos = self.position["size"]
-
-        # 持仓：ZIG 见顶回落 → 清仓，并记录突破位（HHV 含未来 bar 已确认的高点）
-        if cur_pos > 0 and cur_zig < prev_zig:
-            self._breakout_level = float(self.hhv[i])
-            self.sell(size=0)
-            return
-
-        if cur_pos == 0:
-            # 路径 1：ZIG 向上启动（波谷确认）→ 初始建仓
-            if cur_zig > prev_zig:
-                self._breakout_level = 0.0
-                self._buy_with_stop()
-                return
-
-            # 路径 2：右侧突破前高 → 回补（洗盘结束、主升确立）
-            if self._breakout_level > 0:
-                threshold = self._breakout_level * (1.0 + self.p["confirm_pct"] / 100.0)
-                if cur_close >= threshold:
-                    self._breakout_level = 0.0
-                    self._buy_with_stop()
-
-    def _buy_with_stop(self) -> None:
-        """市价全仓买入并按 ``stop_loss_pct`` 挂硬止损（0 = 不挂）。
-
-        市价单（price=None）由引擎在下一根开盘成交，与本地其他内置策略
-        口径一致，避免信号 bar 收盘价成交的前视味道。
-        """
-        pct = self.p["stop_loss_pct"] / 100.0
-        if pct > 0:
-            self.buy(size=0, stop_loss_pct=pct)
-        else:
-            self.buy(size=0)

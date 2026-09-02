@@ -336,19 +336,6 @@
       "ulcer_index": 0.0,
       "var_95": -0.0,
       "win_rate": 0.0
-    },
-    "zig_breakout": {
-      "cvar_95": 0.028842972139600086,
-      "max_consecutive_losses": 0,
-      "max_consecutive_wins": 5,
-      "max_drawdown": 0.08762079023098233,
-      "sharpe": 1.726724943367625,
-      "sqn": 3.2661255981598982,
-      "total_return": 0.881929152129431,
-      "total_trades": 5,
-      "ulcer_index": 0.032735452584468416,
-      "var_95": 0.021750558683001117,
-      "win_rate": 1.0
     }
   }
 }
