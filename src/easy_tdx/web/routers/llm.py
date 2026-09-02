@@ -111,7 +111,7 @@ async def get_llm_config() -> dict[str, Any]:
         if preset.needs_key and not cfg.api_key:
             missing.append("api_key")
     except ValueError as exc:
-        resolved = cfg  # type: ignore[assignment]
+        resolved = cfg
         missing = [str(exc)]
     return {
         "config": cfg.to_dict(mask_api_key=True),

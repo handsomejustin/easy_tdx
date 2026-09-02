@@ -244,7 +244,8 @@ def _post_json(
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            data: dict[str, Any] = json.loads(resp.read().decode("utf-8"))
+            return data
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")[:500]
         raise LlmError(f"LLM API HTTP {exc.code}: {body}", status=exc.code) from exc

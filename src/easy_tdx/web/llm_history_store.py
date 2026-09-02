@@ -133,7 +133,7 @@ class LlmHistoryStore:
                     rec.end_date,
                 ),
             )
-            rec.id = int(cur.lastrowid)
+            rec.id = cur.lastrowid
         return rec
 
     def list_all(self, limit: int = 50) -> list[LlmHistoryRecord]:
