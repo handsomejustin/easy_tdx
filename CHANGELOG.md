@@ -2,6 +2,15 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.29.2] — 2026-09-02
+
+**可编辑安装失效时给出友好报错**（[#58](https://github.com/handsomejustin/easy_tdx/discussions/58)）——`pip install -e .` 会在 site-packages 写入 `_editable_impl_easy_tdx.pth`（内容为仓库 `src/` 绝对路径）。仓库目录被移动/重命名/重新 clone 或该文件丢失后，`easy-tdx` 只会抛出一句无法定位的 `No module named 'easy_tdx.cli'`：`easy_tdx` 本体因 site-packages 里的 `web/dist` 命名空间碎片仍可导入，报错极具误导性（实测复现，失效态 `easy_tdx.__path__` 只剩 site-packages 碎片路径）。
+
+### 新增
+
+- **入口守卫模块 `easy_tdx._editable_guard`**——控制台脚本入口从 `easy_tdx.cli:cli` 改为经 `main()` 转发（正常态行为完全不变）；`easy_tdx.cli` 不可导入时打印中文修复指引（失效原因说明 + `python -c "import easy_tdx; print(easy_tdx.__path__)"` 排查命令 + 免重建 venv 的修复命令 `pip uninstall easy-tdx -y && pip install -e . --no-deps` + issue 链接），退出码 1。守卫文件经 `force-include` 同时复制进 site-packages 的碎片目录——失效态下 `src/` 代码全部不可达，唯有该副本可导入，这正是守卫能"在坏掉时还活着"的关键（`__init__.py` 途径不可行：失效态解析到的是无 `__init__.py` 的命名空间碎片）。
+- 单测 `tests/unit/test_editable_guard.py`（2 例）：meta_path 阻断器模拟 `ModuleNotFoundError` → 断言提示内容与退出码；正常态断言转发调用 click 组。已本地实测三种安装形态：可编辑健康态 `--help` 正常、模拟失效态输出指引且退出码 1、wheel 安装态正常（hatchling 对包内文件 + force-include 同路径映射自动去重，guard 在 wheel 中恰好一份）。
+
 ## [1.29.1] — 2026-09-02
 
 **中金所成交持仓排名采集（ccpm，独立数据源）**——散户能免费看到的**最接近"主力动向"的公开数据**：每个交易日收盘后约 16:15，中金所官网公布各期货品种「成交量 / 持买单量（多单）/ 持卖单量（空单）」各前 20 名期货公司会员排名。新增 `easy_tdx.ccpm` 模块并三端接入（CLI / Web API / WebUI），零第三方依赖（标准库 urllib）。
