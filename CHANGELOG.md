@@ -2,7 +2,9 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
-## [未发布]
+## [1.28.0] — 2026-09-02
+
+**深度风险报告 + 移动止损 + 黄金测试**（借鉴 [akquant](https://github.com/akfamily/akquant)）——把专业量化框架的「报告深度」与「测试 rigor」搬到散户工具上，三通道（CLI / Web API / Web UI）同步输出。同版本收录 Playwright E2E 前端测试基建与 WebSocket 实时推送联动（升级计划 P4-1 / P4-2）。
 
 ### 性能
 
@@ -15,12 +17,37 @@
 
 ### 新增
 
+- **绩效指标 19 → 25 项**（`backtest/performance.py`）——新增 Ulcer 指数（回撤深度×持续时间综合，与 S-D 评级「持有体验」定位同频）、95% 日 VaR / CVaR（历史分位数法，尾部风险）、SQN 系统质量数（√N×单笔收益均值/标准差，>2 可用 / >4 优秀 / >6 极佳）、最大连胜 / 最大连亏（散户心理最敏感的数字）。JSON / CSV 输出自动透传；`--table` 增加「深度风险」块；Web UI 绩效表「风险」组 +3 行、「交易」组 +3 行（老结果缺键显示 `-`）。
+- **基准对比从 1 个数升级为 5 个数**（`backtest/benchmark.py`）——`evaluate_strategy` 的 `benchmark` 段在 `excess_return` 之外新增 `alpha`（年化 CAPM α，剔除基准影响后的真实超额）、`beta`（对基准敏感度，1=同涨同跌）、`information_ratio`（年化信息比率）、`tracking_error`（年化跟踪误差）。新公开函数 `compute_benchmark_comparison(strategy_curve, benchmark_curve)`。Web UI 一条龙评估卡新增 4 格对比行（α/信息比率按正负着色，β/跟踪误差中性）；CLI `--evaluate` JSON 自动携带。
+- **移动止损 + 百分比 bracket**（`backtest/engine.py` / `strategy.py`）——`buy()` 新增 akquant `place_bracket` 风格参数：`trail_stop`（自持仓期间最高收盘价回撤 N% 触发；水印在检查后更新 → 只可能次根起触发，与 next_open 语义一致、无前视）、`stop_loss_pct` / `take_profit_pct`（按信号根收盘自动换算绝对价）。止损/止盈/移动止损构成 OCO（任一触发全部失效），触发单 `source="stop"` 延迟下一根成交。
+- **黄金测试（golden tests）**（`tests/unit/test_golden_backtest.py` + `tests/golden/backtest_metrics.json`）——借鉴 akquant 的 golden 机制：19 个内置策略在固定种子（seed=20260902，400 bar）合成数据上的 11 项指标 + 4 个规则场景（固定止损 / 止盈 / 移动止损 / 百分比 bracket）的成交价与时点 + 买入持有基准 + Alpha/Beta/IR/TE，全部锁定为 JSON 基线，容差 rel=abs=1e-6（紧到抓住费率/成交时点级别的逻辑漂移，松到容忍跨平台浮点尾数）。引擎任何撮合/费率/信号逻辑的静默改动都会在此爆出。更新基线：`EASY_TDX_REGEN_GOLDEN=1 python -m pytest tests/unit/test_golden_backtest.py`。**26 例新增**。
 - **Playwright E2E 前端测试基建**（升级计划 P4-1）——web-ui 引入 `@playwright/test`（`e2e/` + `playwright.config.ts`，`npm run test:e2e`）。**mock 方案选后端合成数据而非 page.route 拦截**：`EASY_TDX_E2E_MOCK=1` 时 serve 的 lifespan 把 TDX/MAC 客户端替换为合成数据客户端（`web/e2e_mock.py`，按 (market, code) CRC32 播种的确定性随机游走，分页语义与真实 /bars 一致），回测/WF/一条龙评估/自选/策略库继续走**真实后端代码**（它们本就不依赖行情连接），SSE 由 QuoteStreamer 真轮询合成数据全链路覆盖（mock 模式下轮询降到 2s 一拍，不受交易时段限制）。用例覆盖：看板五大指数区块+SSE 价格渲染、自选增删、回测全流程（净值图/绩效表/成交记录）、「附加分析」开关（WF 逐窗柱状图+一条龙评估卡）、策略库保存；`EASY_TDX_CONFIG_DIR` 指向每轮独立临时目录（断言可写死、不污染真实 `~/.easy_tdx`）。CI frontend job 追加 E2E 步骤；`verify_ci.sh` 补 `--no-frontend` 与前端 typecheck+build+E2E 段。新增 `tests/unit/test_e2e_mock.py`（11 例）守护 mock 与真实客户端的契约。
 - **WebSocket 实时推送联动 EventBus**（升级计划 P4-2）——`/ws/realtime/{symbol}` 从「不推送数据」变为真链路：新增 `web/realtime_hub.py`（RealtimeStreamHub），订阅集合变化时按需启停 `RealtimeDataFeed`（轮询 `get_stock_quotes` → `EventBus` → 每连接独立队列 fan-out，丢最旧保最新）；**无人订阅完全停止轮询**（对齐 QuoteStreamer 节能语义）；去重后标的上限 80；推送帧 `{type:"tick", symbol, market, code, price, volume, ts, open, high, low, pre_close, amount, name}`，30s 空闲 `ping` 心跳，客户端可 `subscribe`/`unsubscribe` 动态增删。端点重写为「单一写者泵」模型（全部出站帧经队列串行，杜绝并发 send 交错）。**前端接入选择只写文档不上组件**：看板/自选实时刷新已由 SSE `/stream/quotes`（全量快照、单连接共享）承担，WS 定位是按需单标的 tick（实时策略信号预留口），双通道同时拉同样行情属冗余——协议 + 自动重连/心跳容忍代码骨架落 `docs/api_reference.md` 与 README（「未联动」警示已撤）。新增 `scripts/ws_smoke.py` 手动冒烟（mock 模式随时可跑，实测可见 tick 帧与动态订阅确认）。环境变量 `EASY_TDX_WS_INTERVAL` 可调轮询间隔。
 
 ### 修复
 
 - `RealtimeDataFeed` stop-before-start 竞态：`run_async`/`run_sync` 首行会把 `_running` 重置为 True，若 `stop()` 在任务首次调度前调用，停止请求被覆盖、任务永不退出（RealtimeStreamHub 换标的重建 feed 时必现死锁）。引入独立 `_stop_requested` 标志，启动前已请求停止则直接返回；`tests/unit/test_realtime_feed.py` 补 2 个回归用例。
+
+## [1.27.2] — 2026-09-02
+
+**市场异动（0x1237）类型解析补齐与修正**（Issue #62）——`_describe_unusual` 此前仅覆盖 15 种类型，0x15/0x16/0x1D/0x1E（占全天异动 23%）落入兜底分支，显示「异动类型0x16、数值为空」；0x13 方向语义亦有误。语义由 2026-09-01/09-02 两个交易日实测锚定（全天跟踪采样，收盘累计 17848 条）。
+
+### 新增
+
+- **0x16 盘中强势/弱势**——09:25 撮合样本 v2 与当日开盘涨幅（open/pre_close-1）**49/49 精确一致**；v1 为带符号 ±1~3 级强弱等级（六组 v2 区间互不重叠且单调）。issue 作者猜的「大笔买入/卖出」「竞价试卖」据此排除。
+- **0x15 竞价/尾盘异动（双时刻信号）**——开盘竞价 09:25（1191 条）与收盘 15:00:01~04（86 条）都触发；desc 按记录小时区分「竞价拉升/尾盘拉升」前缀；v1 为方向档（±0.5% 分档）、v2 为时段尾段价格变动、v3 为成交量（手）。同源实现 pytdx2 标的「尾盘」只对了一半。
+- **0x1D/0x1E 急速拉升/急速下跌**——阈值下限恰 ±0.6%，与既有 0x04/0x05（加速拉升/下跌）构成不同短窗信号。
+- **公开常量 `UNUSUAL_TYPE_NAMES`**（19 种类型码→名称），顶层 `easy_tdx` 与 `easy_tdx.mac.commands` 均可导入，配合 `df["unusual_type"].map(UNUSUAL_TYPE_NAMES)` 使用。
+- **协议探索结论文档化**（`docs/protocol-unknown-fields.md` §3.4）——全天普查确认 PC 推送协议（0x40080cd1+ 体系）特有的「大笔买入/主力急入/急速上涨」等信号在 0x1237 拉取协议中**无对应类型码**；0x14 另有竞价试盘子族（09:15 撮合参考价触板即触发，现有解析器直接可用）；请求监控参数（尾部 6×H）经单维扫描确认不是类型开关；北交所（Market.BJ）同样支持 0x1237。
+
+### 修复
+
+- **0x13 竞价试盘方向修正**——v1=0x00 试买（申报价高于昨收）/ 0x01 试卖（低于昨收），552 条对照昨收 549 条一致；旧实现把约一半的试卖方向记录也显示成「竞价试买」，且数值无单位，现按方向显示「竞价试买/竞价试卖」并带 `申报价/竞价量手`。
+- `examples/17_mac_monitor/unusual.py`：修正完全错误的类型码文档（旧注释「1=5分钟涨幅, 2=5分钟跌幅」实为杜撰）与示例输出；README「监控」小节补充类型映射用法。
+
+### 测试
+
+- 新增 `tests/unit/test_unusual.py`（21 例，全部真实抓包字节 fixture：600551/600127 竞价异动、600123/600221 收盘「尾盘」前缀、603980/603900 试买/试卖方向）；既有类型解析不回归；`UNUSUAL_TYPE_NAMES` 覆盖度与兜底分支互斥性校验；`test_public_api.py` 契约表登记新导出。异动相关测试全绿；全套 1278 通过、1 例 optimizer cache 既有失败与本次无关（干净 HEAD 同样失败）。
 
 ## [1.27.1] — 2026-09-01
 

@@ -89,6 +89,19 @@ export interface Performance {
   max_loss: number
   avg_holding_days: number
   volatility: number
+  // v1.28 深度风险指标（老版本保存的结果可能缺省）
+  /** Ulcer 指数：回撤深度平方均值开方，越小持有体验越好 */
+  ulcer_index?: number
+  /** 95% 日 VaR（历史分位数法，正数 = 单日最大损失幅度） */
+  var_95?: number
+  /** 95% 日 CVaR / 期望损失 */
+  cvar_95?: number
+  /** SQN 系统质量数（>2 可用、>4 优秀、>6 极佳） */
+  sqn?: number
+  /** 最大连胜笔数 */
+  max_consecutive_wins?: number
+  /** 最大连亏笔数 */
+  max_consecutive_losses?: number
 }
 
 export interface EquityPoint {
@@ -603,6 +616,15 @@ export interface EvaluateBenchmarkReport {
   }
   /** 策略总收益 - 买入持有总收益 */
   excess_return: number
+  // v1.28 CAPM / 主动管理对比指标（老版本保存的报告可能缺省）
+  /** 年化 CAPM α：剔除基准影响后的超额收益，>0 仍有真实超额 */
+  alpha?: number
+  /** β：对基准的敏感度（1 = 与基准同涨跌） */
+  beta?: number
+  /** 年化信息比率：每 1 单位跟踪误差换来的超额收益 */
+  information_ratio?: number
+  /** 年化跟踪误差 */
+  tracking_error?: number
 }
 
 export interface EvaluateReport {

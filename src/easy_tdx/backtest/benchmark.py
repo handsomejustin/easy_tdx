@@ -15,7 +15,9 @@
       "fitness": {"pass_ratio": 0.875, "high_fitness": true, "checks": [...]},
       "benchmark": {
         "buy_hold": {"total_return": 0.32, ...},
-        "excess_return": 0.18                               # 策略 - 买入持有
+        "excess_return": 0.18,                             # 策略 - 买入持有
+        "alpha": 0.09, "beta": 0.72,                       # v1.28：CAPM 对比
+        "information_ratio": 0.85, "tracking_error": 0.12  # v1.28：主动管理指标
       },
       "config": {...}
     }
@@ -27,8 +29,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pandas as pd
 
 from easy_tdx.backtest.engine import BacktestEngine
@@ -39,7 +42,16 @@ from easy_tdx.backtest.strategy import Strategy
 from easy_tdx.backtest.types import to_json_native
 from easy_tdx.backtest.walkforward import WalkForwardEngine
 
-__all__ = ["evaluate_strategy", "run_buy_hold_benchmark"]
+if TYPE_CHECKING:
+    import numpy.typing as npt
+
+    from easy_tdx.backtest.types import BacktestResult
+
+    NDArray = npt.NDArray[np.float64]
+else:
+    NDArray = np.ndarray
+
+__all__ = ["evaluate_strategy", "run_buy_hold_benchmark", "compute_benchmark_comparison"]
 
 
 class _BuyAndHold(Strategy):
@@ -54,6 +66,32 @@ class _BuyAndHold(Strategy):
             self._bought = True
 
 
+def _run_buy_hold_result(
+    df: pd.DataFrame,
+    cash: float = 100000.0,
+    commission: float = 0.0003,
+    min_commission: float = 5.0,
+    stamp_tax: float = 0.001,
+    slippage: float = 0.0,
+    execution: str = "next_open",
+    symbol: str | None = None,
+    auto_fees: bool = False,
+) -> BacktestResult:
+    """买入持有基准完整回测（内部用，返回 BacktestResult 以取资金曲线）。"""
+    engine = BacktestEngine(
+        strategy=_BuyAndHold,
+        cash=cash,
+        commission=commission,
+        min_commission=min_commission,
+        stamp_tax=stamp_tax,
+        slippage=slippage,
+        execution=execution,
+        symbol=symbol,
+        auto_fees=auto_fees,
+    )
+    return engine.run(df)
+
+
 def run_buy_hold_benchmark(
     df: pd.DataFrame,
     cash: float = 100000.0,
@@ -66,18 +104,9 @@ def run_buy_hold_benchmark(
     auto_fees: bool = False,
 ) -> dict[str, Any]:
     """买入持有基准回测（与策略回测同区间、同费率、同资金）。"""
-    engine = BacktestEngine(
-        strategy=_BuyAndHold,
-        cash=cash,
-        commission=commission,
-        min_commission=min_commission,
-        stamp_tax=stamp_tax,
-        slippage=slippage,
-        execution=execution,
-        symbol=symbol,
-        auto_fees=auto_fees,
+    result = _run_buy_hold_result(
+        df, cash, commission, min_commission, stamp_tax, slippage, execution, symbol, auto_fees
     )
-    result = engine.run(df)
     keys = (
         "total_return",
         "annual_return",
@@ -87,6 +116,77 @@ def run_buy_hold_benchmark(
         "volatility",
     )
     return dict(to_json_native({k: result.performance.get(k, 0.0) for k in keys}))
+
+
+def compute_benchmark_comparison(
+    strategy_curve: pd.DataFrame,
+    benchmark_curve: pd.DataFrame,
+    annual_days: int = 252,
+) -> dict[str, float]:
+    """策略 vs 基准的 CAPM / 主动管理对比指标（v1.28 新增）。
+
+    从两条资金曲线的日收益率序列计算：
+
+    - ``beta``: 协方差/基准方差，策略对基准的敏感度（1 = 与基准同涨跌）
+    - ``alpha``: 年化 CAPM α ≈ (策略日均收益 − β×基准日均收益) × 年化天数，
+      简化版（无风险利率并入截距），>0 说明剔除基准影响后仍有超额
+    - ``information_ratio``: 年化信息比率 = mean(策略−基准)/std(策略−基准)×√N，
+      每 1 单位跟踪误差换来多少超额收益
+    - ``tracking_error``: 年化跟踪误差 = std(策略−基准)×√N
+
+    两条曲线按 bar 对齐（截取较短长度）；基准方差为 0（曲线恒定）时
+    beta/alpha 记 0，IR 在差值恒正且无波动时沿用 999 上限约定。
+
+    Args:
+        strategy_curve: 策略资金曲线（含 total 列）
+        benchmark_curve: 基准资金曲线（含 total 列）
+        annual_days: 年化交易日数
+
+    Returns:
+        {alpha, beta, information_ratio, tracking_error}
+    """
+    s_total = strategy_curve["total"].to_numpy(dtype=np.float64)
+    b_total = benchmark_curve["total"].to_numpy(dtype=np.float64)
+    n = min(len(s_total), len(b_total))
+    if n < 3:
+        return {"alpha": 0.0, "beta": 0.0, "information_ratio": 0.0, "tracking_error": 0.0}
+
+    def _daily_ret(total: NDArray) -> NDArray:
+        safe_prev = np.where(total[:-1] != 0, total[:-1], np.nan)
+        ret = np.diff(total) / safe_prev
+        return ret[np.isfinite(ret)]
+
+    s_ret = _daily_ret(s_total[:n])
+    b_ret = _daily_ret(b_total[:n])
+    m = min(len(s_ret), len(b_ret))
+    if m < 2:
+        return {"alpha": 0.0, "beta": 0.0, "information_ratio": 0.0, "tracking_error": 0.0}
+    s_ret, b_ret = s_ret[:m], b_ret[:m]
+
+    b_var = float(np.var(b_ret))
+    if b_var > 1e-18:
+        beta = float(np.cov(s_ret, b_ret)[0, 1] / b_var)
+        alpha = float((np.mean(s_ret) - beta * np.mean(b_ret)) * annual_days)
+    else:
+        beta = 0.0
+        alpha = float(np.mean(s_ret) * annual_days)
+
+    diff = s_ret - b_ret
+    diff_std = float(np.std(diff))
+    if diff_std > 1e-12:
+        information_ratio = float(np.mean(diff) / diff_std * np.sqrt(annual_days))
+    elif np.mean(diff) > 0:
+        information_ratio = 999.0
+    else:
+        information_ratio = 0.0
+    tracking_error = diff_std * np.sqrt(annual_days)
+
+    return {
+        "alpha": alpha,
+        "beta": beta,
+        "information_ratio": information_ratio,
+        "tracking_error": tracking_error,
+    }
 
 
 def evaluate_strategy(
@@ -153,8 +253,11 @@ def evaluate_strategy(
     score = score_strategy(perf, wf=wf)
     grade = grade_performance(perf)
 
-    # 5. 基准对比（买入持有，同区间同费率）
-    bh = run_buy_hold_benchmark(df, **engine_kwargs)
+    # 5. 基准对比（买入持有，同区间同费率）：超额收益 + Alpha/Beta/IR/TE
+    bh_result = _run_buy_hold_result(df, **engine_kwargs)
+    bh_keys = ("total_return", "annual_return", "max_drawdown", "sharpe", "calmar", "volatility")
+    bh = dict(to_json_native({k: bh_result.performance.get(k, 0.0) for k in bh_keys}))
+    comparison = compute_benchmark_comparison(bt.equity_curve, bh_result.equity_curve)
 
     return {
         "performance": to_json_native(dict(perf)),
@@ -166,6 +269,7 @@ def evaluate_strategy(
             "buy_hold": bh,
             "excess_return": float(perf.get("total_return", 0.0))
             - float(bh.get("total_return", 0.0)),
+            **comparison,
         },
         "config": {
             "symbol": symbol,

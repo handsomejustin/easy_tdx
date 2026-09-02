@@ -37,13 +37,32 @@ if TYPE_CHECKING:
 class _StopCondition:
     """Active stop-loss / take-profit condition tied to an open position.
 
+    三条退出线构成 OCO：任一触发即整体失效（见 ``_check_stop_conditions``）。
+
     Attributes:
         stop_loss: Price below which a SELL is triggered (None = disabled)
         take_profit: Price above which a SELL is triggered (None = disabled)
+        trail_stop: Trailing stop percent (e.g. 0.08 = 8% below the highest
+            close since entry, None = disabled). Fixed ``stop_loss`` wins when
+            both are set.
+        high_watermark: Highest close seen since the BUY (trailing reference).
+            Updated at the END of each bar (after the trigger check), so a
+            trailing stop can only fire from the NEXT bar onward — consistent
+            with next_open execution semantics.
     """
 
     stop_loss: float | None
     take_profit: float | None
+    trail_stop: float | None = None
+    high_watermark: float = 0.0
+
+    def effective_stop(self) -> float | None:
+        """当前生效的止损价（固定价优先，其次移动止损；均无则 None）。"""
+        if self.stop_loss is not None:
+            return self.stop_loss
+        if self.trail_stop is not None:
+            return self.high_watermark * (1.0 - self.trail_stop)
+        return None
 
 
 class BacktestEngine:
@@ -375,10 +394,17 @@ class BacktestEngine:
             # activate on the NEXT bar — consistent with next_open execution)
             for sig in bar_signals:
                 if sig.direction == "BUY" and (
-                    sig.stop_loss is not None or sig.take_profit is not None
+                    sig.stop_loss is not None
+                    or sig.take_profit is not None
+                    or sig.trail_stop is not None
                 ):
                     active_stops.append(
-                        _StopCondition(stop_loss=sig.stop_loss, take_profit=sig.take_profit)
+                        _StopCondition(
+                            stop_loss=sig.stop_loss,
+                            take_profit=sig.take_profit,
+                            trail_stop=sig.trail_stop,
+                            high_watermark=close_arr[i],
+                        )
                     )
 
             # Clear conditions when a SELL occurs (strategy or SL/TP triggered)
@@ -488,8 +514,11 @@ class BacktestEngine:
         """Check active SL/TP conditions against current bar's price range.
 
         If triggered, generates a SELL signal at the trigger price and removes
-        the condition. Stop-loss is checked first (conservative: assume the
-        worst case for the holder).
+        the condition (OCO: all remaining legs of the same condition die too).
+        Stop-loss is checked first (conservative: assume the worst case for
+        the holder). Trailing stops reference the highest close seen through
+        the PREVIOUS bar (watermark is updated after the check), so they can
+        never fire on the same bar that sets a new high.
 
         Args:
             active_stops: List of active stop conditions
@@ -512,16 +541,22 @@ class BacktestEngine:
             triggered = False
             trigger_price = 0.0
 
-            # Check stop-loss first (worst case for holder)
-            if cond.stop_loss is not None and bar_low <= cond.stop_loss:
+            # Check stop-loss first (worst case for holder); trailing resolves
+            # to its effective price, fixed stop_loss wins if both set
+            eff_stop = cond.effective_stop()
+            if eff_stop is not None and bar_low <= eff_stop:
                 triggered = True
-                trigger_price = cond.stop_loss
+                trigger_price = eff_stop
             # Then check take-profit
             elif cond.take_profit is not None and bar_high >= cond.take_profit:
                 triggered = True
                 trigger_price = cond.take_profit
 
-            if triggered:
+            if not triggered:
+                # Trailing watermark update AFTER the check (close-based)
+                cond.high_watermark = max(cond.high_watermark, bar_close)
+                remaining.append(cond)
+            else:
                 # Get datetime for this bar
                 dt_val = df["datetime"].iloc[bar_index]
                 if hasattr(dt_val, "strftime"):
@@ -538,8 +573,6 @@ class BacktestEngine:
                         source="stop",  # 标记为止损/止盈触发，延迟到下一根成交
                     )
                 )
-            else:
-                remaining.append(cond)
 
         active_stops.clear()
         active_stops.extend(remaining)

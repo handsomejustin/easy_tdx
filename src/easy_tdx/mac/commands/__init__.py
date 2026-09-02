@@ -13,7 +13,7 @@ from .symbol_quotes import SymbolQuotesCmd
 from .symbol_tick_chart import SymbolTickChartCmd
 from .symbol_transaction import SymbolTransactionCmd
 from .tick_charts import TickChartsCmd
-from .unusual import UnusualCmd
+from .unusual import UNUSUAL_TYPE_NAMES, UnusualCmd
 
 __all__ = [
     "BoardListCmd",
@@ -29,5 +29,6 @@ __all__ = [
     "SymbolTickChartCmd",
     "SymbolTransactionCmd",
     "TickChartsCmd",
+    "UNUSUAL_TYPE_NAMES",
     "UnusualCmd",
 ]

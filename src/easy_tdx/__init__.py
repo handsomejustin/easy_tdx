@@ -27,6 +27,7 @@ from .ex.mac_client import AsyncMacExClient, MacExClient
 from .ex.models import KNOWN_EX_HOSTS
 from .exceptions import TdxCommandError, TdxConnectionError, TdxDecodeError, TdxError
 from .mac.client import AsyncMacClient, MacClient
+from .mac.commands import UNUSUAL_TYPE_NAMES
 from .mac.enums import (
     Adjust,
     BoardSortColumn,
@@ -90,6 +91,7 @@ __all__ = [
     "TransactionRecord",
     "XdxrRecord",
     "XDXR_CATEGORY_NAMES",
+    "UNUSUAL_TYPE_NAMES",
     "FinanceInfo",
     "CompanyInfoCategory",
     "FinancialFileInfo",

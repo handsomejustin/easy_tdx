@@ -318,6 +318,16 @@ def _print_table(result: Any) -> None:
     click.echo(f"夏普比率: {perf.get('sharpe', 0):.2f}")
     click.echo(f"胜率: {perf.get('win_rate', 0):.2%}")
     click.echo(f"交易次数: {perf.get('total_trades', 0)}")
+    # 深度风险指标（v1.28 新增；老结果缺键时跳过，不输出 0 假值）
+    if perf.get("ulcer_index") is not None:
+        click.echo(f"Ulcer 指数: {perf.get('ulcer_index', 0):.4f}")
+        click.echo(f"日 VaR(95%): {perf.get('var_95', 0):.2%}")
+        click.echo(f"日 CVaR(95%): {perf.get('cvar_95', 0):.2%}")
+        click.echo(f"SQN 系统质量: {perf.get('sqn', 0):.2f}")
+        click.echo(
+            f"最大连胜/连亏: {perf.get('max_consecutive_wins', 0)} / "
+            f"{perf.get('max_consecutive_losses', 0)}"
+        )
     click.echo()
 
     if getattr(result, "diagnostic", None):
