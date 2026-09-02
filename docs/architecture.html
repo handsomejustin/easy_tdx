@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>easy-tdx 项目架构图</title>
+<style>
+  :root{
+    --bg:#0a0e14; --panel:#10151d; --border:#21262d;
+    --text:#e6edf3; --muted:#8b949e; --accent:#ef4146;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:system-ui,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  .toolbar{
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+    padding:10px 16px; background:var(--panel);
+    border-bottom:1px solid var(--border); z-index:10;
+  }
+  .brand{font-weight:700; font-size:15px; margin-right:10px; white-space:nowrap}
+  .brand .dot{display:inline-block; width:11px; height:11px; border-radius:3px; background:var(--accent); margin-right:8px; vertical-align:-1px}
+  .brand small{color:var(--muted); font-weight:400; margin-left:8px; font-size:12px}
+  button{
+    background:#161b22; border:1px solid var(--border); color:var(--text);
+    padding:6px 13px; border-radius:8px; cursor:pointer; font-size:13px;
+  }
+  button:hover{border-color:#3d444d; background:#1c2129}
+  #zoomLabel{min-width:52px; text-align:center; color:var(--muted); font-size:13px; font-variant-numeric:tabular-nums}
+  .hint{margin-left:auto; color:var(--muted); font-size:12px}
+  #stage{
+    flex:1; overflow:hidden; position:relative;
+    background:radial-gradient(1100px 520px at 50% -8%, rgba(88,166,255,.07), transparent), var(--bg);
+  }
+  #cv{display:block; cursor:grab}
+  #cv.grabbing{cursor:grabbing}
+  #cv.pointer{cursor:pointer}
+  #tip{
+    position:fixed; z-index:99; display:none; max-width:460px;
+    background:rgba(13,17,23,.96); border:1px solid #30363d; border-radius:10px;
+    padding:11px 13px; font-size:12.5px; line-height:1.75; color:#c9d1d9;
+    pointer-events:none; box-shadow:0 10px 30px rgba(0,0,0,.55);
+  }
+  #tip b{color:#fff; display:block; margin-bottom:5px; font-size:13.5px}
+  #tip .sub{color:#58a6ff; display:block; margin-bottom:4px; font-size:12px}
+  footer{
+    padding:6px 16px; color:var(--muted); font-size:12px;
+    background:var(--panel); border-top:1px solid var(--border); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+</style>
+</head>
+<body>
+
+<header class="toolbar">
+  <div class="brand"><span class="dot"></span>easy-tdx<small>项目架构图 · v1.29 · docs/architecture.html</small></div>
+  <button id="zoomOut" title="缩小">−</button>
+  <span id="zoomLabel">100%</span>
+  <button id="zoomIn" title="放大">＋</button>
+  <button id="fit">适配宽度</button>
+  <button id="reset100">原始尺寸</button>
+  <button id="export">⬇ 导出 PNG</button>
+  <div class="hint">拖拽平移 · 滚轮缩放 · 悬停模块查看详情</div>
+</header>
+
+<main id="stage"><canvas id="cv"></canvas></main>
+<div id="tip"></div>
+<footer>
+  分层：接口 → 服务 → 领域 → 持久 → 网关 → 协议 → 外部源 —— 请求自上而下，数据（pandas DataFrame）自下而上；纯计算内核（③）不依赖网络，可独立测试。
+</footer>
+
+<script>
+(function(){
+'use strict';
+
+/* ============================ 画布与世界坐标 ============================ */
+const W = 1780;                       // 逻辑画布宽
+const MAIN_L = 100, MAIN_R = W - 100; // 主区（层带）左右边界，两侧留旁路走廊
+const CORR_L = 52, CORR_R = W - 52;   // 左右走廊中心线
+const GAP = 86;                       // 层间距（画主数据流箭头）
+const HEADER = 60, PADX = 26, PADBOTTOM = 24, BOXGAP = 16, ROWGAP = 16;
+const TITLE_H = 148, LEGEND_H = 150, FOOT_PAD = 26;
+
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+let dpr = window.devicePixelRatio || 1;
+let cssW = 800, cssH = 600;
+let WORLD_H = 2000;
+
+const view = { scale: 1, tx: 0, ty: 0 };
+let hoverBox = null, hoverLayer = null;
+
+const FONT = "'Segoe UI','Microsoft YaHei','PingFang SC',system-ui,sans-serif";
+function setFont(c, size, weight){ c.font = (weight ? weight + ' ' : '') + size + 'px ' + FONT; }
+function hexA(hex, a){
+  const n = parseInt(hex.slice(1), 16);
+  return 'rgba(' + (n >> 16 & 255) + ',' + (n >> 8 & 255) + ',' + (n & 255) + ',' + a + ')';
+}
+function rr(c, x, y, w, h, r){
+  r = Math.min(r, h / 2, w / 2);
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + h, r);
+  c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r);
+  c.arcTo(x, y, x + w, y, r);
+  c.closePath();
+}
+function wrap(c, text, maxW){
+  if (c.measureText(text).width <= maxW) return [text];
+  const lines = []; let cur = '';
+  for (const ch of text){
+    if (c.measureText(cur + ch).width > maxW){ lines.push(cur); cur = ch; }
+    else cur += ch;
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+function arrowHead(c, x, y, angle, size, color){
+  c.save(); c.translate(x, y); c.rotate(angle);
+  c.beginPath(); c.moveTo(0, 0); c.lineTo(-size, -size * .42); c.lineTo(-size, size * .42); c.closePath();
+  c.fillStyle = color; c.fill(); c.restore();
+}
+
+/* ============================ 架构数据 ============================ */
+const LAYERS = [
+{
+  num:'①', name:'用户接口层', en:'Interface', color:'#58a6ff',
+  sub:'三端入口 + 桌面分发 —— 共享同一套领域引擎',
+  rows:[[
+    { t:'Web 网页端', s:'Vue 3 · Vite · ECharts',
+      d:['仪表盘 · 自选股 · 159 龙头池 · CCPM','回测 · 组合 · 参数优化 · 曲线对比','策略库 · 信号雷达 · AI 解读 · 设置'],
+      tip:'Vue 3 + Vite + Pinia + ECharts 6 单页应用，共 13 个页面：行情仪表盘（SSE 实时指数条、涨跌分布、板块热力、异动雷达）、自选股、核心龙头池、中金所 CCPM、单标的/组合回测、参数网格优化（热力图）、任务对比、策略库、信号雷达、AI 解读历史、行情服务器热切换、LLM Provider 配置。构建产物 dist 由 FastAPI 静态托管，同源免跨域。' },
+    { t:'CLI 命令行', s:'Click · 约 40 个命令',
+      d:['easy-tdx kline / quote / board / indicator','chanlun / backtest / screen / factor','portfolio / warehouse / formula / serve …'],
+      tip:'easy-tdx 入口（Click 命令组），覆盖行情查询、板块排行、指标计算、缠论分析、回测评估、选股扫描、因子研究、组合管理、K 线仓库、公式编译与选股、CCPM、Web 服务启动等；默认输出 JSON，可选表格 / CSV。CLI 不经 Web 服务层，直调领域引擎与客户端。' },
+    { t:'Python API', s:'pip install easy-tdx',
+      d:['8 个同步/异步客户端 + Unified 门面','backtest / factor / chanlun 等子包','统一返回 pandas DataFrame'],
+      tip:'包的公开编程面：TdxClient / MacClient / ExTdxClient / MacExClient / UnifiedTdxClient（各有异步版），以及 backtest、factor、chanlun、screen、portfolio、warehouse、realtime 等子包直接 import —— 是 CLI 与 Web 共享的最底层接口。' },
+    { t:'桌面模式', s:'PyInstaller 单文件 EXE',
+      d:['uvicorn 后台线程 + 系统托盘图标','双击即用（Windows），关闭即退出'],
+      tip:'tray.py + __main__.py：打包成 EXE 后双击启动，后台线程运行 FastAPI + Uvicorn，pystray 托盘图标管理生命周期并自动打开浏览器；开发环境回退为普通 CLI。' }
+  ]]
+},
+{
+  num:'②', name:'Web 服务层', en:'FastAPI · easy-tdx serve', color:'#39c5cf',
+  sub:'REST + SSE + WebSocket + 异步任务 —— 前后端唯一通道',
+  rows:[[
+    { t:'REST API', s:'/api/v1 · 约 20 个路由域',
+      d:['market · bars · finance · formula · chanlun','backtest · board · ccpm · ex · indicator','watchlist · server · llm · stream …'],
+      tip:'FastAPI 应用工厂 + lifespan 管理共享客户端（app.state 持有 AsyncTdxClient / AsyncMacClient / QuoteStreamer）；路由域覆盖行情、K 线、财务、公式、缠论、回测（同步 + 异步任务）、板块、扩展市场、CCPM、自选、服务器管理、LLM 等，统一错误结构与 Pydantic Schema。' },
+    { t:'异步任务运行器', s:'ThreadPool + SQLite 持久化',
+      d:['回测 / 参数优化 / 信号扫描 / LLM 长任务','提交返回 task_id → 前端轮询进度结果'],
+      tip:'task_runner + task_store：耗时任务提交线程池执行，状态与结果落 SQLite（tasks.db），进程重启不丢任务历史；Web 前端按 300ms–1.5s 间隔轮询。' },
+    { t:'实时推送', s:'SSE + WebSocket',
+      d:['SSE /stream/quotes：一次轮询多端扇出','WS /ws/realtime/*：按订阅按需轮询'],
+      tip:'QuoteStreamer 将一次行情轮询结果扇出给所有 SSE 订阅者，避免每客户端各自轮询；WebSocket 通道按需订阅指定标的；前端全局 EventSource + 指数退避重连。' },
+    { t:'轻量存储', s:'SQLite × 4',
+      d:['strategies.db · watchlist.db','tasks.db（含 LLM 对话历史）'],
+      tip:'策略库、自选股、异步任务与 AI 对话历史各自独立 SQLite 小库，随用随建、零运维，与 DuckDB 仓库互不干扰。' }
+  ]]
+},
+{
+  num:'③', name:'领域层', en:'Domain · 纯计算内核', color:'#bc8cff',
+  sub:'零网络依赖 —— CLI / API / Web 三端复用，可独立测试',
+  rows:[
+   [
+    { t:'回测引擎', s:'backtest/',
+      d:['Strategy 事件驱动 + 向量化快速路径','组合 / 多策略 / 轮动 / 因子组合 4 变体','费用 · 滑点 · 执行仿真 · WF · S-D 评级'],
+      tip:'BacktestEngine 编排 Strategy（init / next / I / buy / sell）→ 订单模拟 → 持仓净值 → 绩效指标；另有组合回测、多策略资金切分、排名轮动、因子信号组合引擎，以及 Walk-Forward 七窗验证、多种子验证、适配性体检、S–D 评级、0–100 评分的完整评估体系；含策略注册表（Web 动态表单的数据源）。' },
+    { t:'技术分析', s:'MyTT · indicator · formula',
+      d:['MyTT 数学内核（~80 个通达信风格函数）','indicator 注册表 ~30 指标供 CLI/Web','formula.py 通达信公式 DSL 编译执行'],
+      tip:'MyTT 为内嵌的 numpy 指标内核（与通达信 / 同花顺口径对齐）；indicator.py 声明式注册指标元信息与默认参数；formula.py 把通达信公式文本经词法 + 递归下降解析编译为白名单 numpy 计算（无 eval），输出信号列与数值列，支持公式选股与公式回测。' },
+    { t:'缠论引擎', s:'chanlun/',
+      d:['包含 → 分型 → 笔 → 中枢 → 段','三类买卖点 · MACD 背驰','多级别联立（日 / 30 分 / 5 分）'],
+      tip:'ChanlunAnalyser 一条龙：K 线包含合并、分型、笔、中枢、线段、走势段、一二三类买卖点与背驰判定；MultiLevelAnalyser 支持多周期联立；可自动桥接进回测策略（self.chanlun），亦是 Web 缠论路由的后端。' },
+    { t:'因子研究', s:'factor/',
+      d:['动量 / 波动 / 量能 / 质量 / 技术因子','去极值 · Zscore · 正交化预处理','IC / IR 有效性检验报告'],
+      tip:'Factor ABC + 注册表；FactorEngine 支持单因子与截面计算、未来收益对齐；transform 提供去极值、标准化、秩归一、缺失填充、正交化；FactorAnalyzer 产出 IC / IR 风格因子报告；内置技术面（桥接 MyTT）与缠论因子。' },
+    { t:'组合管理', s:'portfolio/',
+      d:['等权 · 因子加权 · 风险平价 · 均值方差','多期再平衡引擎 · 风险模型','纯 numpy 实现'],
+      tip:'WeightOptimizer 注册表式权重优化器 + RebalanceEngine 多期调仓 + RiskModel 简单风险模型；与因子引擎衔接完成"因子 → 权重 → 组合回测"闭环。' }
+   ],
+   [
+    { t:'选股引擎', s:'screen/ · scan → rank',
+      d:['本地 .day 全 A 信号扫描 · 回测排名','强势股排名（多周期加权）','159 核心龙头池宇宙'],
+      tip:'SignalScanner 用 Strategy 类扫描本地日线文件产生买入信号，SignalRanker 再用回测引擎对扫描结果排名；StrengthRanker 多周期收益加权排强势股（支持低流动性过滤）；universe 内置 159 只核心龙头股票池；支持多进程并发与增量扫描（缓存未修改文件）。' },
+    { t:'实时框架', s:'realtime/',
+      d:['EventBus 事件总线 · RealtimeStrategy 回调','快照轮询 Feed · 交易时段感知刷新'],
+      tip:'通达信为请求 / 响应协议，"实时" = 快照轮询：RealtimeDataFeed 按交易时段过滤轮询报价并做变更检测，推入 EventBus 供 RealtimeStrategy 的 on_tick 消费并 emit_signal。' },
+    { t:'AI 解读', s:'ai/ · 多 Provider 直连',
+      d:['DeepSeek · Qwen · 智谱 · Kimi · MiniMax…','OpenAI / Anthropic 兼容 + Ollama 本地'],
+      tip:'LlmClient 用标准库 urllib 实现（零三方依赖）：Provider 预设 + ~/.easy_tdx 配置文件与 WebUI 双向同步，为回测报告生成自然语言解读，对话历史落 SQLite。' },
+    { t:'示例策略库', s:'strategies/（仓库根目录）',
+      d:['~19 个 Strategy 子类','MA / MACD / 海龟 / ZIG / 捉妖 / 乖离 …','运行时动态加载进回测与扫描'],
+      tip:'仓库根 strategies/ 目录：ma_cross、macd_cross、turtle_breakout、zig_breakout、zhuoyao_momentum、bias_reversal 等 19 个示例策略文件，由 CLI（backtest --strategy-file、run-all --strategies-dir）与选股扫描在运行时动态 import；与包内 backtest/strategies/ 注册表相互独立。' }
+   ]
+  ]
+},
+{
+  num:'④', name:'数据持久层', en:'Data · 本地优先', color:'#e3b341',
+  sub:'一次采集 · 离线复用 —— 与服务端解耦',
+  rows:[[
+    { t:'K 线仓库', s:'warehouse/ · DuckDB 单文件列存',
+      d:['~/.easy_tdx/warehouse.duckdb · 增量 upsert','盘中临时态 / 15:05 收盘后转正','WarehouseSyncer：首拉 8000 根，此后补尾'],
+      tip:'KlineWarehouse 以 (market, code, period, datetime) 为主键增量写入；盘中同步的数据标记 provisional、收盘后 promote，避免未收盘数据污染回测；WarehouseSyncer 从 MacClient 拉前复权 K 线自动增量同步；查询接口供回测 / 因子 / 截面分析复用。' },
+    { t:'通达信本地文件', s:'offline/ · vipdoc 直读直写',
+      d:['日线 .day · 分钟 .lc1/.lc5 · 板块文件','gbbq 股本（XOR 解密）· gpcw 历史财务'],
+      tip:'直接解析本机通达信安装目录的二进制数据文件：读写日线 / 分钟线、解析流通股本与历史财务文件、自动探测安装路径（Windows 候选目录）；是离线选股扫描（screen）与 easy-tdx offline 命令的数据源，零网络。' },
+    { t:'本地缓存', s:'JSON / XML',
+      d:['全量证券列表 JSON 缓存','最优主机 config.json · CCPM 每日 XML'],
+      tip:'高频不变数据落盘缓存：证券列表、自动测速后的最优主机配置、中金所每日排名 XML，避免重复请求外部源。' }
+  ]]
+},
+{
+  num:'⑤', name:'客户端网关层', en:'Client Gateway', color:'#3fb950',
+  sub:'8 个客户端（各含异步版）—— 二进制协议 ⇄ DataFrame 翻译官',
+  rows:[
+   [
+    { t:'UnifiedTdxClient', s:'统一门面 · 推荐入口',
+      d:['按市场自动路由：A 股 → MacClient','扩展市场 → MacExClient · 惰性创建'],
+      tip:'一个入口按市场自动路由到对应客户端，惰性实例化，是文档推荐的默认客户端；同步 / 异步双版本。' },
+    { t:'TdxClient', s:'标准协议 · :7709',
+      d:['K 线 · 报价 · 分时 · 逐笔成交','财务 · 除权除息 · 板块 · 资金流'],
+      tip:'标准协议高级客户端：主机优选、同主机指数退避 + 跨主机故障转移、空数据故障转移、心跳保活、证券列表 JSON 缓存，输出 pandas DataFrame。' },
+    { t:'MacClient', s:'MAC 协议 · 数据更丰富',
+      d:['前复权 K 线（本地 XDXR 重算校验）','板块排行 · 资金流 · 异动 · 集合竞价'],
+      tip:'MAC 协议客户端（字段位图请求）：提供标准协议没有的增强数据 —— 前复权 K 线（含本地重算与校验）、板块与成员行情、个股资金流、分时图、异动雷达、文件下载等 18 组命令；是 Web 行情与仓库同步的主力通道。' },
+    { t:'ExTdxClient / MacExClient', s:'扩展市场 · :7727',
+      d:['期货 · 港股 · 美股 · 期权','单包握手 · 复用 MAC 命令集'],
+      tip:'扩展行情客户端：独立传输层（7727 端口、单包握手），覆盖扩展市场标的；MacExClient 在扩展连接上复用 MAC 命令集。' }
+   ],
+   [
+    { t:'高可用基础设施', s:'_health · _reconnect',
+      d:['主机健康评分（进程级共享）· 指数退避重试 · 心跳保活 · 跨主机故障转移 —— 全部 8 个客户端共用'],
+      tip:'_health 维护进程级主机健康分与冷却期，rank_by_health 参与选主；_reconnect 提供统一重试延迟表、异步心跳 Mixin 与最优主机探测（select_best_host / find_working_host）。' },
+    { t:'辅助 HTTP 采集', s:'ccpm · sina · cninfo',
+      d:['中金所成交持仓排名（XML）· 新浪三大财务报表 · 巨潮公告检索 —— 标准库 urllib 直连，自带缓存，不经协议层'],
+      tip:'三类不走通达信协议的 HTTP 数据源客户端：CFFEX 前二十会员成交持仓排名、新浪利润 / 资产负债 / 现金流量表、巨潮资讯公告检索与 PDF 下载。' }
+   ]
+  ]
+},
+{
+  num:'⑥', name:'协议层', en:'Protocol · 纯函数', color:'#f0883e',
+  sub:'通达信私有二进制协议 —— 零 IO，可独立单测',
+  rows:[[
+    { t:'连接管理', s:'transport/',
+      d:['同步 / 异步 TCP 连接 · 心跳线程','主机测速 ping_all · 帧收发与解压'],
+      tip:'TdxConnection（线程安全 socket + 心跳线程）与 AsyncTdxConnection（asyncio + IO 锁）：完成三包握手（扩展协议单包）、发送命令帧、读取 16 字节帧头 + zlib 解压 body，交由命令对象解析；附主机延迟探测 ping_all / ping_mac_all。' },
+    { t:'命令对象', s:'commands/ · 一命令一类',
+      d:['build_request() + parse_response()','K线 / 报价 / 分时 / 逐笔 / 财务 / 文件'],
+      tip:'每个协议命令一个类：负责构造请求字节流与解析响应体，无 IO，依赖 codec 与 models；mac/commands 另有 18 个 MAC 命令，ex/commands 覆盖扩展市场。' },
+    { t:'二进制编解码', s:'codec/',
+      d:['帧头 + zlib · 变体整数价格 · 自定义浮点','压缩日期 · 字段位图 · 涨跌停规则'],
+      tip:'纯函数编解码：16 字节帧头、变长整数差分价格、4 字节自定义浮点成交量、压缩日期 / 分钟、MAC 字段位图（FieldSelection）、block / financial / industry 文件解析与涨跌停价计算规则引擎。' },
+    { t:'数据模型', s:'models/ · _df',
+      d:['类型化 dataclass（Bar / Quote / …）','→ pandas DataFrame · 时间对齐 · 周期换算'],
+      tip:'models 定义全部响应的数据类；_df 负责 dataclass → DataFrame 转换、bar 时间戳对齐与类别 / 周期到分钟的换算 —— 是"协议世界"与"分析世界"的分界线。' }
+  ]]
+},
+{
+  num:'⑦', name:'外部数据源', en:'External Sources', color:'#ef4146',
+  sub:'通达信生态为主 · HTTP 数据源为辅',
+  rows:[
+   [
+    { t:'TDX 标准行情服务器', s:'TCP :7709',
+      d:['~90 台内置主机池 · 自动测速选优'],
+      tip:'通达信标准行情协议服务器：config.py 内置约 90 台主机，ping_all 自动测速择优并持久化。' },
+    { t:'TDX MAC 行情服务器', s:'TCP · 字段位图协议',
+      d:['A 股增强数据通道'],
+      tip:'MAC 协议服务器（MAC_HOSTS）：提供前复权、板块、资金流、异动等增强数据。' },
+    { t:'TDX 扩展市场服务器', s:'TCP :7727',
+      d:['期货 · 港股 · 美股 · 期权'],
+      tip:'扩展行情服务器（单包握手）：覆盖境外与衍生品市场。' },
+    { t:'中金所 CFFEX', s:'HTTP · XML',
+      d:['前二十会员成交持仓排名（ccpm）'],
+      tip:'cffex.com.cn 每日成交持仓排名 XML，由 ccpm 模块拉取并按日缓存。' }
+   ],
+   [
+    { t:'新浪财经', s:'HTTP · JSON',
+      d:['利润表 · 资产负债表 · 现金流量表'],
+      tip:'新浪财务报表接口，由 sina 模块标准库直连。' },
+    { t:'巨潮资讯', s:'HTTP',
+      d:['公告检索 · PDF 下载'],
+      tip:'cninfo 公告搜索 API：按证券代码检索公告列表并下载 PDF。' },
+    { t:'LLM 提供商', s:'HTTP · 多协议',
+      d:['DeepSeek · 智谱 · Qwen · Kimi · MiniMax','OpenAI · Claude · Ollama（本地）'],
+      tip:'AI 解读所用的推理服务：OpenAI 兼容或 Anthropic 协议，亦支持本地 Ollama。' },
+    { t:'本地通达信安装', s:'文件系统 · vipdoc/',
+      d:['离线 .day / 分钟线 / 股本 / 财务文件'],
+      tip:'本机已安装通达信客户端的数据目录：offline 模块直读直写，完全离线。' }
+   ]
+  ]
+}
+];
+
+/* 层间主数据流标签（①⇅② … ⑥⇅⑦） */
+const FLOW_LABELS = [
+  'REST /api/v1 · SSE 实时推送 · 任务轮询',
+  '调用领域引擎 · 行情透传至客户端层',
+  '读写 K 线仓库 / vipdoc 文件 / 缓存',
+  'WarehouseSyncer 拉取 K 线增量入库',
+  'build_request() ⇄ parse_response()',
+  'TCP 私有二进制协议（:7709 / :7727）'
+];
+
+/* ============================ 布局 ============================ */
+function layout(){
+  let y = TITLE_H;
+  const allBoxes = [];
+  for (const L of LAYERS){
+    const innerW = MAIN_R - MAIN_L - 2 * PADX;
+    L.rows = L.rows.map(row => {
+      const n = row.length;
+      const bw = (innerW - (n - 1) * BOXGAP) / n;
+      let maxH = 0;
+      const boxes = row.map(b => {
+        const pad = 15, innerBox = bw - pad * 2 - 6;
+        setFont(ctx, 15.5, '800'); const tL = wrap(ctx, b.t, innerBox);
+        setFont(ctx, 12.5, '600');  const sL = wrap(ctx, b.s, innerBox);
+        setFont(ctx, 12.5, '400');  const dL = [].concat(...b.d.map(s => wrap(ctx, s, innerBox - 4)));
+        const h = 13 + tL.length * 22 + sL.length * 17 + 5 + dL.length * 17 + 12;
+        maxH = Math.max(maxH, h);
+        return Object.assign({}, b, { tL, sL, dL, w: bw, h: 0 });
+      });
+      boxes.forEach(b => b.h = maxH);
+      return boxes;
+    });
+    L.h = HEADER + L.rows.reduce((s, r) => s + r[0].h, 0) + ROWGAP * (L.rows.length - 1) + PADBOTTOM;
+    L.y = y;
+    let ry = y + HEADER;
+    for (const row of L.rows){
+      row.forEach((b, i) => {
+        b.x = MAIN_L + PADX + i * (b.w + BOXGAP);
+        b.y = ry;
+        b.layer = L;
+        allBoxes.push(b);
+      });
+      ry += row[0].h + ROWGAP;
+    }
+    L.bottom = y + L.h;
+    y += L.h + GAP;
+  }
+  WORLD_H = y - GAP + LEGEND_H + FOOT_PAD;
+  return allBoxes;
+}
+const BOXES = layout();
+function boxByTitle(t){ return BOXES.find(b => b.t === t); }
+
+/* ============================ 绘制 ============================ */
+function drawTitle(c){
+  setFont(c, 30, '800'); c.textBaseline = 'top'; c.textAlign = 'left';
+  c.fillStyle = '#f0f6fc';
+  c.fillText('easy-tdx 项目架构总览', MAIN_L, 30);
+  setFont(c, 13.5, '400'); c.fillStyle = '#98a3b0';
+  c.fillText('通达信生态 A 股量化数据与分析平台 · v1.29 —— 请求自上而下 ↓ · 数据（pandas DataFrame）自下而上 ↑', MAIN_L, 72);
+  setFont(c, 12.5, '400'); c.fillStyle = '#6e7b8b';
+  c.fillText('七层架构 · ' + BOXES.length + ' 个模块 · 虚线为旁路直连（HTTP / 本地文件 / CLI · Python API 越层直调）', MAIN_L, 96);
+  // 顶部右侧小标识
+  setFont(c, 12.5, '600'); c.textAlign = 'right';
+  c.fillStyle = '#ef4146';
+  c.fillText('HTML + Canvas 绘制', MAIN_R, 40);
+  setFont(c, 12, '400'); c.fillStyle = '#8b98a5';
+  c.fillText('悬停任意模块查看详情 · 工具栏可缩放 / 导出 PNG', MAIN_R, 60);
+  c.textAlign = 'left';
+  // 标题下分隔线
+  c.strokeStyle = '#21262d'; c.lineWidth = 1;
+  c.beginPath(); c.moveTo(MAIN_L, 124); c.lineTo(MAIN_R, 124); c.stroke();
+}
+
+function drawLayer(c, L){
+  rr(c, MAIN_L, L.y, MAIN_R - MAIN_L, L.h, 16);
+  c.fillStyle = hexA(L.color, .045); c.fill();
+  c.strokeStyle = hexA(L.color, .26); c.lineWidth = 1.5; c.stroke();
+  // 层徽章
+  setFont(c, 19, '800'); c.textBaseline = 'top';
+  const badge = L.num + ' ' + L.name;
+  const bw = c.measureText(badge).width + 26;
+  rr(c, MAIN_L + PADX, L.y + 14, bw, 34, 9);
+  c.fillStyle = hexA(L.color, .16); c.fill();
+  c.strokeStyle = hexA(L.color, .55); c.lineWidth = 1.2; c.stroke();
+  c.fillStyle = L.color;
+  c.fillText(badge, MAIN_L + PADX + 13, L.y + 14 + 8);
+  // 层副标题
+  setFont(c, 13, '400');
+  c.fillStyle = L.color;
+  c.fillText(L.en, MAIN_L + PADX + bw + 16, L.y + 25);
+  const enW = c.measureText(L.en).width;
+  c.fillStyle = '#768390';
+  c.fillText(' — ' + L.sub, MAIN_L + PADX + bw + 16 + enW, L.y + 25);
+  // 盒子
+  for (const row of L.rows) for (const b of row) drawBox(c, L, b);
+}
+
+function drawBox(c, L, b){
+  const hot = (b === hoverBox);
+  rr(c, b.x, b.y, b.w, b.h, 10);
+  c.fillStyle = hexA(L.color, hot ? .14 : .06); c.fill();
+  if (hot){ c.shadowColor = hexA(L.color, .55); c.shadowBlur = 20; }
+  c.strokeStyle = hexA(L.color, hot ? .95 : .34);
+  c.lineWidth = hot ? 2 : 1.2;
+  c.stroke(); c.shadowBlur = 0;
+  // 左色条
+  c.fillStyle = hexA(L.color, .85);
+  c.fillRect(b.x + 2, b.y + 9, 3, b.h - 18);
+  // 文本
+  let ty = b.y + 13;
+  c.textBaseline = 'top'; c.textAlign = 'left';
+  setFont(c, 15.5, '800'); c.fillStyle = '#f0f6fc';
+  for (const ln of b.tL){ c.fillText(ln, b.x + 17, ty); ty += 22; }
+  setFont(c, 12.5, '600'); c.fillStyle = L.color;
+  for (const ln of b.sL){ c.fillText(ln, b.x + 17, ty); ty += 17; }
+  ty += 4;
+  setFont(c, 12.5, '400'); c.fillStyle = hot ? '#b8c2cc' : '#8f9aa6';
+  for (const ln of b.dL){ c.fillText(ln, b.x + 17, ty); ty += 17; }
+}
+
+function mainFlow(c, i){
+  const top = LAYERS[i], bot = LAYERS[i + 1];
+  const x = (MAIN_L + MAIN_R) / 2;
+  const y1 = top.bottom + 12, y2 = bot.y - 12;
+  const col = bot.color;
+  c.strokeStyle = hexA(col, .8); c.lineWidth = 3;
+  c.beginPath(); c.moveTo(x, y1); c.lineTo(x, y2); c.stroke();
+  arrowHead(c, x, y1, -Math.PI / 2, 11, hexA(col, .9));  // 向上（数据）
+  arrowHead(c, x, y2,  Math.PI / 2, 11, hexA(col, .9));  // 向下（请求）
+  // 标签牌
+  setFont(c, 13, '600');
+  const label = FLOW_LABELS[i];
+  const tw = c.measureText(label).width + 26, th = 27, ym = (y1 + y2) / 2;
+  rr(c, x - tw / 2, ym - th / 2, tw, th, 14);
+  c.fillStyle = 'rgba(16,21,29,.96)'; c.fill();
+  c.strokeStyle = hexA(col, .55); c.lineWidth = 1.2; c.stroke();
+  c.fillStyle = '#e6edf3'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText(label, x, ym + 1);
+  c.textAlign = 'left'; c.textBaseline = 'top';
+}
+
+function vtext(c, txt, x, y, color, size){
+  const s = size || 11;
+  setFont(c, s, '600');
+  const h = txt.length * (s + 4);
+  // 深色垫片：保证竖排小字不被走廊虚线干扰
+  c.fillStyle = 'rgba(10,14,20,.9)';
+  rr(c, x - 9, y - 6, 18, h + 12, 6); c.fill();
+  c.fillStyle = color; c.textBaseline = 'top'; c.textAlign = 'center';
+  let yy = y;
+  for (const ch of txt){ c.fillText(ch, x, yy); yy += s + 4; }
+  c.textAlign = 'left';
+}
+
+function drawCorridors(c){
+  const yTop = LAYERS[0].y + 6, yBot = LAYERS[6].bottom - 6;
+  for (const cx of [CORR_L, CORR_R]){
+    c.save();
+    c.setLineDash([3, 8]); c.strokeStyle = '#2b333f'; c.lineWidth = 1.5;
+    c.beginPath(); c.moveTo(cx, yTop); c.lineTo(cx, yBot); c.stroke();
+    c.restore();
+  }
+  // 走廊标签（横排短行）
+  const midY = (yTop + yBot) / 2 - 60;
+  const rLab = ['CLI · API', '直连通道', '（绕过', 'Web 层）'];
+  const lLab = ['旁路直连', 'HTTP /', '本地文件'];
+  rLab.forEach((s, i) => { setFont(c, 12, '600'); c.fillStyle = '#5c6a7a'; c.textAlign = 'center'; c.textBaseline = 'top'; c.fillText(s, CORR_R, midY - 20 + i * 18); });
+  lLab.forEach((s, i) => { setFont(c, 12, '600'); c.fillStyle = '#5c6a7a'; c.textAlign = 'center'; c.textBaseline = 'top'; c.fillText(s, CORR_L, midY + 180 + i * 18); });
+  c.textAlign = 'left';
+}
+
+function poly(c, pts, color, label){
+  c.save();
+  c.strokeStyle = color; c.lineWidth = 2; c.setLineDash([7, 6]);
+  c.beginPath(); c.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) c.lineTo(pts[i][0], pts[i][1]);
+  c.stroke(); c.setLineDash([]);
+  const n = pts.length;
+  const ang = Math.atan2(pts[n - 1][1] - pts[n - 2][1], pts[n - 1][0] - pts[n - 2][0]);
+  arrowHead(c, pts[n - 1][0], pts[n - 1][1], ang, 10, color);
+  if (label){
+    // 沿最长竖直段写竖排小字
+    let vi = 1; for (let i = 1; i < n - 1; i++) if (Math.abs(pts[i + 1][1] - pts[i][1]) > Math.abs(pts[vi + 1][1] - pts[vi][1])) vi = i;
+    const vx = pts[vi][0] + 9, vy0 = Math.min(pts[vi][1], pts[vi + 1][1]), vy1 = Math.max(pts[vi][1], pts[vi + 1][1]);
+    vtext(c, label, vx, (vy0 + vy1) / 2 - label.length * 7.5, color, 10.5);
+  }
+  c.restore();
+}
+
+function drawBypass(c){
+  const cli = boxByTitle('CLI 命令行');
+  const py  = boxByTitle('Python API');
+  const bt  = boxByTitle('回测引擎');
+  const tdx = boxByTitle('TdxClient');
+  const helpers = boxByTitle('辅助 HTTP 采集');
+  const ai   = boxByTitle('AI 解读');
+  const off  = boxByTitle('通达信本地文件');
+  const cffex = boxByTitle('中金所 CFFEX');
+  const llm  = boxByTitle('LLM 提供商');
+  const vip  = boxByTitle('本地通达信安装');
+  const IC = '#58a6ff', EC = '#ef4146', DC = '#e3b341';
+
+  // 注意：进入目标层的水平段统一取 target.y - 18/-16，
+  // 避开中央标签牌的纵向范围（约 target.y-57 … target.y-29）
+  poly(c, [
+    [cli.x + cli.w * .62, cli.y + cli.h + 2], [cli.x + cli.w * .62, cli.y + cli.h + 15],
+    [CORR_R + 10, cli.y + cli.h + 15], [CORR_R + 10, bt.y - 18],
+    [bt.x + bt.w * .5, bt.y - 18], [bt.x + bt.w * .5, bt.y - 4]
+  ], IC, 'CLI 直调引擎');
+
+  poly(c, [
+    [py.x + py.w * .62, py.y + py.h + 2], [py.x + py.w * .62, py.y + py.h + 15],
+    [CORR_R - 10, py.y + py.h + 15], [CORR_R - 10, tdx.y - 18],
+    [tdx.x + tdx.w * .5, tdx.y - 18], [tdx.x + tdx.w * .5, tdx.y - 4]
+  ], IC, 'API 直调客户端');
+
+  poly(c, [
+    [helpers.x + helpers.w * .35, helpers.y + helpers.h + 2], [helpers.x + helpers.w * .35, helpers.y + helpers.h + 15],
+    [CORR_L - 14, helpers.y + helpers.h + 15], [CORR_L - 14, cffex.y - 18],
+    [cffex.x + cffex.w * .5, cffex.y - 18], [cffex.x + cffex.w * .5, cffex.y - 4]
+  ], EC, 'HTTP XML · JSON');
+
+  poly(c, [
+    [ai.x + ai.w * .3, ai.y + ai.h + 2], [ai.x + ai.w * .3, ai.y + ai.h + 15],
+    [CORR_L, ai.y + ai.h + 15], [CORR_L, llm.y - 22],
+    [llm.x + llm.w * .5, llm.y - 22], [llm.x + llm.w * .5, llm.y - 4]
+  ], EC, 'LLM API');
+
+  poly(c, [
+    [off.x + off.w * .5, off.y + off.h + 2], [off.x + off.w * .5, off.y + off.h + 15],
+    [CORR_L + 14, off.y + off.h + 15], [CORR_L + 14, vip.y - 10],
+    [vip.x + vip.w * .5, vip.y - 10], [vip.x + vip.w * .5, vip.y - 4]
+  ], DC, 'vipdoc 读写');
+}
+
+function drawLegend(c){
+  const y = LAYERS[6].bottom + 30;
+  const h = LEGEND_H - FOOT_PAD;
+  rr(c, MAIN_L, y, MAIN_R - MAIN_L, h, 16);
+  c.fillStyle = 'rgba(16,21,29,.9)'; c.fill();
+  c.strokeStyle = '#21262d'; c.lineWidth = 1.2; c.stroke();
+  // 行 1：七层色块
+  const segW = (MAIN_R - MAIN_L - 60) / 7;
+  LAYERS.forEach((L, i) => {
+    const x = MAIN_L + 30 + i * segW;
+    rr(c, x, y + 18, 15, 15, 4);
+    c.fillStyle = hexA(L.color, .8); c.fill();
+    setFont(c, 13, '700'); c.fillStyle = '#e6edf3'; c.textBaseline = 'top';
+    c.fillText(L.num + ' ' + L.name, x + 23, y + 18);
+    setFont(c, 11.5, '400'); c.fillStyle = '#768390';
+    c.fillText(L.en, x + 23, y + 35);
+  });
+  // 行 2：线型示例
+  const y2 = y + 68;
+  let x = MAIN_L + 30;
+  c.strokeStyle = '#3fb950'; c.lineWidth = 3;
+  c.beginPath(); c.moveTo(x, y2); c.lineTo(x + 46, y2); c.stroke();
+  arrowHead(c, x, y2, Math.PI, 10, '#3fb950');
+  arrowHead(c, x + 46, y2, 0, 10, '#3fb950');
+  x += 58; setFont(c, 12.5, '400'); c.fillStyle = '#98a3b0'; c.textBaseline = 'middle';
+  c.fillText('主数据流：请求自上而下 · 数据（pandas DataFrame）自下而上', x, y2 + 1);
+  x += c.measureText('主数据流：请求自上而下 · 数据（pandas DataFrame）自下而上').width + 46;
+  c.save(); c.setLineDash([7, 6]); c.strokeStyle = '#ef4146'; c.lineWidth = 2;
+  c.beginPath(); c.moveTo(x, y2); c.lineTo(x + 46, y2); c.stroke(); c.restore();
+  arrowHead(c, x + 46, y2, 0, 10, '#ef4146');
+  x += 58;
+  c.fillText('虚线 = 旁路直连：HTTP 数据源 / 本地文件 / CLI · Python API 越层直调', x, y2 + 1);
+  // 行 3
+  const y3 = y + 98;
+  setFont(c, 12.5, '400'); c.fillStyle = '#768390'; c.textBaseline = 'middle';
+  c.fillText('数据载体演进：bytes（协议层）→ dataclass（模型）→ pd.DataFrame（分析与回测）—— 层间零隐式耦合，任一层可独立替换 / 单测', MAIN_L + 30, y3 + 1);
+  c.textBaseline = 'top';
+}
+
+function drawWorld(c){
+  drawTitle(c);
+  drawCorridors(c);
+  for (const L of LAYERS) drawLayer(c, L);
+  for (let i = 0; i < 6; i++) mainFlow(c, i);
+  drawBypass(c);
+  drawLegend(c);
+}
+
+/* ============================ 视图与交互 ============================ */
+function render(){
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+  ctx.translate(view.tx, view.ty);
+  ctx.scale(view.scale, view.scale);
+  drawWorld(ctx);
+}
+function resize(){
+  const stage = document.getElementById('stage');
+  cssW = stage.clientWidth; cssH = stage.clientHeight;
+  dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(cssW * dpr); cv.height = Math.round(cssH * dpr);
+  cv.style.width = cssW + 'px'; cv.style.height = cssH + 'px';
+  render();
+}
+function updateZoomLabel(){
+  document.getElementById('zoomLabel').textContent = Math.round(view.scale * 100) + '%';
+}
+function fitWidth(){
+  view.scale = Math.min(1, (cssW - 12) / W);
+  view.tx = (cssW - W * view.scale) / 2;
+  view.ty = 6;
+  updateZoomLabel(); render();
+}
+function reset100(){
+  view.scale = 1; view.tx = (cssW - W) / 2; view.ty = 6;
+  updateZoomLabel(); render();
+}
+function zoomAt(sx, sy, factor){
+  const ns = Math.min(4, Math.max(.15, view.scale * factor));
+  const k = ns / view.scale;
+  view.tx = sx - (sx - view.tx) * k;
+  view.ty = sy - (sy - view.ty) * k;
+  view.scale = ns; updateZoomLabel(); render();
+}
+
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = cv.getBoundingClientRect();
+  zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.12 : 1 / 1.12);
+}, { passive: false });
+
+let dragging = false, lastX = 0, lastY = 0;
+cv.addEventListener('mousedown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; cv.classList.add('grabbing'); hideTip(); });
+window.addEventListener('mouseup', () => { dragging = false; cv.classList.remove('grabbing'); });
+window.addEventListener('mousemove', e => {
+  if (dragging){
+    view.tx += e.clientX - lastX; view.ty += e.clientY - lastY;
+    lastX = e.clientX; lastY = e.clientY;
+    render(); return;
+  }
+  if (e.target !== cv){ if (hoverBox){ hoverBox = null; hideTip(); render(); } return; }
+  const r = cv.getBoundingClientRect();
+  const wx = (e.clientX - r.left - view.tx) / view.scale;
+  const wy = (e.clientY - r.top - view.ty) / view.scale;
+  const hit = BOXES.find(b => wx >= b.x && wx <= b.x + b.w && wy >= b.y && wy <= b.y + b.h) || null;
+  if (hit !== hoverBox){ hoverBox = hit; cv.classList.toggle('pointer', !!hit); render(); }
+  if (hit) showTip(e, hit); else hideTip();
+});
+
+const tip = document.getElementById('tip');
+function showTip(e, b){
+  tip.innerHTML = '<b>' + b.t + '</b><span class="sub">' + b.s + '</span>' + b.tip;
+  tip.style.display = 'block';
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  let x = e.clientX + 18, y = e.clientY + 20;
+  if (x + tw > window.innerWidth - 10) x = e.clientX - tw - 14;
+  if (y + th > window.innerHeight - 10) y = e.clientY - th - 14;
+  tip.style.left = x + 'px'; tip.style.top = y + 'px';
+}
+function hideTip(){ tip.style.display = 'none'; }
+cv.addEventListener('mouseleave', () => { if (hoverBox){ hoverBox = null; hideTip(); render(); } });
+
+document.getElementById('zoomIn').onclick = () => zoomAt(cssW / 2, cssH / 2, 1.2);
+document.getElementById('zoomOut').onclick = () => zoomAt(cssW / 2, cssH / 2, 1 / 1.2);
+document.getElementById('fit').onclick = fitWidth;
+document.getElementById('reset100').onclick = reset100;
+document.getElementById('export').onclick = function(){
+  const s = 2, oc = document.createElement('canvas');
+  oc.width = W * s; oc.height = WORLD_H * s;
+  const c2 = oc.getContext('2d');
+  c2.scale(s, s);
+  c2.fillStyle = '#0a0e14'; c2.fillRect(0, 0, W, WORLD_H);
+  const hb = hoverBox; hoverBox = null;
+  drawWorld(c2);
+  hoverBox = hb;
+  const a = document.createElement('a');
+  a.download = 'easy-tdx-architecture.png';
+  a.href = oc.toDataURL('image/png');
+  a.click();
+};
+
+window.addEventListener('resize', resize);
+resize();
+fitWidth();
+})();
+</script>
+</body>
+</html>

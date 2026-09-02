@@ -75,6 +75,14 @@ easy-tdx 要做的事很简单：**把机构的数据锁砸开，扔到每个普
 
 📖 **详细用法请查看 [GitHub Wiki](https://github.com/handsomejustin/easy_tdx/wiki)**
 
+## 项目架构
+
+<img src="./docs/easy-tdx-architecture.png" alt="easy-tdx 七层架构总览：接口 → 服务 → 领域 → 持久 → 网关 → 协议 → 外部源" />
+
+七层分层，请求自上而下、数据（pandas DataFrame）自下而上：**① 用户接口层**（Web UI / CLI / Python API / 桌面 EXE）→ **② Web 服务层**（FastAPI + SSE 实时推送 + 异步任务）→ **③ 领域层**（回测 / 指标 / 缠论 / 因子 / 选股 / 组合，纯计算零网络）→ **④ 数据持久层**（DuckDB K 线仓库 + 通达信本地 vipdoc 文件）→ **⑤ 客户端网关层**（8 个客户端 + 健康分 / 故障转移）→ **⑥ 协议层**（通达信二进制协议编解码）→ **⑦ 外部数据源**（通达信服务器 / 中金所 / 新浪 / 巨潮 / LLM）。虚线为旁路直连（HTTP 数据源 / 本地文件 / CLI 与 Python API 越层直调）。
+
+🖼️ 交互版架构图（可缩放平移、悬停查看 38 个模块的职责详情、一键导出 PNG）：[docs/architecture.html](./docs/architecture.html)
+
 ## 安装
 
 ```bash
