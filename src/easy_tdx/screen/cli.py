@@ -35,7 +35,7 @@ def screen() -> None:
 @click.option(
     "--universe",
     default="all",
-    help="股票范围: all/sh/sz/<文件路径>（默认 all）",
+    help="股票范围: all/sh/sz/core/<文件路径>（默认 all；core=159只核心龙头池）",
 )
 @click.option("--vipdoc", default=None, help="离线数据目录（默认自动检测）")
 @click.option("--cash", default=100_000.0, type=float, help="初始资金")

@@ -110,6 +110,7 @@ def FSL(
     VOL: npt.ArrayLike,
     CAPITAL: float,
 ) -> tuple[NDArray, NDArray]: ...
+def ZIG(S: npt.ArrayLike, X: float = ...) -> NDArray: ...
 
 # ── Utility Functions ────────────────────────────────────────────────────────
 

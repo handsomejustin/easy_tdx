@@ -199,7 +199,7 @@ class StrengthRanker:
         """扫描全市场并返回强势股排名。
 
         Args:
-            universe: all/sh/sz/<文件路径>
+            universe: all/sh/sz/core/<文件路径>（core=159 只核心龙头池）
             top_n: 返回前 N 名，0=全部
             workers: 并发进程数（0=串行，4-8 推荐）
             progress_callback: 回调(current, total, name)
@@ -229,13 +229,20 @@ class StrengthRanker:
     def _collect_files(self, universe: str) -> list[tuple[Path, str, str]]:
         """收集 A 股 .day 文件列表（复用 scanner 的逻辑）。"""
         exchanges: list[str] = []
-        if universe in ("all", "sz"):
+        if universe in ("all", "sz", "core"):
             exchanges.append("sz")
-        if universe in ("all", "sh"):
+        if universe in ("all", "sh", "core"):
             exchanges.append("sh")
 
+        # 核心龙头池：跨沪深按名单过滤（与 scanner 同一名单）
+        core_codes: set[str] | None = None
+        if universe == "core":
+            from easy_tdx.screen.universe import core_leader_codes
+
+            core_codes = core_leader_codes()
+
         # 从文件列表模式读取
-        if universe not in ("all", "sh", "sz"):
+        if universe not in ("all", "sh", "sz", "core"):
             return self._collect_from_file(universe)
 
         files: list[tuple[Path, str, str]] = []
@@ -247,6 +254,8 @@ class StrengthRanker:
                 if _detect_security_type(filepath.name) not in _A_STOCK_TYPES:
                     continue
                 code = filepath.name.lower()[2:8]
+                if core_codes is not None and code not in core_codes:
+                    continue
                 files.append((filepath, exchange.upper(), code))
         return files
 

@@ -108,6 +108,7 @@ class SignalScanner:
                 - "all": 沪深全部 A 股（默认）
                 - "sh": 仅上海
                 - "sz": 仅深圳
+                - "core": 核心龙头池 159 只（跨沪深按名单过滤）
                 - 文件路径: 每行一个 "市场 代码"（如 "SZ 000001"）
             progress_callback: 进度回调函数(current, total, filename)
             workers: 并发工作进程数
@@ -357,13 +358,20 @@ class SignalScanner:
         """
         # 确定要扫描的交易所目录
         exchanges: list[str] = []
-        if universe in ("all", "sz"):
+        if universe in ("all", "sz", "core"):
             exchanges.append("sz")
-        if universe in ("all", "sh"):
+        if universe in ("all", "sh", "core"):
             exchanges.append("sh")
 
+        # 核心龙头池：跨沪深按名单过滤（见 screen/universe.py）
+        core_codes: set[str] | None = None
+        if universe == "core":
+            from easy_tdx.screen.universe import core_leader_codes
+
+            core_codes = core_leader_codes()
+
         # 从文件列表模式读取
-        if universe not in ("all", "sh", "sz"):
+        if universe not in ("all", "sh", "sz", "core"):
             return self._collect_from_file(universe)
 
         # 扫描目录
@@ -381,6 +389,10 @@ class SignalScanner:
                 # 过滤非 A 股
                 sec_type = _detect_security_type(filepath.name)
                 if sec_type not in _A_STOCK_TYPES:
+                    continue
+
+                # 核心龙头池模式：只保留名单内的代码
+                if core_codes is not None and code not in core_codes:
                     continue
 
                 market = exchange.upper()

@@ -2,6 +2,27 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.29.0] — 2026-09-02
+
+**借鉴社区 Fork（[swimmingaaron/easy_tdx](https://github.com/swimmingaaron/easy_tdx)）的六项实用特性**——该 Fork 自 v1.20.12 分叉后独立演化出一批好想法，本轮逐项甄别后移植其精华（剥离其单文件前端/平行后端层/硬编码个人路径等不可维护部分）：ZIG 策略、交易时段感知刷新、120 分钟 K 线、逐 bar 衍生字段、159 只核心龙头池、多 Provider LLM 直连。
+
+### 新增
+
+- **ZIG 右侧突破回补策略**（`zig_breakout`）——`MyTT` 新增 `ZIG` 之字转向指标（未来函数，拐点回溯标出；实现自 Fork 移植并补前视偏差警示文档）。策略逻辑：ZIG 波谷启动全仓买入（挂 `stop_loss_pct` 硬止损，OCO 由引擎逐 bar 监控）→ 见顶清仓并记录 HHV(N) 前高 → 收盘突破前高×(1+确认比例%) 右侧回补。ZIG 的前视偏差用「止损保护 + 右侧确认进场」两层对冲而非消除，策略 docstring 明示回测信号有前视性。因 `_breakout_level` 随持仓路径变化，不实现 `entry_exit_masks`（引擎自动走逐 bar 回放，向量化守护测试白名单放行）。同时登记寻优预设网格（zig_delta×confirm_pct=12 点）与独立策略文件 `strategies/zig_breakout.py`（供 `--strategy-file` 离线扫描）。
+- **交易时段感知的仪表盘自动刷新**——新增共享模块 `realtime/session.py`：`is_trading_time()`（窗口 09:15~11:30:30 / 13:00~15:05，含集合竞价与收盘竞价缓冲，午休排除，周一至五）+ `GET /market/session`。WebUI 市场看板的 30/60/120s 三档轮询在休市时自动暂停（状态栏三态：交易中/休市已暂停/全天候模式），每分钟重估跨边界即时切换；「仅交易时段自动刷新」开关 localStorage 持久化，手动刷新按钮不受限。后端 SSE/WS 推送本就带时段过滤（feed `_DEFAULT_SESSIONS` / streamer 降频），本次不改其既有语义。
+- **120 分钟 K 线**（`/bars?category=MIN_120`，别名 `120M`/`120MIN`）——协议无此枚举，路由层特判：优先 MAC 原生 `Period.MINS × times=120`；失败则取 2 倍 60M 相邻两根聚合（open=first / high=max / low=min / close=last / vol·amount=sum，时间取后一根，奇数根丢最旧保最新）；标准 TdxClient 回退路径受单次 800 根限制最多合成 400 根。前端周期选择器（单标的回测 / 组合回测）新增 `MIN_120` 选项。
+- **K 线逐 bar 衍生字段**——`/bars` 与 `/bars/index` 每根 bar 附带 `pre_close`（前收，首根退化为本根开盘）、`change`、`change_pct`、`amplitude_pct`（振幅%），前端无需重算；`pre_close ≤ 0.01` 按 0.01 兜底（QFQ 复权后早期价格可能为 0/负）。
+- **159 只核心龙头池**（`screen/universe.py`，数据资产取自 Fork 按东方财富全行业龙头名单整理的 `CORE_UNIVERSE`，剥离其缓存/个人路径实现）——四组分层（全球第一/国内第一/科技细分/行业冠军），`universe="core"` 接入 `screen scan` CLI、`SignalScanner` 与 `StrengthRanker`（离线 .day 扫描按名单过滤，约 3 秒扫完龙头池），`/market/strength` API 同步支持；另暴露 `GET /market/core-leaders`。
+- **全局风险提示与免责声明（Web UI）**——App 外壳底部新增常驻提示栏，覆盖全部页面（行情 / 回测 / 选股扫描 / AI 解读统一口径："仅供量化研究与学习，不构成任何投资建议或个股推荐；历史表现不代表未来，股市有风险，据此操作风险自负"）。龙头池页另加显著说明块：讲清名单含义（按东财公开资料整理的**扫描范围筛选清单**，仅描述行业地位的客观事实）与用途（`universe=core`），明确"不构成任何形式的个股推荐/买入建议/投资顾问服务，不对据此操作承担责任"。AI 解读正文（回测弹窗与历史页）均随附"AI 生成内容可能出错，仅供参考，不构成投资建议"提示。
+- **AI 解读历史 + 龙头池页面（Web UI 导航新增「AI 解读历史」「龙头池」）**——每次成功的「直接解读」自动归档到 `~/.easy_tdx/llm_history.db`（SQLite，`llm_history_store`）：提问 Prompt、解读正文、模型/耗时与当时的策略上下文（策略/参数/标的/周期/日期区间）。历史页按时间倒序展开查看，每条带「→ 去回测（带参数）」一键跳回回测页复现场景（复用寻优页的 query 预填链路）、查看提问 Prompt、删除/清空；API 为 `GET/DELETE /llm/history`。「龙头池」页展示 159 只核心龙头（搜索过滤 + 点击进个股详情，即 `universe=core` 同一名单）。另为前端路由表加兜底重定向：未注册路径（如把 API 路径当页面访问）回看板而非渲染空白。
+- **多 Provider LLM 直连 + WebUI「AI 设置」页**——新增 `easy_tdx.ai` 模块与 `/llm/*` 路由。Provider 预设 9 家：DeepSeek / 通义千问 / 智谱 GLM（bigmodel.cn）/ Kimi / MiniMax / OpenAI / Claude（Anthropic 原生协议）/ Ollama（本地免 Key）/ 自定义（任意 OpenAI 兼容网关），base_url 与模型均可覆盖。配置落盘 `~/.easy_tdx/llm.json`（随 `EASY_TDX_CONFIG_DIR`），WebUI 表单与手工编辑同一份文件、双向兼容；字段级优先级 = 文件 > 环境变量（`LLM_PROVIDER`/`LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL`）> 预设默认。API：GET/PUT `/llm/config`（key 脱敏回显，回传脱敏串不覆盖真 key）、POST `/llm/test`（连通性+延迟）、POST `/llm/chat`。回测页「🤖 AI 解读」在模型已配置时新增「✨ 直接解读」——把组装好的报告 Prompt 提交为**后台任务**（接入与回测同一套 `task_runner`：4 线程池 + SQLite 持久化），前端短轮询 `GET /llm/chat/tasks/{task_id}` 取结果（`POST /llm/chat/async`，202），长耗时模型调用不占 HTTP 连接、断线重连后仍可查询，按钮实时显示已耗时；配置不完整在提交期即报 400，网络/鉴权/超时错误体现在任务态 `error`（读超时文案给出「调大超时」动作，默认超时 180s 可调至 600s）。未配置模型时保持导出 Prompt 手动路径。**思考型模型空白正文防御**（实测：GLM-5.x 的 `reasoning_content` 思考链计入 max_tokens，4000 预算被整份报告的思考耗尽后 `content` 为空白——truthy 但渲染为空，状态条报成功而正文空白）：解析层对空白正文显式拦截——有思考链时报「调大 Max Tokens」的可操作错误（含当前值与 finish_reason），无思考链按格式错误上报，绝不返回空串；max_tokens 默认 4000→16000（上限即目标，按实际生成计费），前端再拦一道纯空白。零第三方依赖（标准库 urllib + `asyncio.to_thread`）。
+
+### 测试
+
+- 新增 6 个单测文件共 51 例：`test_mytt_zig.py`（ZIG 边界/单调/V 型/锯齿/阈值双写法）、`test_zig_strategy.py`（注册/参数校验/引擎成交/独立文件加载/预设网格）、`test_realtime_session.py`（窗口边界/午休/周末/session_info）、`test_bars_min120_derived.py`（重采样聚合/裁剪/缺列、衍生字段/兜底）、`test_screen_universe_core.py`（名单 159 只唯一性/已知龙头/core 过滤准确性）、`test_ai_llm.py`（配置文件↔环境变量优先级/脱敏/双协议请求组装/HTTP 错误包装，HTTP 层 monkeypatch 零真实网络）。
+- 黄金基线 `tests/golden/backtest_metrics.json` 重新生成：仅新增 zig_breakout 条目（5 笔交易），其余策略零漂移。
+- 新增 `test_llm_history_store.py`（6 例：倒序/上下文 JSON 往返/坏数据容忍/删除清空/limit）与异步解读自动落历史 + 失败不落库的 API 级测试。
+
 ## [1.28.2] — 2026-09-02
 
 **修复指数/个股 K 线 vol 字段的三类协议语义错误**（[#64](https://github.com/handsomejustin/easy_tdx/issues/64)）——通达信服务端 K 线记录的第一个 4 字节字段（一直被当作成交量透传）的语义随周期/品种变化，此前原样返回错误数据。本轮通过逐字节拆包原始报文 + 新浪实时行情/东方财富分钟 K 三方交叉验证锁定规律后，在协议解析层（`GetIndexBarsCmd` / `GetSecurityBarsCmd` 的 `parse_response`，同步/异步客户端共用）统一修正。

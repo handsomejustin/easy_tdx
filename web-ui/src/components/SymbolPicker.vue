@@ -34,7 +34,7 @@ const error = ref('')
 // loading 由父组件控制（回测/寻优时驱动），组件自身只暴露 loadBars
 const loading = ref(false)
 
-const CATEGORIES: Category[] = ['DAY', 'WEEK', 'MONTH', 'MIN_5', 'MIN_15', 'MIN_30', 'MIN_60']
+const CATEGORIES: Category[] = ['DAY', 'WEEK', 'MONTH', 'MIN_5', 'MIN_15', 'MIN_30', 'MIN_60', 'MIN_120']
 
 // 智能识别的市场（用于提示展示）
 const detectedMarket = computed(() => (code.value && /^\d{6}$/.test(code.value)

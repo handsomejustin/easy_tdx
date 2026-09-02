@@ -50,7 +50,15 @@ export interface DataFrameResponse {
 // ── 回测请求（POST /api/v1/backtest/run） ─────────────────────────────────────
 
 export type ExecutionMode = 'next_open' | 'next_close'
-export type Category = 'DAY' | 'WEEK' | 'MONTH' | 'MIN_5' | 'MIN_15' | 'MIN_30' | 'MIN_60'
+export type Category =
+  | 'DAY'
+  | 'WEEK'
+  | 'MONTH'
+  | 'MIN_5'
+  | 'MIN_15'
+  | 'MIN_30'
+  | 'MIN_60'
+  | 'MIN_120'
 
 export interface BacktestRequest {
   strategy: string
@@ -152,6 +160,7 @@ export interface TaskState {
     | SignalScanResult
     | WalkForwardResult
     | EvaluateReport
+    | LlmChatResult
     | null
   error: string | null
   description: string
@@ -634,4 +643,122 @@ export interface EvaluateReport {
   fitness: FitnessReport
   benchmark: EvaluateBenchmarkReport
   config: Record<string, unknown>
+}
+
+// ── 交易时段（GET /api/v1/market/session） ───────────────────────────────────
+
+export interface MarketSessionInfo {
+  is_trading_time: boolean
+  sessions: Array<{ start: string; end: string }>
+  session_desc: string
+  server_time: string
+  weekday: number
+}
+
+// ── LLM 配置与对话（GET/PUT /api/v1/llm/config 等） ──────────────────────────
+
+export interface LlmProviderInfo {
+  id: string
+  label: string
+  base_url: string
+  default_model: string
+  api_style: 'openai' | 'anthropic'
+  needs_key: boolean
+}
+
+export interface LlmConfigInfo {
+  provider: string
+  /** 脱敏回显（sk-***abcd）；提交时空串/原样回传 = 不修改已存 key */
+  api_key: string
+  api_url: string
+  model: string
+  temperature: number
+  max_tokens: number
+  timeout: number
+  system_prompt: string
+}
+
+export interface LlmConfigResponse {
+  config: LlmConfigInfo
+  providers: LlmProviderInfo[]
+  configured: boolean
+  missing: string[]
+  config_path: string
+  resolved: { api_url: string; model: string }
+}
+
+export interface LlmConfigUpdate {
+  provider: string
+  api_key?: string
+  api_url?: string
+  model?: string
+  temperature?: number
+  max_tokens?: number
+  timeout?: number
+  system_prompt?: string
+}
+
+export interface LlmTestResult {
+  ok: boolean
+  latency_ms: number
+  model: string
+  provider: string
+  reply?: string
+  error?: string
+}
+
+export interface LlmChatResponse {
+  reply: string
+  model: string
+  provider: string
+}
+
+/** AI 解读后台任务（POST /llm/chat/async）完成后的 result 结构。 */
+export interface LlmChatResult {
+  reply: string
+  model: string
+  provider: string
+  elapsed: number
+}
+
+// ── AI 解读历史（GET /api/v1/llm/history） ───────────────────────────────────
+
+/** 策略上下文（随解读落库，供「去回测」引导跳转）。 */
+export interface LlmChatContext {
+  strategy: string
+  strategy_label: string
+  symbol: string
+  category: string
+  params: Record<string, number | string | boolean>
+  start_date: string
+  end_date: string
+}
+
+export interface LlmHistoryItem {
+  id: number
+  created_at: string
+  provider: string
+  model: string
+  prompt: string
+  reply: string
+  elapsed: number
+  strategy: string
+  strategy_label: string
+  symbol: string
+  category: string
+  params: Record<string, number | string | boolean>
+  start_date: string
+  end_date: string
+}
+
+export interface LlmHistoryResponse {
+  items: LlmHistoryItem[]
+  count: number
+}
+
+/** 核心龙头池条目（GET /api/v1/market/core-leaders）。 */
+export interface CoreLeaderRow {
+  code: string
+  name: string
+  market: string
 }

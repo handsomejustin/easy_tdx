@@ -24,6 +24,7 @@ from easy_tdx.screen.strength import (  # noqa: F401
     StrengthRanker,
     StrengthResult,
 )
+from easy_tdx.screen.universe import CORE_LEADERS, CORE_LEADERS_DESC  # noqa: F401
 
 __all__ = [
     "SignalScanner",
@@ -31,4 +32,6 @@ __all__ = [
     "StrengthRanker",
     "StrengthResult",
     "STRENGTH_PRESETS",
+    "CORE_LEADERS",
+    "CORE_LEADERS_DESC",
 ]

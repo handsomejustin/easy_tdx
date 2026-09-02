@@ -17,42 +17,68 @@ const sseLabel: Record<string, string> = {
 
 <template>
   <div class="app">
-    <aside class="sidebar">
-      <div class="brand">
-        <span class="brand-name">easy-tdx</span>
-        <span class="brand-sub">行情终端</span>
-      </div>
-      <nav class="side-nav">
-        <div class="nav-group">行情</div>
-        <RouterLink to="/" exact-active-class="active">市场看板</RouterLink>
-        <RouterLink to="/watchlist" active-class="active">自选行情</RouterLink>
-        <div class="nav-group">分析</div>
-        <RouterLink to="/backtest" active-class="active">单标的回测</RouterLink>
-        <RouterLink to="/portfolio" active-class="active">组合回测</RouterLink>
-        <RouterLink to="/optimize" active-class="active">参数寻优</RouterLink>
-        <RouterLink to="/compare" active-class="active">结果对比</RouterLink>
-        <RouterLink to="/strategies" active-class="active">策略库</RouterLink>
-        <RouterLink to="/signals" active-class="active">信号雷达</RouterLink>
-        <div class="nav-group">系统</div>
-        <RouterLink to="/settings" active-class="active">服务器设置</RouterLink>
-      </nav>
-      <div class="side-footer">
-        <span class="dot" :class="quoteStore.status"></span>
-        <span class="sse-label">{{ sseLabel[quoteStore.status] ?? '离线' }}</span>
-        <span v-if="quoteStore.lastTs" class="sse-ts">{{ quoteStore.lastTs.slice(11, 19) }}</span>
-        <span v-if="quoteStore.quoteCount" class="sse-n">×{{ quoteStore.quoteCount }}</span>
-      </div>
-    </aside>
-    <main class="app-main">
-      <RouterView />
-    </main>
+    <div class="app-row">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-name">easy-tdx</span>
+          <span class="brand-sub">行情终端</span>
+        </div>
+        <nav class="side-nav">
+          <div class="nav-group">行情</div>
+          <RouterLink to="/" exact-active-class="active">市场看板</RouterLink>
+          <RouterLink to="/watchlist" active-class="active">自选行情</RouterLink>
+          <RouterLink to="/leaders" active-class="active">龙头池</RouterLink>
+          <div class="nav-group">分析</div>
+          <RouterLink to="/backtest" active-class="active">单标的回测</RouterLink>
+          <RouterLink to="/portfolio" active-class="active">组合回测</RouterLink>
+          <RouterLink to="/optimize" active-class="active">参数寻优</RouterLink>
+          <RouterLink to="/compare" active-class="active">结果对比</RouterLink>
+          <RouterLink to="/strategies" active-class="active">策略库</RouterLink>
+          <RouterLink to="/signals" active-class="active">信号雷达</RouterLink>
+          <RouterLink to="/ai-history" active-class="active">AI 解读历史</RouterLink>
+          <div class="nav-group">系统</div>
+          <RouterLink to="/settings" active-class="active">服务器设置</RouterLink>
+          <RouterLink to="/llm" active-class="active">AI 设置</RouterLink>
+        </nav>
+        <div class="side-footer">
+          <span class="dot" :class="quoteStore.status"></span>
+          <span class="sse-label">{{ sseLabel[quoteStore.status] ?? '离线' }}</span>
+          <span v-if="quoteStore.lastTs" class="sse-ts">{{ quoteStore.lastTs.slice(11, 19) }}</span>
+          <span v-if="quoteStore.quoteCount" class="sse-n">×{{ quoteStore.quoteCount }}</span>
+        </div>
+      </aside>
+      <main class="app-main">
+        <RouterView />
+      </main>
+    </div>
+    <!-- 全局风险提示：所有页面常驻（行情/回测/个股相关内容均在此覆盖范围） -->
+    <footer class="global-disclaimer">
+      本工具输出（行情数据 / 指标 / 回测 / 选股扫描 / AI 解读）仅供量化研究与学习，
+      不构成任何投资建议或个股推荐；历史表现不代表未来，股市有风险，据此操作风险自负。
+    </footer>
   </div>
 </template>
 
 <style scoped>
 .app {
   display: flex;
+  flex-direction: column;
   height: 100vh;
+}
+.app-row {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.global-disclaimer {
+  flex-shrink: 0;
+  padding: 5px 16px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  font-size: 10.5px;
+  color: var(--text-dim);
+  text-align: center;
+  letter-spacing: 0.2px;
 }
 .sidebar {
   width: 176px;

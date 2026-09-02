@@ -406,13 +406,40 @@ function rankExtra(r: RankRow): { text: string; cls: string } {
   return { text: fmtPctSigned(pct), cls: dirClass(pct) }
 }
 
-// ── 轮询调度 ─────────────────────────────────────────────────────────────────
+// ── 轮询调度（交易时段感知：休市自动暂停，手动刷新不受限） ────────────────────
 
 let statTimer = 0
 let slowTimer = 0
 let distTimer = 0
+let sessionTimer = 0
 
-onMounted(() => {
+/** 仅交易时段自动刷新（localStorage 持久化；勾掉 = 全天候模式）。 */
+const sessionGated = ref(localStorage.getItem('dash.sessionGated') !== '0')
+
+function onSessionToggle() {
+  localStorage.setItem('dash.sessionGated', sessionGated.value ? '1' : '0')
+}
+
+/** 本地判断当前是否处于 A 股有效行情时段（09:15~11:30、13:00~15:05，周一至五）。 */
+function isTradeSession(now = new Date()): boolean {
+  const day = now.getDay()
+  if (day === 0 || day === 6) return false
+  const m = now.getHours() * 60 + now.getMinutes()
+  return (m >= 555 && m <= 690) || (m >= 780 && m <= 905)
+}
+
+/** 会话状态（每分钟重估）：gated 开关 × 是否盘中。 */
+const inSession = ref(isTradeSession())
+
+/** 自动刷新是否暂停（全天候模式或盘中 = 不暂停）。 */
+const autoPaused = computed(() => sessionGated.value && !inSession.value)
+
+const sessionLabel = computed(() => {
+  if (!sessionGated.value) return '全天候模式'
+  return inSession.value ? '交易中' : '休市 · 自动刷新已暂停'
+})
+
+function refreshAll() {
   loadStat()
   loadBoards()
   loadUnusual()
@@ -420,20 +447,44 @@ onMounted(() => {
   loadIdxSparks()
   loadIndexContext()
   loadDist()
-  statTimer = window.setInterval(loadStat, 30_000)
-  slowTimer = window.setInterval(() => {
-    loadUnusual()
-    loadRanks()
-    loadBoards()
-    loadIdxSparks()
-    loadIndexContext()
+}
+
+function tickIfActive() {
+  // 门控放在 fetch 前：定时器照常触发，休市时只重估会话状态、不发请求
+  inSession.value = isTradeSession()
+  if (autoPaused.value) return
+  loadStat()
+}
+
+function slowTickIfActive() {
+  if (autoPaused.value) return
+  loadUnusual()
+  loadRanks()
+  loadBoards()
+  loadIdxSparks()
+  loadIndexContext()
+}
+
+function distTickIfActive() {
+  if (autoPaused.value) return
+  loadDist()
+}
+
+onMounted(() => {
+  refreshAll()
+  statTimer = window.setInterval(tickIfActive, 30_000)
+  slowTimer = window.setInterval(slowTickIfActive, 60_000)
+  distTimer = window.setInterval(distTickIfActive, 120_000)
+  // 每分钟重估会话状态（跨过 11:30/15:05 边界后状态栏即时切换）
+  sessionTimer = window.setInterval(() => {
+    inSession.value = isTradeSession()
   }, 60_000)
-  distTimer = window.setInterval(loadDist, 120_000)
 })
 onBeforeUnmount(() => {
   window.clearInterval(statTimer)
   window.clearInterval(slowTimer)
   window.clearInterval(distTimer)
+  window.clearInterval(sessionTimer)
 })
 
 // ── 弹窗（个股 / 板块） ──────────────────────────────────────────────────────
@@ -456,6 +507,18 @@ function openBoard(code: string | undefined, name: string | undefined) {
 
 <template>
   <div class="dash">
+    <!-- 刷新状态条：会话状态 + 手动刷新 + 门控开关 -->
+    <div class="session-bar">
+      <span class="dot" :class="{ live: !autoPaused }"></span>
+      <span class="session-label" :class="{ paused: autoPaused }">{{ sessionLabel }}</span>
+      <span class="dim session-hint">（09:15~11:30, 13:00~15:05）</span>
+      <label class="session-toggle">
+        <input v-model="sessionGated" type="checkbox" @change="onSessionToggle" />
+        仅交易时段自动刷新
+      </label>
+      <button class="manual-refresh" @click="refreshAll">↻ 手动刷新</button>
+    </div>
+
     <!-- 指数条（内嵌迷你分时） -->
     <div class="idx-row">
       <div
@@ -714,6 +777,55 @@ function openBoard(code: string | undefined, name: string | undefined) {
   height: 100%;
   overflow: auto;
   padding: 14px 16px;
+}
+.session-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+.session-bar .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+.session-bar .dot.live {
+  background: var(--up);
+  box-shadow: 0 0 4px var(--up);
+}
+.session-label {
+  font-weight: 600;
+}
+.session-label.paused {
+  color: var(--text-dim);
+}
+.session-hint {
+  font-size: 11px;
+}
+.session-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.manual-refresh {
+  margin-left: auto;
+  padding: 3px 12px;
+  font-size: 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.manual-refresh:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .idx-row {
   display: flex;

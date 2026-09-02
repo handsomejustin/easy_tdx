@@ -30,7 +30,7 @@ const EXECUTIONS: { value: ExecutionMode; label: string }[] = [
   { value: 'next_open', label: '开盘价' },
   { value: 'next_close', label: '收盘价' },
 ]
-const CATEGORIES: Category[] = ['DAY', 'WEEK', 'MONTH', 'MIN_5', 'MIN_15', 'MIN_30', 'MIN_60']
+const CATEGORIES: Category[] = ['DAY', 'WEEK', 'MONTH', 'MIN_5', 'MIN_15', 'MIN_30', 'MIN_60', 'MIN_120']
 
 // 日期默认（复用单标的逻辑）
 function isoDaysFromNow(days: number): string {

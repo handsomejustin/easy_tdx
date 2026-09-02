@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from fastapi import APIRouter, Depends, Query
 
@@ -25,6 +26,11 @@ router = APIRouter(tags=["bars"])
 
 # 规整后保持的列顺序（匹配旧 SecurityBar 输出契约）
 _NORMAL_COLS = ["open", "close", "high", "low", "vol", "amount"]
+
+# 120 分钟线的 category 别名（协议无此枚举，路由层特判）
+_MIN_120_ALIASES = frozenset({"MIN_120", "120M", "120MIN"})
+# 标准 TdxClient 单次取数上限（60M×2 重采样路径的抓取上限）
+_MAX_BARS_PER_FETCH = 800
 
 
 def _df_resp(df: Any) -> DataFrameResponse:
@@ -71,13 +77,151 @@ def _normalize_mac_df(df: pd.DataFrame, daily_plus: bool) -> pd.DataFrame:
     return out[cols]
 
 
+def _resample_pairs(df: pd.DataFrame, count: int) -> pd.DataFrame:
+    """相邻两根分钟 bar 聚合成一根（60M×2 → 120M）。
+
+    分组规则：从最新端对齐两两配对（奇数根丢最旧一根，保最新数据），
+    聚合口径 open=first / high=max / low=min / close=last / vol·amount=sum，
+    时间列取配对中后一根。要求 df 按时间升序、含 datetime 列。
+
+    Args:
+        df: 已规整的 60M DataFrame（升序，datetime 列）。
+        count: 目标 120M 根数（超出的旧数据裁掉）。
+
+    Returns:
+        重采样后的 DataFrame；输入为空时原样返回。
+    """
+    if df is None or df.empty:
+        return df
+    out = df.reset_index(drop=True)
+    if len(out) % 2:
+        out = out.iloc[1:].reset_index(drop=True)  # 丢最旧一根，两两对齐
+    group = np.arange(len(out)) // 2
+
+    agg: dict[str, str] = {"datetime": "last"}
+    for col, how in (
+        ("open", "first"),
+        ("high", "max"),
+        ("low", "min"),
+        ("close", "last"),
+        ("vol", "sum"),
+        ("amount", "sum"),
+    ):
+        if col in out.columns:
+            agg[col] = how
+    res = out.assign(_g=group).groupby("_g").agg(agg).reset_index(drop=True)
+    if len(res) > count:
+        res = res.tail(count).reset_index(drop=True)
+    return res
+
+
+def _attach_derived(df: pd.DataFrame) -> pd.DataFrame:
+    """每根 bar 附带衍生字段：pre_close / change / change_pct / amplitude_pct。
+
+    - ``pre_close``：前一根收盘；首根退化为本根开盘（涨跌记 0）。
+    - ``change_pct``：(close/pre_close - 1)×100。
+    - ``amplitude_pct``：(high - low)/pre_close×100。
+    - pre_close ≤ 0.01 时按 0.01 兜底（复权后首段价格可能为 0/负，
+      除零保护；QFQ 负价兜底场景见 /bars 文档）。
+    """
+    if df is None or df.empty or "close" not in df.columns:
+        return df
+    out = df.reset_index(drop=True).copy()
+    close = pd.to_numeric(out["close"], errors="coerce")
+    pre = close.shift(1)
+    if "open" in out.columns:
+        pre = pre.fillna(pd.to_numeric(out["open"], errors="coerce"))
+    safe_pre = pre.where(pre > 0.01, 0.01)
+
+    out["pre_close"] = pre
+    out["change"] = (close - pre).round(4)
+    out["change_pct"] = ((close / safe_pre - 1.0) * 100).round(4)
+    if "high" in out.columns and "low" in out.columns:
+        high = pd.to_numeric(out["high"], errors="coerce")
+        low = pd.to_numeric(out["low"], errors="coerce")
+        out["amplitude_pct"] = ((high - low) / safe_pre * 100).round(4)
+    return out
+
+
+async def _fetch_120m(
+    market: str,
+    code: str,
+    start: int,
+    count: int,
+    adjust: str,
+    bar_time: str,
+    mac_client: Any,
+    client: Any,
+) -> pd.DataFrame:
+    """120 分钟 K 线：MAC 原生 times=120 优先，2×60M 重采样兜底。"""
+    market_value = market_value_from_str(market)
+
+    if mac_client is not None:
+        from easy_tdx.mac.enums import Period
+
+        # 1) MAC 原生多分钟线（Period.MINS + times=120）
+        try:
+            df = await mac_client.get_stock_kline(
+                market_value,
+                code,
+                Period.MINS,
+                start,
+                count,
+                120,
+                adjust=adjust_from_str(adjust),
+                bar_time=bar_time,
+            )
+            if df is not None and not df.empty:
+                return _normalize_mac_df(df, daily_plus=False)
+            _logger.info("/bars MIN_120 原生路径返回空，转 60M 重采样 (%s%s)", market, code)
+        except Exception as exc:  # noqa: BLE001 — 原生不可用时降级，不中断
+            _logger.warning(
+                "/bars MIN_120 原生获取失败，转 60M 重采样 (%s%s): %s", market, code, exc
+            )
+
+        # 2) MAC 60M×2 重采样（自动分页，可一次取足 count×2）
+        try:
+            df = await mac_client.get_stock_kline(
+                market_value,
+                code,
+                Period.MIN_60,
+                start,
+                count * 2,
+                1,
+                adjust=adjust_from_str(adjust),
+                bar_time=bar_time,
+            )
+            res = _resample_pairs(_normalize_mac_df(df, daily_plus=False), count)
+            if res is not None and not res.empty:
+                return res
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning("/bars MIN_120 60M重采样（MAC）失败 (%s%s): %s", market, code, exc)
+
+    # 3) 标准 TdxClient 60M×2（无 MAC；单次上限 800 根 → 最多 400 根 120M）
+    fetch_n = min(count * 2, _MAX_BARS_PER_FETCH)
+    if fetch_n < count * 2:
+        _logger.info(
+            "/bars MIN_120 回退路径单次上限 %d 根 60M，最多合成 %d 根 120M",
+            _MAX_BARS_PER_FETCH,
+            _MAX_BARS_PER_FETCH // 2,
+        )
+    df = await client.get_security_bars(
+        market_from_str(market), code, category_from_str("MIN_60"), start, fetch_n,
+        bar_time=bar_time,
+    )
+    return _resample_pairs(df, count)
+
+
 @router.get("/bars", response_model=DataFrameResponse)
 async def security_bars(
     market: str = Query(..., description="市场: SZ, SH, BJ"),
     code: str = Query(..., min_length=6, max_length=6),
     category: str = Query(
         "DAY",
-        description="K线周期: MIN_1, MIN_5, MIN_15, MIN_30, MIN_60, DAY, WEEK, MONTH, YEAR",
+        description=(
+            "K线周期: MIN_1, MIN_5, MIN_15, MIN_30, MIN_60, MIN_120(120分钟), "
+            "DAY, WEEK, MONTH, SEASON, YEAR"
+        ),
     ),
     start: int = Query(0, ge=0),
     count: int = Query(800, ge=1, le=800),
@@ -96,9 +240,21 @@ async def security_bars(
     MAC 主机未连接时自动回退 AsyncTdxClient.get_security_bars（无复权，adjust 参数忽略）。
     输出契约与旧版一致：日线返回 ``date`` 列，分钟线返回 ``datetime`` 列。
 
+    ``category=MIN_120`` 为 120 分钟线：MAC 原生 ``Period.MINS × times=120``
+    优先，失败则取 2 倍 60M 数据相邻两根聚合（open=first/high=max/low=min/
+    close=last/vol·amount=sum），标准客户端回退路径最多合成 400 根。
+
+    每根 bar 附带衍生字段：``pre_close``（前收，首根=本根开盘）、``change``、
+    ``change_pct``、``amplitude_pct``（振幅%）。pre_close ≤ 0.01 时按 0.01
+    兜底（QFQ 复权后早期价格可能为 0/负）。
+
     vol 单位：分钟线/日线 = 成交量(股)；周/月/季/年线服务端原样返回真实
     成交量/100，回退路径（标准 TdxClient）已 ×100 还原为股。
     """
+    if category.upper() in _MIN_120_ALIASES:
+        df = await _fetch_120m(market, code, start, count, adjust, bar_time, mac_client, client)
+        return _df_resp(_attach_derived(df))
+
     cat = category_from_str(category)
     if mac_client is not None:
         period, times = period_times_from_category(cat)
@@ -123,7 +279,7 @@ async def security_bars(
         df = await client.get_security_bars(
             market_from_str(market), code, cat, start, count, bar_time=bar_time
         )
-    return _df_resp(df)
+    return _df_resp(_attach_derived(df))
 
 
 @router.get("/bars/index", response_model=DataFrameResponse)
@@ -143,11 +299,13 @@ async def index_bars(
     vol 单位：日线/周线/月线/季线/年线 = 成交量(手)（周及以上周期服务端
     原样返回真实成交量/100，已 ×100 还原）；**分钟线协议不提供成交量**
     （报文中该字段实为成交额/100），vol 为 ``null``，请勿当作成交量使用。
+
+    每根 bar 同样附带 ``pre_close/change/change_pct/amplitude_pct`` 衍生字段。
     """
     df = await client.get_index_bars(
         market_from_str(market), code, category_from_str(category), start, count, bar_time=bar_time
     )
-    return _df_resp(df)
+    return _df_resp(_attach_derived(df))
 
 
 @router.get("/minute", response_model=DataFrameResponse)

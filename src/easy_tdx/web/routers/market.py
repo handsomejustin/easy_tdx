@@ -76,6 +76,34 @@ async def market_stat(
     return _df_response(df)
 
 
+@router.get("/market/session")
+async def market_session() -> dict[str, Any]:
+    """A 股有效行情时段判断（供前端自动刷新门控校准）。
+
+    窗口 09:15~11:30、13:00~15:05（含集合竞价缓冲，午休除外），周一至周五。
+    节假日不做日历判断——盘外误判为盘中只会多拉一次快照，无副作用。
+    """
+    from easy_tdx.realtime.session import session_info
+
+    return session_info()
+
+
+@router.get("/market/core-leaders", response_model=DataFrameResponse)
+async def core_leaders() -> DataFrameResponse:
+    """核心龙头池（159 只，按东方财富全行业龙头名单整理）。
+
+    数据资产供前端展示/导出；扫描场景走 ``universe="core"``（screen scan
+    与 /market/strength 均支持）。
+    """
+    from easy_tdx.screen.universe import CORE_LEADERS
+
+    rows = [
+        {"code": code, "name": name, "market": "SH" if code.startswith(("6", "9")) else "SZ"}
+        for code, name in CORE_LEADERS.items()
+    ]
+    return DataFrameResponse(data=rows, count=len(rows))
+
+
 @router.get("/fund-flow", response_model=DataFrameResponse)
 async def fund_flow(
     market: str = Query(..., description="市场: SZ, SH"),
@@ -117,7 +145,7 @@ async def market_strength(
     w60: float | None = Query(None, description="自定义 60 日权重（覆盖预设）"),
     vol_adjusted: bool | None = Query(None, description="波动率惩罚开关（覆盖预设）"),
     top_n: int = Query(50, ge=1, le=5000, description="返回前 N 名"),
-    universe: str = Query("all", description="范围: all/sh/sz"),
+    universe: str = Query("all", description="范围: all/sh/sz/core（core=核心龙头池159只）"),
     min_listed_days: int = Query(65, ge=30, description="最小上市天数"),
     min_amount: float = Query(0.0, ge=0, description="最近 5 日日均成交额下限（元）"),
     vipdoc: str | None = Query(None, description="离线数据目录（默认自动检测）"),

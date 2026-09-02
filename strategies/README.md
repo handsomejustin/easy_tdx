@@ -24,6 +24,7 @@ easy-tdx backtest SH 600519 --strategy-file strategies/macd_cross.py --cash 5000
 | `bias_reversal.py` | 乖离率反转 | 反转 | 震荡回归 |
 | `volume_price.py` | 量价配合 | 综合判断 | 放量突破 |
 | `obv_trend.py` | OBV 能量潮趋势 | 量价趋势 | 资金持续流入的上升趋势 |
+| `zig_breakout.py` | ZIG 右侧突破回补 | 右侧突破/波段 | 波谷启动建仓，见顶卖出后右侧突破前高回补（带硬止损；ZIG 为未来函数，回测信号有前视性） |
 
 ## 编写自定义策略
 

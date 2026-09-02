@@ -8,7 +8,15 @@ import type {
   Bar,
   BoardRow,
   Category,
+  CoreLeaderRow,
   DataFrameResponse,
+  LlmChatResponse,
+  LlmChatContext,
+  LlmHistoryResponse,
+  LlmConfigResponse,
+  LlmConfigUpdate,
+  LlmTestResult,
+  MarketSessionInfo,
   MarketStat,
   MinutePoint,
   MultiStrategyBacktestRequest,
@@ -603,4 +611,138 @@ export async function addWatchItem(market: string, code: string, name = ''): Pro
 export async function removeWatchItem(market: string, code: string): Promise<void> {
   const resp = await fetch(`${BASE}/watchlist/${market}/${code}`, { method: 'DELETE' })
   if (!resp.ok) await throwError(resp)
+}
+
+// ── 交易时段（Dashboard 自动刷新门控） ──────────────────────────────────────
+
+/** 服务器侧交易时段判断（前端本地判断为主，本接口用于校准展示）。 */
+export async function fetchMarketSession(): Promise<MarketSessionInfo> {
+  const resp = await fetch(`${BASE}/market/session`)
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()) as MarketSessionInfo
+}
+
+// ── LLM 配置与对话（AI 设置页 / AI 解读直连） ───────────────────────────────
+
+/** 当前 LLM 配置（key 脱敏）+ Provider 预设表。 */
+export async function fetchLlmConfig(): Promise<LlmConfigResponse> {
+  const resp = await fetch(`${BASE}/llm/config`)
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()) as LlmConfigResponse
+}
+
+/** 保存 LLM 配置（写入 ~/.easy_tdx/llm.json，与手工编辑同一份文件）。 */
+export async function saveLlmConfig(req: LlmConfigUpdate): Promise<LlmConfigResponse> {
+  const resp = await fetch(`${BASE}/llm/config`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!resp.ok) await throwError(resp)
+  await resp.json() // 丢弃 PUT 响应体，统一以 GET 回读为准（providers/missing 同步刷新）
+  return fetchLlmConfig()
+}
+
+/** 连通性测试（用已保存配置或请求体临时配置发一句 ping）。 */
+export async function testLlm(override?: LlmConfigUpdate): Promise<LlmTestResult> {
+  const resp = await fetch(`${BASE}/llm/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(override ?? null),
+  })
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()) as LlmTestResult
+}
+
+/** 一轮 LLM 对话（如把 AI 解读 Prompt 直接发给已配置的模型）。 */
+export async function chatLlm(
+  prompt: string,
+  systemPrompt?: string | null,
+): Promise<LlmChatResponse> {
+  const resp = await fetch(`${BASE}/llm/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, system_prompt: systemPrompt ?? null }),
+  })
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()) as LlmChatResponse
+}
+
+/** 提交 AI 解读后台任务（长耗时模型调用不占 HTTP 连接），返回 task_id。 */
+export async function submitLlmChatTask(
+  prompt: string,
+  context?: LlmChatContext | null,
+  systemPrompt?: string | null,
+): Promise<TaskSubmitResponse> {
+  const resp = await fetch(`${BASE}/llm/chat/async`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, system_prompt: systemPrompt ?? null, context: context ?? null }),
+  })
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()) as TaskSubmitResponse
+}
+
+/** 查询 AI 解读任务状态（轮询用）。 */
+export async function fetchLlmChatTask(taskId: string): Promise<TaskState> {
+  const resp = await fetch(`${BASE}/llm/chat/tasks/${taskId}`)
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()) as TaskState
+}
+
+/**
+ * 提交 AI 解读并轮询直到 done/failed。
+ *
+ * 大报告解读 1-3 分钟属正常：轮询间隔放宽到 1.5s（回测是 0.3s），
+ * 前端上限 20 分钟兜底（后端 LLM 读超时最大 600s，正常应先于此前返回）。
+ */
+export async function runLlmChatWithPolling(
+  prompt: string,
+  context?: LlmChatContext | null,
+  onPoll?: (state: TaskState) => void,
+  intervalMs = 1_500,
+  timeoutMs = 20 * 60_000,
+): Promise<TaskState> {
+  const { task_id } = await submitLlmChatTask(prompt, context)
+  const start = Date.now()
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const state = await fetchLlmChatTask(task_id)
+    onPoll?.(state)
+    if (state.status === 'done' || state.status === 'failed') return state
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`AI 解读任务超时（${timeoutMs / 1000}s），任务仍在后台运行，可稍后重试`)
+    }
+    await new Promise((r) => setTimeout(r, intervalMs))
+  }
+}
+
+// ── AI 解读历史 ──────────────────────────────────────────────────────────────
+
+/** 列出 AI 解读历史（时间倒序，含 Prompt/正文/策略上下文）。 */
+export async function fetchLlmHistory(limit = 50): Promise<LlmHistoryResponse> {
+  const resp = await fetch(`${BASE}/llm/history?limit=${limit}`)
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()) as LlmHistoryResponse
+}
+
+/** 删除一条历史记录。 */
+export async function deleteLlmHistory(id: number): Promise<void> {
+  const resp = await fetch(`${BASE}/llm/history/${id}`, { method: 'DELETE' })
+  if (!resp.ok) await throwError(resp)
+}
+
+/** 清空全部历史。 */
+export async function clearLlmHistory(): Promise<number> {
+  const resp = await fetch(`${BASE}/llm/history`, { method: 'DELETE' })
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()).deleted as number
+}
+
+/** 核心龙头池（159 只）。 */
+export async function fetchCoreLeaders(): Promise<CoreLeaderRow[]> {
+  const resp = await fetch(`${BASE}/market/core-leaders`)
+  if (!resp.ok) await throwError(resp)
+  const body = (await resp.json()) as DataFrameResponse
+  return body.data as unknown as CoreLeaderRow[]
 }

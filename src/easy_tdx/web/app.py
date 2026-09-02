@@ -293,6 +293,7 @@ def _create_app(
     from easy_tdx.web.routers.finance import router as finance_router
     from easy_tdx.web.routers.formula import router as formula_router
     from easy_tdx.web.routers.indicator import router as indicator_router
+    from easy_tdx.web.routers.llm import router as llm_router
     from easy_tdx.web.routers.mac_data import router as mac_data_router
     from easy_tdx.web.routers.mac_quotes import router as mac_quotes_router
     from easy_tdx.web.routers.market import router as market_router
@@ -328,6 +329,8 @@ def _create_app(
     app.include_router(strategies_router, prefix="/api/v1")
     # 服务器设置路由（列出/测速/切换 TDX host）
     app.include_router(server_router, prefix="/api/v1")
+    # LLM 配置与对话路由（AI 设置页 / AI 解读直连，无行情依赖）
+    app.include_router(llm_router, prefix="/api/v1")
     # 自选股路由（SQLite 持久化，纯 CRUD，不依赖行情连接）
     app.include_router(watchlist_router, prefix="/api/v1")
     # 实时行情 SSE 路由（依赖 lifespan 里的 QuoteStreamer）
@@ -366,19 +369,42 @@ def _create_app(
         from starlette.responses import FileResponse
 
         class SPAStaticFiles(StaticFiles):
-            """StaticFiles + SPA fallback：404 时返回 index.html。"""
+            """StaticFiles + SPA fallback：404 时返回 index.html。
+
+            例外：未匹配的 ``/api/*`` 路径返回 JSON 404 而非 index.html——
+            SPA fallback 对 API 请求返回 200 HTML 会把"端点不存在/服务是
+            旧版本"伪装成前端 JSON 解析错误（``Unexpected token '<'``），
+            且前端 ``resp.ok`` 为 true 连错误分支都不走（v1.29 实测踩坑）。
+
+            index.html 一律带 ``Cache-Control: no-store``：JS/CSS 是哈希
+            文件名可以长缓存，但入口 HTML 被缓存会让用户刷新后仍加载旧
+            资源引用（v1.29 实测：修复已上线、用户强刷仍看到旧版渲染）。
+            """
 
             async def get_response(self, path: str, scope):  # type: ignore[no-untyped-def]
                 try:
-                    return await super().get_response(path, scope)
+                    resp = await super().get_response(path, scope)
                 except Exception:
                     # 任何 404（路径非文件）都返回 index.html，让前端路由处理。
-                    # 仅对 GET 请求生效；API 路径 (/api/v1/*) 已在前面注册，
-                    # 不会走到这里。
+                    # 仅对 GET 请求生效；已注册的 API 路由在路由表命中，不会
+                    # 走到这里——但**未注册**的 /api 路径（如服务加载了旧版
+                    # 本、或端点拼写错）会掉进本 fallback，必须放行 404。
+                    # 注：Windows 下 Starlette 传入的 path 是反斜杠形式，先归一化。
+                    norm_path = path.replace("\\", "/").lstrip("/")
+                    is_api = norm_path == "api" or norm_path.startswith("api/")
+                    if is_api or scope.get("method", "GET") != "GET":
+                        raise
                     index = _Path(str(self.directory)) / "index.html"
                     if index.is_file():
-                        return FileResponse(str(index))
+                        return FileResponse(str(index), headers=_INDEX_HEADERS)
                     raise
+                # StaticFiles(html=True) 命中目录默认页（"/" → index.html）时
+                # 同样补 no-store，保证入口 HTML 永远取最新
+                if getattr(resp, "path", "").endswith("index.html"):
+                    resp.headers.update(_INDEX_HEADERS)
+                return resp
+
+        _INDEX_HEADERS = {"Cache-Control": "no-store"}
 
         app.mount("/", SPAStaticFiles(directory=str(dist_dir), html=True), name="web-ui")
         logger.info("Web UI mounted from %s (SPA fallback enabled)", dist_dir)
