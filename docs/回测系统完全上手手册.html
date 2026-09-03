@@ -206,6 +206,14 @@
     font-family: monospace; font-size: 13px;
     color: var(--text-muted); margin-left: 8px;
   }
+  .metric-card.new::before {
+    content: "v1.28 新增";
+    display: inline-block;
+    background: #fef3c7; color: #b45309;
+    font-size: 11px; font-weight: 700;
+    padding: 1px 8px; border-radius: 999px;
+    margin-left: 8px; vertical-align: 2px;
+  }
 
   /* 截图占位 */
   .screenshot-ph {
@@ -261,7 +269,7 @@
   <h1>easy-tdx 回测系统完全上手手册</h1>
   <p class="subtitle">从零开始,手把手教你在浏览器里完成股票策略回测</p>
   <div class="meta">
-    <span>适用版本 v1.19.1</span>
+    <span>适用版本 v1.30.3</span>
     <span>适用系统 Windows 10 / 11</span>
     <span>读者:零基础新手</span>
   </div>
@@ -277,12 +285,13 @@
     <li><a href="#ch5">第五章 怎么确认寻优结果是不是真的好</a></li>
     <li><a href="#ch6">第六章 保存策略 + 策略库:把好策略存下来</a></li>
     <li><a href="#ch7">第七章 看懂评级徽章:S/A/B/C/D 五档</a></li>
-    <li><a href="#ch8">第八章 看懂 19 项绩效指标</a></li>
+    <li><a href="#ch8">第八章 看懂 25 项绩效指标</a></li>
     <li><a href="#ch9">第九章 看懂交易记录:怎么跟买跟卖</a></li>
     <li><a href="#ch10">第十章 多股票组合分仓:不把鸡蛋放一个篮子</a></li>
-    <li><a href="#ch10b">第十章补 充:保存策略组合 + 一键看今日信号(新)</a></li>
-    <li><a href="#ch11">第十一章 常见问题与排错</a></li>
-    <li><a href="#ch12">第十二章 重要提醒(必读)</a></li>
+    <li><a href="#ch10b">第十章补充:保存策略组合 + 一键看今日信号</a></li>
+    <li><a href="#ch11">第十一章 AI 解读:让 AI 帮你读回测报告</a></li>
+    <li><a href="#ch12">第十二章 常见问题与排错</a></li>
+    <li><a href="#ch13">第十三章 重要提醒(必读)</a></li>
     <li><a href="#appendix-packaging">附录:自己打包 EXE 分发给朋友(方式三)</a></li>
   </ol>
 </div>
@@ -305,7 +314,7 @@
 <span class="step-num">1</span><strong>下载 EXE</strong>
 <p>用浏览器打开项目主页的 <strong>Releases(发布)</strong> 页面:<br>
 <code>https://github.com/handsomejustin/easy_tdx/releases</code></p>
-<p>找到最新版本,下载那个名字像 <code>easy-tdx-1.19.0-windows.exe</code> 的文件。</p>
+<p>找到最新版本,下载那个名字像 <code>easy-tdx-1.30.3-windows.exe</code> 的文件。</p>
 </div>
 
 <div class="step">
@@ -324,7 +333,7 @@
 
 <div class="step">
 <span class="step-num">3</span><strong>等待 2-5 秒,浏览器自动打开</strong>
-<p>EXE 首次启动需要解压(所以会慢几秒),然后浏览器会自动打开回测界面。看到顶部导航栏有"单标的回测 / 组合回测 / 参数寻优 / 结果对比 / 策略库"五个标签,就大功告成了!</p>
+<p>EXE 首次启动需要解压(所以会慢几秒),然后浏览器会自动打开系统首页。看到<strong>左侧有一列深色导航栏</strong>,分三组:「行情」(市场看板 / 自选行情 / 龙头池 / 期货持仓排名)、「分析」(单标的回测 / 组合回测 / 参数寻优 / 结果对比 / 策略库 / 信号雷达 / AI 解读历史)、「系统」(服务器设置 / AI 设置),就大功告成了!</p>
 </div>
 
 <div class="warn">
@@ -332,7 +341,7 @@
 </div>
 
 <div class="tip">
-<strong>选了方式一?</strong> 直接跳到 <a href="#ch3">第三章 第一次回测</a> 开始用。第二、十一章可以跳过(那是给方式二/三的用户看的)。
+<strong>选了方式一?</strong> 直接跳到 <a href="#ch3">第三章 第一次回测</a> 开始用。第二、十二章可以跳过(那是给方式二/三的用户看的)。
 </div>
 
 <h3>方式二:装 Python,一条命令启动(会点电脑的)</h3>
@@ -384,7 +393,7 @@
 
 <div class="step">
 <span class="step-num">3</span><strong>按第二章操作,然后看附录"自己打包 EXE"</strong>
-<p>先按 <a href="#ch2">第二章</a> 把项目跑起来。打包 EXE 的方法见第十二章附录 <a href="#appendix-packaging">"自己打包 EXE 分发"</a>。</p>
+<p>先按 <a href="#ch2">第二章</a> 把项目跑起来。打包 EXE 的方法见第十三章附录 <a href="#appendix-packaging">"自己打包 EXE 分发"</a>。</p>
 </div>
 
 <div class="tip">
@@ -414,6 +423,10 @@
 
 <div class="warn">
 <strong>路径千万别用中文!</strong> 不要解压到"我的文档"或"桌面",因为 Windows 用户名如果是中文,后续安装会出各种莫名其妙的错。直接放 <code>D:\easy_tdx</code> 最稳。
+</div>
+
+<div class="warn">
+<strong>解压之后别移动、别重命名这个目录。</strong> Python 的"可编辑安装"会记住这个路径,之后如果你把目录移动、重命名或重新 clone,启动时会在报错信息里给出中文修复指引(见 <a href="#ch12">第十二章 Q12</a>),照着做即可修复,不用重装虚拟环境。
 </div>
 
 <h3>2.2 创建虚拟环境并安装依赖(只做一次)</h3>
@@ -457,6 +470,7 @@ pip install -e ".[web]"</code></pre>
 <div class="tip">
 <strong>如果下载很慢怎么办?</strong> 可以临时用国内镜像源加速:<br>
 <pre><code>pip install -e ".[web]" -i https://pypi.tuna.tsinghua.edu.cn/simple</code></pre>
+<p>另外还有一个可选的 <code>[warehouse]</code> 扩展(<code>pip install -e ".[web,warehouse]"</code>),提供本地 K 线数据仓库(DuckDB),可以把行情数据存到本地离线复用。新手回测用不到,以后需要再装。</p>
 </div>
 
 <div class="step">
@@ -483,7 +497,7 @@ venv\Scripts\activate</code></pre>
 <p>看到类似下面的输出就成功了:</p>
 <pre><code>INFO:     Uvicorn running on http://0.0.0.0:8000
 INFO:     Application startup complete.</code></pre>
-<p><strong>大约 1-2 秒后,浏览器会自动打开</strong> <code>http://localhost:8000</code>,直接看到回测界面。不用再手动开浏览器,也不用跑第二个命令。</p>
+<p><strong>大约 1-2 秒后,浏览器会自动打开</strong> <code>http://localhost:8000</code>,直接看到系统首页。不用再手动开浏览器,也不用跑第二个命令。</p>
 </div>
 
 <div class="step">
@@ -507,8 +521,12 @@ easy-tdx serve --port 8080
 <span class="comment"># 不自动开浏览器(比如想用别的浏览器手动打开)</span>
 easy-tdx serve --no-open-browser
 
-<span class="comment"># 让局域网其他电脑也能访问(比如手机同 WiFi 访问)</span>
-easy-tdx serve --host 0.0.0.0</code></pre>
+<span class="comment"># 只允许本机访问(默认监听 0.0.0.0,局域网其他设备也能访问;</span>
+<span class="comment"># 改成 127.0.0.1 后只有这台电脑自己能打开)</span>
+easy-tdx serve --host 127.0.0.1
+
+<span class="comment"># 纯 API 模式:不打开网页界面,只提供接口(给程序 / AI Agent 调用时用)</span>
+easy-tdx serve --no-ui</code></pre>
 
 </section>
 
@@ -516,14 +534,14 @@ easy-tdx serve --host 0.0.0.0</code></pre>
 <section class="chapter" id="ch3">
 <h2>第三章 第一次回测:验证策略靠不靠谱</h2>
 
-<p>现在你已经打开了浏览器,进入"单标的回测"页面(就是首页 <code>/</code>)。我们用一只大家熟悉的股票演示:贵州茅台(SH:600519)。</p>
+<p>启动系统后,浏览器打开的首页是<strong>「市场看板」</strong>(全市场行情、涨跌分布、板块热榜等)。回测功能在左侧导航栏的<strong>「分析」</strong>分组里。点 <strong>「单标的回测」</strong> 进入回测页面,我们用一只大家熟悉的股票演示:贵州茅台(SH:600519)。</p>
 
 <h3>3.1 界面布局</h3>
 
 <p>整个页面分左右两栏:</p>
 <ul>
-  <li><strong>左栏:配置面板</strong>(填参数的地方)</li>
-  <li><strong>右栏:结果面板</strong>(出图、出指标的地方,一开始是空的)</li>
+  <li><strong>左栏:配置面板</strong>(填参数的地方),从上到下依次是:行情数据、策略、资金与成本、附加分析</li>
+  <li><strong>右栏:报告面板</strong>(出图、出指标的地方,一开始是空的)</li>
 </ul>
 
 <h3>3.2 第一次回测:跑个双均线交叉策略</h3>
@@ -544,7 +562,7 @@ easy-tdx serve --host 0.0.0.0</code></pre>
 <div class="step">
 <span class="step-num">2</span><strong>策略区</strong>
 <ul>
-  <li>下拉选 <strong>"双均线交叉"(ma_cross)</strong></li>
+  <li>下拉选 <strong>"双均线交叉"(ma_cross)</strong>。下拉列表里共有 <strong>54 个内置策略</strong>,从经典的双均线、MACD、布林带,到超级趋势(supertrend)、吊灯止损(chandelier)、一目均衡表(ichimoku_cross)等,都是"只看历史数据、不看未来"的可靠指标策略,新手不用纠结,从双均线开始就好</li>
   <li>参数会自动出现两个:fast(快线)和 slow(慢线)</li>
   <li>用默认值 <code>fast=5, slow=20</code> 先跑</li>
 </ul>
@@ -562,15 +580,21 @@ easy-tdx serve --host 0.0.0.0</code></pre>
 </div>
 
 <div class="step">
-<span class="step-num">4</span><strong>点底部蓝色按钮 "开始回测"</strong>
-<p>等几秒,右侧依次出现四块东西:</p>
+<span class="step-num">4</span><strong>附加分析区(先不勾,知道有这东西就行)</strong>
+<p>这里有两个开关:<strong>「Walk-Forward 样本外验证」</strong>和<strong>「一条龙评估」</strong>。它们是系统的"防过拟合体检",回测时顺便帮你验证策略稳不稳,详见 <a href="#ch5">第五章</a>。第一次跑先不勾。</p>
+</div>
+
+<div class="step">
+<span class="step-num">5</span><strong>点左栏底部蓝色按钮 "开始回测"</strong>
+<p>等几秒,右侧依次出现几块东西:</p>
 <ol>
-  <li><strong>K 线主图</strong>:红色三角形 ▲ 是买入点,绿色钉子 ▼ 是卖出点</li>
-  <li><strong>净值曲线 + 回撤</strong>:上面那条线是你的资金变化,下面填充的是回撤(从最高点跌了多少)</li>
-  <li><strong>评级徽章</strong>:S/A/B/C/D 五档(详见第七章)</li>
-  <li><strong>绩效指标表</strong>:19 项指标(详见第八章)</li>
+  <li><strong>K 线 + 买卖点</strong>:红色三角形 ▲ 是买入点,绿色钉子 ▼ 是卖出点</li>
+  <li><strong>净值曲线与回撤</strong>:上面那条线是你的资金变化,下面填充的是回撤(从最高点跌了多少)</li>
+  <li><strong>评级</strong>:S/A/B/C/D 五档徽章 + 六个维度的打分明细(详见第七章)</li>
+  <li><strong>绩效表</strong>:25 项指标,分"收益 / 风险 / 交易"三组(详见第八章)</li>
   <li><strong>成交记录表</strong>:每一笔买卖的明细</li>
 </ol>
+<p>结果区顶部还有两个按钮:<strong>「💾 保存策略」</strong>(把这次回测配置存进策略库,详见第六章)和<strong>「🤖 AI 解读」</strong>(让 AI 帮你解读这份报告,详见第十一章)。看不懂某个指标名词时,点各报告框底部的 <strong>「? 名词解释」</strong>,有 30 多个词条的大白话解释。</p>
 </div>
 
 <h3>3.3 怎么读这个结果</h3>
@@ -597,16 +621,18 @@ easy-tdx serve --host 0.0.0.0</code></pre>
 
 <h3>4.1 进入寻优页面</h3>
 
-<p>点顶部导航的 <strong>"参数寻优"</strong> 标签。</p>
+<p>点左侧导航的 <strong>「参数寻优」</strong> 标签。</p>
 
 <h3>4.2 配置寻优</h3>
 
 <div class="step">
-<span class="step-num">1</span><strong>行情数据</strong>:跟单标的回测一样,填贵州茅台 SH:600519,日线,2020-01-06 至今。</li>
+<span class="step-num">1</span><strong>行情数据</strong>
+<p>跟单标的回测一样,填贵州茅台 SH:600519,日线,2020-01-06 至今。</p>
 </div>
 
 <div class="step">
-<span class="step-num">2</span><strong>选策略</strong>:下拉选 "双均线交叉"(ma_cross)。</li>
+<span class="step-num">2</span><strong>选策略</strong>
+<p>下拉选"双均线交叉"(ma_cross)。</p>
 </div>
 
 <div class="step">
@@ -638,11 +664,17 @@ easy-tdx serve --host 0.0.0.0</code></pre>
 <h4>网格点排名表</h4>
 <p>所有 25 种组合按总收益降序排列,每行有评级徽章 + 各项指标。点最右边的"查看"按钮,会跳回单标的回测页,自动用这个参数组合跑一遍完整回测,看 K 线和净值曲线。</p>
 
+<p>寻优结果是作为后台任务计算并存入本地数据库的,<strong>重启系统后已完成的寻优排名不会丢</strong>,还能在「结果对比」页继续查看历史任务。</p>
+
 <h3>4.4 一键寻优所有策略(超实用)</h3>
 
-<p>页面上还有一个橙色按钮 <strong>"一键寻优所有策略"</strong>。点它,系统会用每个策略自带的预设参数网格,把所有 54 个内置策略都跑一遍寻优,然后给你一个全局排名。</p>
+<p>页面上还有一个橙色按钮 <strong>"一键寻优所有策略"</strong>。点它,系统会用每个策略自带的预设参数网格,把全部 <strong>54 个内置策略、合计 328 组参数</strong>都跑一遍寻优,然后给你一个全局排名。</p>
 
 <p>这对<strong>不知道用哪个策略的新手</strong>特别有用:让电脑告诉你,这个股票上哪个策略历史表现最好。</p>
+
+<h4>并发进程:跑得更快</h4>
+
+<p>按钮上方有「一键寻优并发」设置:可选串行 / 4 / 8 / 16 进程,<strong>默认 8 进程</strong>。寻优是 CPU 密集计算,多进程能明显提速;机器较老的话先用串行试一次,没问题再开并发。你的选择会被记住,下次不用再设。</p>
 
 <h4>等待不枯燥:投资大师名言轮播</h4>
 
@@ -729,8 +761,39 @@ easy-tdx serve --host 0.0.0.0</code></pre>
 
 <p>如果<strong>三个时段表现都不错</strong>,这个策略相对靠谱。如果只在某个时段特别猛,其他时段拉胯,那就是过拟合,实盘会原形毕露。</p>
 
+<h3>5.5 一键验证:附加分析(Walk-Forward + 一条龙评估)</h3>
+
+<p>上一节的手动分段重跑,系统可以<strong>自动帮你做</strong>。在单标的回测页的<strong>「附加分析」</strong>区,有两个开关,勾上之后随"开始回测"一起运行,结果直接出现在报告里:</p>
+
+<h4>开关一:Walk-Forward 样本外验证</h4>
+
+<p>这是专业量化圈检验策略的标配方法,通俗讲就是"换着时段考这门策略很多次"。系统把回测时间段<strong>切成 N 个连续窗口</strong>(默认 7 窗,可调 2-12 窗),<strong>每个窗口独立开仓、独立考核</strong>,然后告诉你:</p>
+
+<ul>
+  <li><strong>逐窗收益柱状图</strong>:每一段各自赚了多少、亏了多少(红涨绿跌)</li>
+  <li><strong>盈利窗占比</strong>:7 个窗口里有几个是赚钱的。占比越高,策略越稳定</li>
+  <li><strong>连乘收益</strong>:把每窗收益连乘,看"每段都小赚"累计起来效果如何</li>
+  <li><strong>最差窗</strong>:最惨的那一段亏多少——这是你实盘必须做好心理准备的数字</li>
+</ul>
+
+<p><strong>怎么判断:</strong> 大部分窗口为正、最差窗亏得不深,才是真的好。如果总收益很高但 7 个窗口里 5 个都亏,说明收益全靠某一波行情,过拟合实锤。</p>
+
+<h4>开关二:一条龙评估</h4>
+
+<p>一次给你出一份"综合体检报告",包含:</p>
+
+<ul>
+  <li><strong>综合评分(0-100 分)</strong>:按"收益 50% + 夏普 15% + 回撤 10% + 索提诺 5% + Walk-Forward 一致性 20%"加权(没勾 WF 时权重自动重新分配)。分数越高越值得继续研究</li>
+  <li><strong>买入持有基准对比</strong>:同一段行情里"什么都不做、买完拿着不动"的表现。如果策略<strong>跑不赢买入持有</strong>,系统会直接亮警示——折腾半天还不如躺着,这种策略直接放弃</li>
+  <li><strong>适配性体检(8 项检查)</strong>:把数据切成训练 / 验证 / 测试三段分别回测,检查"三段是否都盈利、收益方向是否一致、测试段回撤是否有界"等 8 项。通过率 ≥75% 会给<strong>「高适配」徽标</strong></li>
+</ul>
+
 <div class="tip">
-<strong>新手记住一句话</strong>:宁可要一个"稳稳赚 50%"的策略,也不要一个"有时赚 300% 有时亏 70%"的策略。前者你能拿住,后者你一定会割在最坏的时候。
+<strong>新手使用口诀:</strong> 寻优选出候选参数 → 回测看评级(B 以上)→ 勾上两个附加分析再跑一次 → WF 盈利窗占比高 + 评估跑赢买入持有 + 评分 60 以上,三关都过才值得放进策略库。附加分析每项报告底部都有「? 名词解释」,看不懂的词点开就有大白话。
+</div>
+
+<div class="warn">
+<strong>附加分析是过滤器,不是许愿机。</strong> 它们只能帮你<strong>淘汰</strong>不靠谱的策略,不能保证通过了就一定赚钱。未来永远不确定,仓位管理和止损纪律仍然不可少(见第十三章)。
 </div>
 
 </section>
@@ -745,7 +808,7 @@ easy-tdx serve --host 0.0.0.0</code></pre>
 
 <div class="step">
 <span class="step-num">1</span><strong>在单标的回测或组合回测的结果区</strong>
-<p>右上角有一个 <strong>"💾 保存策略"</strong> 按钮,点它。</p>
+<p>顶部有一个 <strong>"💾 保存策略"</strong> 按钮,点它。</p>
 </div>
 
 <div class="step">
@@ -764,7 +827,7 @@ easy-tdx serve --host 0.0.0.0</code></pre>
 
 <h3>6.2 策略库页面</h3>
 
-<p>点顶部导航的 <strong>"策略库"</strong> 标签。</p>
+<p>点左侧导航的 <strong>"策略库"</strong> 标签。</p>
 
 <p>页面顶部有<strong>两个 Tab</strong>,把策略分成两类:</p>
 
@@ -797,13 +860,25 @@ easy-tdx serve --host 0.0.0.0</code></pre>
 
 <p>这是策略库最强大的功能。详见第十章。跑完之后还能<a href="#ch10b">把整个组合保存下来</a>,下次一键看今日信号。</p>
 
+<h3>6.4 信号雷达:每天一眼扫全部策略(新)</h3>
+
+<p>策略存多了以后,每天挨个点"载入 → 重跑"很麻烦。左侧导航的<strong>「信号雷达」</strong>页就是干这个的:</p>
+
+<ul>
+  <li>点一下扫描按钮,系统自动把策略库里<strong>所有已保存的策略</strong>(单标的 / 组合)用最近几天行情跑一遍(窗口长度可选最近 1 / 3 / 5 / 10 根 K 线)</li>
+  <li>汇总列出<strong>今天哪些策略出现了买入 / 卖出信号</strong>,一张表看完</li>
+  <li>上次扫描结果会缓存在浏览器里,进页面直接看到,不用每次重扫</li>
+</ul>
+
+<p>配合组合的"↻ 重跑到今天",每天收盘后花一分钟就能掌握全部持仓信号。</p>
+
 </section>
 
 <!-- ==================== 第七章 ==================== -->
 <section class="chapter" id="ch7">
 <h2>第七章 看懂评级徽章:S/A/B/C/D 五档</h2>
 
-<p>这是 v1.17.14 新增的功能,目的就是让普通人<strong>一眼判断</strong>"这个策略/品种适不适合经常参与"。</p>
+<p>这个功能的目的就是让普通人<strong>一眼判断</strong>"这个策略/品种适不适合经常参与"。评级逻辑在系统后端计算,网页端和命令行端的口径完全一致。</p>
 
 <h3>7.1 五档的含义</h3>
 
@@ -856,6 +931,7 @@ easy-tdx serve --host 0.0.0.0</code></pre>
 <tr><th>触发条件</th><th>结果</th><th>原因</th></tr>
 <tr><td>利润因子 &lt; 1</td><td>直接 D</td><td>系统实际在亏钱</td></tr>
 <tr><td>最大回撤 &gt; 60%</td><td>直接 D</td><td>深度套牢几乎无法回本</td></tr>
+<tr><td>胜率 &lt; 25% 且交易够多</td><td>直接 D</td><td>几乎一直亏,普通人是来送钱的</td></tr>
 <tr><td>最大回撤 &gt; 50%</td><td>最高 B</td><td>套牢很难回本</td></tr>
 <tr><td>胜率 &lt; 30% 且交易够多</td><td>最高 C</td><td>普通人拿不住</td></tr>
 <tr><td>利润因子 &lt; 1.2</td><td>最高 B</td><td>系统勉强盈亏平衡</td></tr>
@@ -873,9 +949,9 @@ easy-tdx serve --host 0.0.0.0</code></pre>
 
 <!-- ==================== 第八章 ==================== -->
 <section class="chapter" id="ch8">
-<h2>第八章 看懂 19 项绩效指标</h2>
+<h2>第八章 看懂 25 项绩效指标</h2>
 
-<p>回测结果区的绩效表分三组:<strong>收益、风险、交易</strong>。下面用大白话逐个解释。</p>
+<p>回测结果区的绩效表分三组:<strong>收益(5 项)、风险(6 项)、交易(14 项)</strong>。下面用大白话逐个解释。</p>
 
 <h3>8.1 收益类指标</h3>
 
@@ -935,6 +1011,21 @@ easy-tdx serve --host 0.0.0.0</code></pre>
 <p>价格上下波动的剧烈程度,年化后的标准差。&lt; 15% 算平稳,&gt; 30% 算剧烈。</p>
 </div>
 
+<div class="metric-card new">
+<span class="name">Ulcer 指数 <span class="formula">Ulcer Index</span></span>
+<p>把"跌得有多深"和"煎熬了多久"揉在一起的指标:回撤越深、持续越久,数值越大。它比最大回撤更真实——最大回撤只看最惨的那一瞬间,Ulcer 看的是全程煎熬程度。数值越小越好,和评级体系"持有体验"的思路一脉相承。</p>
+</div>
+
+<div class="metric-card new">
+<span class="name">日 VaR (95%) <span class="formula">Value at Risk</span></span>
+<p>"正常年份里,单日最多亏多少"。95% VaR = 2.5% 的意思是:从历史数据看,95% 的交易日单日亏损不超过 2.5%。这是国际通用的风险语言,方便你估计"平常最坏会怎样"。</p>
+</div>
+
+<div class="metric-card new">
+<span class="name">日 CVaR (95%) <span class="formula">Expected Shortfall</span></span>
+<p>"最惨的那 5% 的日子里,平均亏多少"。它回答的是 VaR 没回答的问题:<strong>一旦突破正常范围,灾难日平均有多惨</strong>。CVaR 比 VaR 更受专业风控推崇,因为它盯着尾巴。</p>
+</div>
+
 <h3>8.3 交易类指标</h3>
 
 <div class="metric-card">
@@ -977,9 +1068,19 @@ easy-tdx serve --host 0.0.0.0</code></pre>
 <p>系统想下单但被拒绝的次数(通常是资金不足或持仓冲突)。正常应该是 0。</p>
 </div>
 
+<div class="metric-card new">
+<span class="name">SQN 系统质量 <span class="formula">System Quality Number</span></span>
+<p>交易系统界的"综合质量分":把每笔交易的赚亏幅度和交易次数一起算,衡量"这套系统本身好不好,还是全靠运气"。经验门槛:&gt; 2 可用,3-4 良好,&gt; 4 优秀,&gt; 6 极佳。交易次数越多这个数越可信。</p>
+</div>
+
+<div class="metric-card new">
+<span class="name">最大连胜 / 最大连亏</span>
+<p>连续赚钱和连续亏钱的最长纪录。<strong>最大连亏是散户心理最敏感的数字</strong>:连亏 6 笔你还能按纪律执行吗?如果最大连亏超出你的承受力,这个策略"正确"但你拿不住,照样不合适。</p>
+</div>
+
 <h3>8.4 新手只需要重点看这 5 个</h3>
 
-<p>19 个指标太多记不住?新手抓住这 5 个就够了:</p>
+<p>25 个指标太多记不住?新手抓住这 5 个就够了:</p>
 
 <ol>
   <li><strong>评级徽章</strong>(S/A/B/C/D):一眼过滤</li>
@@ -988,6 +1089,8 @@ easy-tdx serve --host 0.0.0.0</code></pre>
   <li><strong>胜率</strong>:拿不拿得住</li>
   <li><strong>利润因子</strong>:系统到底赚不赚</li>
 </ol>
+
+<p>看不懂的任何指标,点绩效表下方的 <strong>「? 名词解释」</strong> 展开,每项都有"一句话定义 → 公式 → 怎么看"的大白话词条。</p>
 
 </section>
 
@@ -1032,7 +1135,8 @@ easy-tdx serve --host 0.0.0.0</code></pre>
 <h3>9.3 一个完整的跟单思路</h3>
 
 <div class="step">
-<span class="step-num">1</span><strong>选定一只股票和一个策略</strong>(比如贵州茅台 + 双均线 10/30)</li>
+<span class="step-num">1</span><strong>选定一只股票和一个策略</strong>
+<p>(比如贵州茅台 + 双均线 10/30)</p>
 </div>
 
 <div class="step">
@@ -1074,7 +1178,7 @@ easy-tdx serve --host 0.0.0.0</code></pre>
 
 <h3>10.1 方式一:组合回测页面(同一策略跑多只股票)</h3>
 
-<p>点导航的 <strong>"组合回测"</strong> 标签。</p>
+<p>点左侧导航的 <strong>"组合回测"</strong> 标签。</p>
 
 <div class="step">
 <span class="step-num">1</span><strong>添加多只标的</strong>
@@ -1130,7 +1234,7 @@ SZ:000858  五粮液</code></pre>
 
 <div class="step">
 <span class="step-num">4</span><strong>看结果</strong>
-<p>结果和组合回测页一样:组合净值曲线、19 项绩效指标、各策略对比表、<strong>各策略当前持仓表</strong>(这个特别有用:看回测结束时每个策略还持有多少钱,有没有套牢)。</p>
+<p>结果和组合回测页一样:组合净值曲线、25 项绩效指标、各策略对比表、<strong>各策略当前持仓表</strong>(这个特别有用:看回测结束时每个策略还持有多少钱,有没有套牢)。</p>
 </div>
 
 <h3>10.3 组合为什么能降低风险</h3>
@@ -1153,9 +1257,9 @@ SZ:000858  五粮液</code></pre>
 <section class="chapter" id="ch10b">
 <h2>第十章补充:保存策略组合 + 一键看今日信号</h2>
 
-<p>这是 v1.18.0 新加的能力。读完第十章你已经会<strong>勾选 N 个策略跑组合回测</strong>了,但跑完关机就丢,下次要重新勾选重新跑。更麻烦的是,你真正想知道的是<strong>"今天我该买哪个、该卖哪个"</strong>,而不是"过去 6 年平均表现如何"。</p>
+<p>读完第十章你已经会<strong>勾选 N 个策略跑组合回测</strong>了,但跑完关机就丢,下次要重新勾选重新跑。更麻烦的是,你真正想知道的是<strong>"今天我该买哪个、该卖哪个"</strong>,而不是"过去 6 年平均表现如何"。</p>
 
-<p>本次更新把这两件事一次解决:把组合存下来,以后一键用今天重跑,直接得到"截至今天的持仓信号"。</p>
+<p>本节讲的两个功能把这两件事一次解决:把组合存下来,以后一键用今天重跑,直接得到"截至今天的持仓信号"。</p>
 
 <h3>10b.1 保存策略组合</h3>
 
@@ -1169,7 +1273,7 @@ SZ:000858  五粮液</code></pre>
 <div class="step">
 <span class="step-num">2</span><strong>填写弹窗</strong>
 <ul>
-  <li><strong>组合名称</strong>:起个好记的名字,比如"科技+消费+银行 防守反击组合"。系统会预填一个默认名(组合·4策略·2026-07-05),你可以直接改。</li>
+  <li><strong>组合名称</strong>:起个好记的名字,比如"科技+消费+银行 防守反击组合"。系统会预填一个默认名,你可以直接改。</li>
   <li><strong>备注</strong>(可选):写为什么觉得这个组合好,比如"牛市跑得好,震荡市待验证"。</li>
 </ul>
 <p>弹窗里会写明:存的是各策略的 strategy+params+标的+资金配比,以及组合级绩效快照。</p>
@@ -1177,7 +1281,7 @@ SZ:000858  五粮液</code></pre>
 
 <div class="step">
 <span class="step-num">3</span><strong>点"保存"</strong>
-<p>保存成功后,策略库页面切到「组合」Tab,会看到一张橙色边框的<strong>组合卡片</strong>,右上角带 🗂 图标,显示"4 策略 · 总收益 417%"。</p>
+<p>保存成功后,策略库页面切到「组合」Tab,会看到一张橙色边框的<strong>组合卡片</strong>,右上角带 🗂 图标,显示"4 策略 · 总收益 417%"这样的快照。</p>
 </div>
 
 <div class="tip">
@@ -1186,7 +1290,7 @@ SZ:000858  五粮液</code></pre>
 
 <h3>10b.2 载入组合 + 一键重跑到今天(核心功能)</h3>
 
-<p>这是本次更新最重要的功能。点组合卡片的 <strong>"↻ 重跑到今天"</strong> 橙色按钮:</p>
+<p>点组合卡片的 <strong>"↻ 重跑到今天"</strong> 橙色按钮:</p>
 
 <div class="step">
 <span class="step-num">1</span><strong>确认弹窗</strong>
@@ -1205,7 +1309,7 @@ SZ:000858  五粮液</code></pre>
 
 <h3>10b.3 看懂"当前持仓"三态</h3>
 
-<p>当前持仓表的状态列,从原来的两态(持仓/空仓)升级成了三态,让你一眼分辨"该继续拿"还是"该警惕":</p>
+<p>当前持仓表的状态列有三态,让你一眼分辨"该继续拿"还是"该警惕":</p>
 
 <table>
 <tr><th>状态徽章</th><th>颜色</th><th>含义</th><th>你怎么应对</th></tr>
@@ -1237,7 +1341,7 @@ SZ:000858  五粮液</code></pre>
 
 <h3>10b.4 三处必须看懂的警示</h3>
 
-<p>本次更新特意加了三处警示,因为"模型仓位"和"真实账户"是两回事,新手很容易混淆:</p>
+<p>"模型仓位"和"真实账户"是两回事,新手很容易混淆,系统在三处做了明确警示:</p>
 
 <div class="warn">
 <strong>① 过拟合警示条</strong>(结果区顶部)<br>
@@ -1279,6 +1383,10 @@ SZ:000858  五粮液</code></pre>
   </li>
 </ol>
 
+<div class="tip">
+<strong>更快的办法:</strong> 如果你只想知道"今天有没有信号",不关心完整净值,直接用左侧导航的<strong>「信号雷达」</strong>(见第六章 6.4):一键扫全部策略,一张表列出今天谁有买/卖信号。
+</div>
+
 <div class="danger">
 <strong>关键认知:信号会漂移。</strong>
 今天重跑说"🟢 持有",明天大跌触发止损可能就变成"⚪ 空仓"。所以<strong>必须每天重跑</strong>看最新信号,不能拿昨天的信号当今天的操作依据。系统水印会标"基于 X 月 X 日收盘价的策略信号",过夜就过期。
@@ -1290,7 +1398,7 @@ SZ:000858  五粮液</code></pre>
   <li><strong>模型仓位 ≠ 真实账户</strong>:系统不知道你实际买了多少股、成本多少。它只告诉你"策略说该持有 6100 股",但你可能根本没买。真实账户追踪(记录你实际买卖)是更高级的功能,目前没做。</li>
   <li><strong>资金均分</strong>:目前组合里每个策略各拿 1/N 资金,不能给某个策略多分钱。新手均分最简单,够用。</li>
   <li><strong>同一只股票不能在组合里出现两次</strong>:如果两个策略都跑同一只股票,组合会算两份资金,可能重复持仓。选组合时尽量挑不同股票。</li>
-  <li><strong>过拟合风险依然存在</strong>:组合历史表现再漂亮,也是历史。第十二章的三大陷阱(过拟合/幸存者偏差/理想成交)对组合同样有效。</li>
+  <li><strong>过拟合风险依然存在</strong>:组合历史表现再漂亮,也是历史。第十三章的三大陷阱(过拟合/幸存者偏差/理想成交)对组合同样有效。</li>
 </ul>
 
 <div class="tip">
@@ -1299,9 +1407,66 @@ SZ:000858  五粮液</code></pre>
 
 </section>
 
-<!-- ==================== 第十一章 ==================== -->
+<!-- ==================== 第十一章(AI 解读) ==================== -->
 <section class="chapter" id="ch11">
-<h2>第十一章 常见问题与排错</h2>
+<h2>第十一章 AI 解读:让 AI 帮你读回测报告</h2>
+
+<p>25 项指标 + 评级 + 附加分析,报告信息量不小,新手常不知道从哪看起。回测结果区的 <strong>「🤖 AI 解读」</strong> 按钮就是为此准备的:系统把你的整份回测报告自动写成一段结构化的提示词(Prompt),你发给任意 AI 助手,它就能像一位做过十几年量化的老朋友一样,帮你把报告读出人话来。</p>
+
+<h3>11.1 两种用法</h3>
+
+<h4>用法 A:复制 Prompt,发给任意 AI(无需配置,人人可用)</h4>
+
+<div class="step">
+<span class="step-num">1</span><strong>点结果区的「🤖 AI 解读」</strong>
+<p>弹出窗口里已经自动组装好整份 Prompt:你的回测配置、25 项指标、净值概览、Walk-Forward 逐窗明细、一条龙评估、评级、最近 8 笔成交,全部自动拼好。</p>
+</div>
+
+<div class="step">
+<span class="step-num">2</span><strong>点「复制」或「⬇ 下载 .md」</strong>
+</div>
+
+<div class="step">
+<span class="step-num">3</span><strong>粘贴给任意 AI 助手</strong>
+<p>ChatGPT / Claude / DeepSeek / 豆包 / Kimi……哪个顺手用哪个。AI 会引用报告里的真实数字,讲清这个策略的优点、毛病,并给出一个 <strong>0-10 信心分</strong>(0-3 放弃 / 4-6 继续改 / 7-8 小仓试错 / 9 分以上才谈得上逐步参与)。</p>
+</div>
+
+<h4>用法 B:配置模型后一键「直接解读」(进阶)</h4>
+
+<p>如果你不想来回粘贴,可以在左侧导航的<strong>「AI 设置」</strong>页配置一个大模型。支持 9 家预设:<strong>DeepSeek / 通义千问 / 智谱 GLM / Kimi / MiniMax / OpenAI / Claude / Ollama(本地模型,免费)/ 自定义</strong>。填好 API Key 点"测试连接"通过后,回测页 AI 弹窗里会出现「直接解读」按钮:</p>
+
+<ul>
+  <li>点一下,系统在后台把 Prompt 发给你配置的模型(生成通常要 1-3 分钟,按钮会显示已耗时,不是卡死)</li>
+  <li>解读结果直接显示在弹窗里</li>
+</ul>
+
+<div class="tip">
+<strong>本地模型推荐:</strong> 电脑配置好的话,装一个 <a href="https://ollama.com">Ollama</a> 跑本地开源模型,不用花钱买 API Key,数据也不出本机。AI 设置页选 Ollama 预设即可。
+</div>
+
+<h3>11.2 AI 解读历史:每次解读自动存档</h3>
+
+<p>左侧导航的<strong>「AI 解读历史」</strong>页会自动归档每一次成功解读:当时的问题(Prompt)、AI 的回答、用的什么模型、以及<strong>完整的回测上下文</strong>(策略 / 参数 / 标的 / 日期区间)。</p>
+
+<ul>
+  <li>每条历史带<strong>「→ 去回测」</strong>按钮:一键带着当时的策略和参数跳回回测页复现,方便对照</li>
+  <li>可以查看当时发给 AI 的完整 Prompt,学习怎么问问题</li>
+  <li>支持删除单条 / 清空</li>
+</ul>
+
+<h3>11.3 必须记住的三句话</h3>
+
+<div class="danger">
+<strong>① AI 会出错。</strong> 它可能误读数字、编造不存在的结论。每个解读都附有"AI 生成内容可能出错,仅供参考"的提示。<br>
+<strong>② AI 不是投顾。</strong> 解读不构成投资建议,买卖决定必须自己来做。<br>
+<strong>③ AI 看到的也只是历史。</strong> 它解读的是回测数据,回测的三大陷阱(见第十三章)对 AI 同样存在——AI 能帮你读懂报告,不能帮你预知未来。
+</div>
+
+</section>
+
+<!-- ==================== 第十二章(FAQ) ==================== -->
+<section class="chapter" id="ch12">
+<h2>第十二章 常见问题与排错</h2>
 
 <details>
 <summary>Q1: 双击 EXE 没反应 / 浏览器没打开</summary>
@@ -1361,12 +1526,16 @@ SZ:000858  五粮液</code></pre>
   <li>防火墙拦截:检查是否有安全软件拦截了 Python 或 EXE</li>
   <li>非交易时段:周末和晚上有时连接不稳定</li>
 </ul>
-<p>可以换个时间再试,或者用其他股票代码试试。</p>
+<p>可以在左侧导航「系统 → 服务器设置」页切换行情服务器再试,或者换个时间、换个股票代码试试。</p>
 </details>
 
 <details>
-<summary>Q7: 回测结果关机后就没了</summary>
-<p>这是正常的。回测结果存在后端进程内存,重启就清空。<strong>重要的策略一定要点"保存策略"存进策略库</strong>,策略库的数据存在 SQLite 文件里,重启不丢。</p>
+<summary>Q7: 回测结果重启后就没了?</summary>
+<p>分两类:</p>
+<ul>
+  <li><strong>回测 / 寻优任务</strong>:现在是作为后台任务存进本地数据库 <code>~/.easy_tdx/tasks.db</code> 的(保留最近 500 条),<strong>重启系统后,「结果对比」页的历史任务和已完成的寻优排名都还在</strong>,可以继续查看、导出。</li>
+  <li><strong>策略配置</strong>:重要的策略一定要点"保存策略"存进策略库,同样存在本地 SQLite 文件里,重启不丢。</li>
+</ul>
 </details>
 
 <details>
@@ -1381,19 +1550,34 @@ SZ:000858  五粮液</code></pre>
 
 <details>
 <summary>Q10: 评级看起来不准,某个明显好的策略却是 C 档</summary>
-<p>评级阈值是基于金融惯例校准的,可能在某些边界情况不完美。每个维度的打分逻辑在 <code>web-ui/src/grading/thresholds.ts</code> 文件里,如果你懂技术可以微调。或者截图反馈。</p>
+<p>评级阈值是基于金融惯例校准的,可能在某些边界情况不完美。每个维度的打分逻辑在后端 <code>src/easy_tdx/backtest/grading.py</code>(网页端展示组件在 <code>web-ui/src/grading/</code>),懂技术可以微调。或者截图反馈。</p>
 </details>
 
 <details>
 <summary>Q11: 我想用分钟线或周线回测</summary>
-<p>在行情数据区的"周期"下拉里选 MIN_5(5 分钟)、WEEK(周线)等。注意:分钟线数据量很大,回测会慢很多,新手建议只用日线(DAY)。</p>
+<p>在行情数据区的"周期"下拉里选 MIN_5(5 分钟)、WEEK(周线)、MIN_120(120 分钟)等。注意:分钟线数据量很大,回测会慢很多,新手建议只用日线(DAY)。</p>
+</details>
+
+<details>
+<summary>Q12: 启动报错 "No module named 'easy_tdx.cli'" 一堆英文看不懂</summary>
+<p>这是<strong>可编辑安装失效</strong>:装完之后你把项目目录<strong>移动、重命名或重新下载</strong>了,系统找不到代码在哪。v1.29.2 之后系统会直接打印中文修复指引,照着做就行。手动修复方法(不用重建虚拟环境):</p>
+<pre><code>venv\Scripts\activate
+pip uninstall easy-tdx -y
+pip install -e . --no-deps</code></pre>
+<p>以后养成习惯:<strong>项目目录解压好之后就别再挪动它</strong>。</p>
+</details>
+
+<details>
+<summary>Q13: 策略下拉里怎么找不到 zig_breakout 了?</summary>
+<p>v1.30.1 起,ZIG 之字转向指标和基于它的 <code>zig_breakout</code> 策略已被<strong>彻底移除</strong>:ZIG 的拐点是"事后"才标出来的,用它回测等于偷看未来,收益必然严重虚高(本项目实测:胜率 100%、收益 +88%、夏普 1.73——完美得不像真话)。系统选择删掉它而不是留个警告,因为回测工具的生命线是数字可信。</p>
+<p>需要类似"突破买入"思路的,改用 <strong>turtle_breakout(海龟突破)</strong> 或 <strong>donchian(唐奇安通道)</strong>,它们是天然只看历史数据的右侧策略。</p>
 </details>
 
 </section>
 
-<!-- ==================== 第十二章 ==================== -->
-<section class="chapter" id="ch12">
-<h2>第十二章 重要提醒(必读)</h2>
+<!-- ==================== 第十三章(重要提醒) ==================== -->
+<section class="chapter" id="ch13">
+<h2>第十三章 重要提醒(必读)</h2>
 
 <div class="danger">
 <strong>回测 ≠ 实盘。回测 ≠ 实盘。回测 ≠ 实盘。</strong>
@@ -1401,10 +1585,10 @@ SZ:000858  五粮液</code></pre>
 
 <p>请把这六个字刻在脑子里。以下是新手必须知道的真相:</p>
 
-<h3>12.1 回测的三大陷阱</h3>
+<h3>13.1 回测的三大陷阱</h3>
 
 <h4>陷阱一:过拟合</h4>
-<p>寻优出来的"最佳参数"在历史数据上完美,可能只是巧合。验证方法见第五章 5.4 节(分段重跑)。</p>
+<p>寻优出来的"最佳参数"在历史数据上完美,可能只是巧合。验证方法见第五章:手动分段重跑(5.4 节),或直接勾「附加分析」让系统自动做 Walk-Forward 和一条龙评估(5.5 节)。</p>
 
 <h4>陷阱二:幸存者偏差</h4>
 <p>你现在能回测的股票都是"还活着"的股票。那些退市的、ST 的、破产的你回测不了。所以回测收益天然偏高。</p>
@@ -1412,7 +1596,11 @@ SZ:000858  五粮液</code></pre>
 <h4>陷阱三:未来函数与理想成交</h4>
 <p>回测假设你能以"开盘价"成交,但实盘中你可能买不到那个价。实盘的滑点和佣金也比回测设的高。</p>
 
-<h3>12.2 实操建议</h3>
+<p>关于"未来函数"多说一句,因为<strong>这是本系统花了大力气替你防着的东西</strong>:所谓未来函数,就是计算时偷偷用了"当时不可能知道"的未来数据。最典型的是 ZIG 之字转向——每个波峰波谷都是走势走出来之后<strong>回过头</strong>才标出来的,拿它当买卖信号回测,等于允许策略在最低点那天精准买入。本项目曾经引入过基于 ZIG 的策略,实测胜率 100%、收益 +88%、夏普 1.73,一组完美得不像真话的数字,正是前视偏差的签名——已在 v1.30.1 彻底移除。现在系统里的 <strong>50 个注册指标全部是"只引用历史数据"的可靠口径</strong>,并有自动化测试逐个守护(截断数据重算,输出必须一字不差,用了未来函数当场爆红)。</p>
+
+<p>但工具只能防住"指标内置的未来函数",防不住你自己在策略逻辑里引入(比如"如果明天涨停就买入"这种写法)。写自定义策略时,永远只允许自己使用当根及更早的数据。</p>
+
+<h3>13.2 实操建议</h3>
 
 <ol>
   <li><strong>先用模拟盘跑 1 个月</strong>:不要一上来就真金白银,用模拟盘验证策略实盘表现</li>
@@ -1420,9 +1608,10 @@ SZ:000858  五粮液</code></pre>
   <li><strong>设止损</strong>:亏 10% 或 15% 强制走,不要扛</li>
   <li><strong>策略失效就停用</strong>:如果实盘连续 3 个月表现和回测差异巨大,这个策略可能已经失效</li>
   <li><strong>不要频繁换策略</strong>:今天用双均线,明天用 MACD,后天用布林带,最后一定亏。选定一个,严格执行</li>
+  <li><strong>把「附加分析」当成入职面试</strong>:新策略入库前,先过一遍 Walk-Forward 和一条龙评估,跑不赢买入持有的直接拒绝</li>
 </ol>
 
-<h3>12.3 这个工具能帮你什么,不能帮你什么</h3>
+<h3>13.3 这个工具能帮你什么,不能帮你什么</h3>
 
 <table>
 <tr><th>能帮你</th><th>不能帮你</th></tr>
@@ -1439,16 +1628,20 @@ SZ:000858  五粮液</code></pre>
   <td>找到"绝对最佳"的参数(不存在)</td>
 </tr>
 <tr>
-  <td>评估风险(最大回撤、波动率)</td>
+  <td>评估风险(最大回撤、波动率、VaR)</td>
   <td>消除风险(风险永远存在)</td>
 </tr>
 <tr>
   <td>建立纪律性的交易习惯</td>
   <td>替代你自己的判断和止损</td>
 </tr>
+<tr>
+  <td>用 AI 把报告读出人话</td>
+  <td>用 AI 预测明天涨跌(它也不知道)</td>
+</tr>
 </table>
 
-<h3>12.4 最后的话</h3>
+<h3>13.4 最后的话</h3>
 
 <p>easy-tdx 给了你一把尺子,让你不再凭感觉炒股。但尺子本身不会替你赚钱,<strong>赚钱靠的是纪律和耐心</strong>。</p>
 
@@ -1560,7 +1753,7 @@ pyinstaller easy_tdx.spec --noconfirm</code></pre>
 </section>
 
 <footer>
-  easy-tdx 回测系统完全上手手册 · 适用版本 v1.19.1 · 内部教学资料,请勿外传<br>
+  easy-tdx 回测系统完全上手手册 · 适用版本 v1.30.3 · 内部教学资料,请勿外传<br>
   本手册不构成任何投资建议,市场有风险,投资需谨慎
 </footer>
 
