@@ -2,6 +2,28 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.31.1] — 2026-09-04
+
+**策略库「重跑到今天」补齐组合分析**——v1.31.0 把组合分析链路补到了多标的组合页（/portfolio），但策略库（/strategies）里 `kind: 'multi'` 的**多策略组合**卡片点「↻ 重跑到今天」仍只跑主回测，没有 Walk-Forward、一条龙和 AI 解读；且结果区「绩效指标」表只透传 19 项老指标，v1.28 的深度 6 项（SQN/最大连胜连亏/Ulcer/VaR/CVaR）被丢弃。本版把分析链路延伸到多策略组合（N 策略 × 各自原标的），WebUI/REST 双端同步。
+
+### 新增（多策略组合级分析，对齐单标的）
+
+- **多策略组合级 Walk-Forward**（`MultiStrategyWalkForwardEngine`，[walkforward.py](src/easy_tdx/backtest/walkforward.py)）：组合 WF 泛化为**槽位模型**（`_ComboSlot` + `_ComboWalkForwardBase` 基类），每个槽位是「一个策略 × 它自己的标的」（key 形如 `{label}@{symbol}`，与 `MultiStrategyEngine.individual_results` 一致），复用切窗语义（日期并集切窗、每窗独立开仓、上下文预热不污染信号）与 `WalkForwardResult` 输出结构；`PortfolioWalkForwardEngine`（一个策略 × 多标的）改为基类子类，行为不变。前端 WalkForwardPanel 零改动直接渲染。REST 端点 `POST /backtest/multi-strategy/wf/run/async`。
+- **多策略组合级一条龙评估**（`evaluate_multi`，[benchmark.py](src/easy_tdx/backtest/benchmark.py)）：`MultiStrategyEngine` 组合回测 + 多策略组合 WF + 逐槽位三段体检（各自策略 × 各自标的，8 项检查按「≥60% 标的通过」多数口径聚合）+ 综合评分（叠加 WF 一致性）+ 组合评级 + **各槽位标的的等权买入持有基准对比**（α/β/信息比率/跟踪误差），报告结构与单标的 `evaluate_strategy` 同构。REST 端点 `POST /backtest/multi-strategy/evaluate/run/async`。
+- **策略库组合结果区新增分析入口**（[StrategiesView.vue](web-ui/src/views/StrategiesView.vue)）：「重跑到今天」跑完后，结果区标题栏新增 **🔬 WF 样本外验证** / **📋 一条龙评估** / **🤖 AI 解读** 按钮，按需触发（复用最近一次组合回测的 items/cash，区间保持不变——检验的是"这组配置"的稳定性）；WF 面板与一条龙面板与单标的/多标的组合页同构。
+- **组合 AI 解读 multi 模式**（`buildPortfolioAiPrompt`，[aiPrompt.ts](web-ui/src/aiPrompt.ts)）：角色设定改为「N 个策略各跑各自的原标的，资金均分」语境，任务建议改为"换掉拖后腿的策略"等组合向表述；配置段列出策略明细（替代单一策略/参数行），各槽位表现榜按收益降序；解读随已跑完的 WF/一条龙数据一并打包。
+- **多策略组合回测响应附带评级与评分**：`_run_multi_strategy_backtest` 与单标的/多标的组合响应同构，返回 `grade`（组合净值 5 维度口径）与 `score`。
+
+### 修复
+
+- **策略库绩效指标表缺深度指标**：`comboPerf` 此前只映射 19 项，v1.28 的 SQN/最大连胜连亏/Ulcer/VaR/CVaR 6 项被丢弃——补齐全 25 项，与单标的 MetricTable 同口径。
+
+### 测试
+
+- 后端新增 8 例：多策略组合 WF 引擎（窗口结构/与 Portfolio 版同构/空槽位容错）、`evaluate_multi`（报告结构/买入持有超额近零/JSON 兼容）、两个新端点的 Web 级端到端（mock 取数 + 真实引擎）。
+- 前端新增 1 例：aiPrompt multi 模式（策略明细语境、槽位表现段标题、不再出现单一策略行）。
+- 全量验证：pytest 1611 通过、ruff/ruff format/mypy 全绿、node --test 5/5、Playwright E2E 9/9。
+
 ## [1.31.0] — 2026-09-03
 
 **组合回测分析体系全面对齐单标的**——此前单标的回测已有 Walk-Forward 样本外验证、一条龙评估、SQN 系统质量/最大连胜连亏等 25 项绩效指标、S-D 评级与 AI 解读；而组合回测（一个策略 × 多只标的）只能看 4 个数字（总收益/假年化/标的数/总资金）加一条净值曲线，"组合跑得到底好不好、稳不稳"全靠猜。本版把整条分析链路在组合端补齐，WebUI/REST 双端同步。
