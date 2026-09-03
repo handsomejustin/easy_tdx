@@ -2,6 +2,40 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.31.0] — 2026-09-03
+
+**组合回测分析体系全面对齐单标的**——此前单标的回测已有 Walk-Forward 样本外验证、一条龙评估、SQN 系统质量/最大连胜连亏等 25 项绩效指标、S-D 评级与 AI 解读；而组合回测（一个策略 × 多只标的）只能看 4 个数字（总收益/假年化/标的数/总资金）加一条净值曲线，"组合跑得到底好不好、稳不稳"全靠猜。本版把整条分析链路在组合端补齐，WebUI/REST 双端同步。
+
+### 新增（组合级分析，对齐单标的）
+
+- **组合完整 25 项绩效指标**（[portfolio_engine.py](src/easy_tdx/backtest/portfolio_engine.py)）：合并净值曲线 + 各标的汇总成交喂 `PerformanceAnalyzer`，输出与单标的同口径的完整指标——含 **SQN 系统质量、最大连胜、最大连亏**，及夏普/索提诺/卡玛/Ulcer/VaR/CVaR/胜率/盈亏比/平均持仓天数等；另附 `total_stocks` / `total_cash` 组合字段。WebUI 组合页新增「组合绩效指标」表（复用 MetricTable）。
+- **组合级 Walk-Forward 样本外验证**（`PortfolioWalkForwardEngine`，[walkforward.py](src/easy_tdx/backtest/walkforward.py)）：按**全部标的日期并集**切窗（前 30% 预热区 + N 个连续测试窗），每窗各标的带上下文独立回测（`warmup_bars` 压制上下文信号、窗口起点空仓），合成组合窗内净值后算与单标的同构的逐窗指标；晚上市/停牌标的自动逐窗跳过。输出复用 `WalkForwardResult` 结构，前端 WalkForwardPanel 零改动直接渲染。REST 端点 `POST /backtest/portfolio/wf/run/async`。
+- **组合级一条龙评估**（`evaluate_portfolio`，[benchmark.py](src/easy_tdx/backtest/benchmark.py)）：组合回测 + 组合 WF + 适配性体检 + 综合评分（叠加 WF 一致性）+ 组合评级 + **等权买入持有组合基准**对比（α/β/信息比率/跟踪误差），报告结构与单标的 `evaluate_strategy` 同构，前端 EvaluatePanel 直接复用。其中适配性体检为**跨标的多数口径聚合**：逐标的跑三段体检，8 项检查按「≥60% 标的通过」合成，段指标取截面均值（收益/夏普/胜率均值、回撤取最深、交易数合计），诚实反映组合整体形态。REST 端点 `POST /backtest/portfolio/evaluate/run/async`。
+- **组合交易明细**：`PortfolioResult` 新增组合层汇总成交表（各标的 concat + `symbol` 列），`PerformanceAnalyzer` 的 FIFO 持仓天数配对支持按 `symbol` 分组（避免 A 股的买入被 B 股的卖出错误配对）；组合页新增带标的列的成交明细表（按时间倒序，最近 200 笔）。
+- **组合回测响应附带评级与评分**：`_run_portfolio_backtest` 现与单标的 `_run_backtest` 同构，返回 `grade`（`grade_portfolio_equity` 净值 5 维度口径）与 `score`（`score_strategy`），前端/REST 直接消费。
+
+### 新增（AI 解读）
+
+- **组合版 AI 解读 Prompt**（`buildPortfolioAiPrompt`，[aiPrompt.ts](web-ui/src/aiPrompt.ts)）：打包组合配置（标的清单/资金均分口径）、完整 25 项指标、净值概览、各标的表现榜（按收益降序）、可选的组合 WF/一条龙/评级段落与组合最近成交，角色设定明确「一篮子标的、资金均分」语境并要求关注标的集中度。弹窗交互（复制/下载/直接解读）抽为通用组件 `AiInterpretModal.vue`，单标的回测页与组合页共用（行为不变）。
+- **AI 解读历史上下文**：组合解读落库时携带 `kind: "portfolio"` 与标的清单，供 AI 解读历史页「去回测」引导。
+
+### 修复
+
+- **组合净值回撤口径错误**：`_build_combined_equity` 的 `drawdown` 此前为负值（`total - peak`）、`drawdown_pct` 以固定初始资金为分母——净值翻倍后回撤百分比会被放大数倍，且 EquityChart（取负显示）会把回撤画成正区域。统一为逐点峰值口径（`drawdown = peak - total`，`drawdown_pct = drawdown / peak`），与单标的 `PortfolioTracker`、`MultiStrategyEngine` 一致。
+- **组合假年化**：`annual_return` 此前直接等于 `total_return`（代码自注"简化"），现由 `PerformanceAnalyzer` 按时间长度真实年化。
+- **按标的取行情的日期列规范化**（`_normalize_bars_dt`，Web 回测路由）：真实 TDX 日线返回 int `date` 列、分钟线返回 `datetime`，而 E2E mock 返回字符串 `date`——字符串直接喂引擎会在 `StrategyDataProxy` 的 float 强转处报错，遗留 `date` 冗余列亦然。统一改名 `date`→`datetime`、字符串 coerce 成 datetime64、删除冗余列，覆盖单标的/组合/多策略三条取数路径。该问题由新增的组合页 E2E 用例揭露。
+
+### 前端
+
+- 组合页（PortfolioView）新增「附加分析」勾选区：组合级 Walk-Forward（窗口数可调）与一条龙评估，随「开始组合回测」并行运行（互不阻塞、独立错误提示）；报告区新增组合绩效指标/WF 面板/一条龙面板/组合成交明细四个区块。
+- `TradeTable` 支持可选 `showSymbol` 列；`EvaluatePanel` 支持可选 `gradeOverride`（组合口径评级）；`PortfolioResult` 类型扩展完整绩效/成交/评级/评分字段（老结果缺省兼容）。
+
+### 测试
+
+- 后端新增 17 例：组合完整指标（键全集/真年化/回撤口径/symbol 列/资金加权一致性）、组合 WF（窗口结构/聚合口径/数据不足/晚上市容错/JSON 兼容）、`evaluate_portfolio`（报告结构/买入持有超额近零/JSON 兼容）、三个新端点与组合响应附带的 grade/score/trades 的 Web 级端到端。
+- 前端：aiPrompt 新增组合版 2 例（段落随可选数据增减、防御性数字转换）；Playwright E2E 新增组合页 2 例（全流程出完整指标与成交明细、附加分析 + AI 组合 Prompt 打包断言）。
+- 全量验证：pytest 1603 通过、ruff/ruff format/mypy 全绿、node --test 4/4、Playwright 9/9。
+
 ## [1.30.3] — 2026-09-03
 
 **修复「一键寻优所有策略」漏掉 35 个新策略**——v1.30.2 把内置策略从 19 个扩到 54 个，但「一键寻优」走的是另一份独立清单 `STRATEGY_PRESETS`（参数寻优预设网格）：该清单未同步登记新策略，而未登记的策略会被**静默跳过**（仅记 warning）——于是 WebUI 寻优页策略下拉能看到 54 个策略，点「一键寻优所有策略」却仍只寻优旧的 19 个、合计 174 网格点，v1.30.2 的新策略全部缺席全局排名。
