@@ -318,7 +318,7 @@ async def minute_time(
     code: str = Query(..., min_length=6, max_length=6),
     client: Any = Depends(get_client),
 ) -> DataFrameResponse:
-    """获取今日分时数据。"""
+    """获取最近交易日分时数据（盘中=今日实时分时；盘前/周末/节假日=最近交易日历史分时）。"""
     df = await client.get_minute_time_data(market_from_str(market), code)
     return _df_resp(df)
 
