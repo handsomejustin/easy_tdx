@@ -6,20 +6,24 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
+import AiInterpretModal from '../components/AiInterpretModal.vue'
 import EquityChart from '../components/EquityChart.vue'
+import EvaluatePanel from '../components/EvaluatePanel.vue'
 import GradeDetails from '../components/GradeDetails.vue'
 import MetricTable from '../components/MetricTable.vue'
 import PortfolioCompareChart from '../components/PortfolioCompareChart.vue'
 import PortfolioSummaryTable from '../components/PortfolioSummaryTable.vue'
+import WalkForwardPanel from '../components/WalkForwardPanel.vue'
 import {
   deleteSavedStrategy,
   fetchSavedStrategies,
   formatError,
   saveStrategy,
 } from '../api'
-import { gradePortfolio } from '../grading'
+import { buildPortfolioAiPrompt } from '../aiPrompt'
+import { GRADE_META, gradePortfolio } from '../grading'
 import { detectMarket } from '../market'
-import type { MultiStrategyItem, Performance, SavedStrategy } from '../types'
+import type { Category, MultiStrategyItem, Performance, SavedStrategy } from '../types'
 import { useBacktestStore } from '../stores/backtest'
 
 const router = useRouter()
@@ -380,8 +384,9 @@ const holdingViews = computed<HoldingView[]>(() =>
   }),
 )
 
-// 组合整体绩效（19 项指标）。后端 total_performance 现含完整指标，转成
-// MetricTable 需要的 Performance 类型（缺失字段补 0 兜底，保证渲染不崩）。
+// 组合整体绩效（25 项指标，与单标的 MetricTable 同口径）。后端
+// total_performance 含完整指标，转成 MetricTable 需要的 Performance 类型
+// （缺失字段补 0 兜底，保证老结果渲染不崩）。
 const comboPerf = computed<Performance | null>(() => {
   const tp = store.multiStrategyResult?.total_performance
   if (!tp) return null
@@ -409,6 +414,12 @@ const comboPerf = computed<Performance | null>(() => {
     max_loss: get('max_loss'),
     avg_holding_days: get('avg_holding_days'),
     volatility: get('volatility'),
+    ulcer_index: get('ulcer_index'),
+    var_95: get('var_95'),
+    cvar_95: get('cvar_95'),
+    sqn: get('sqn'),
+    max_consecutive_wins: get('max_consecutive_wins'),
+    max_consecutive_losses: get('max_consecutive_losses'),
   }
 })
 
@@ -417,6 +428,69 @@ const comboPerf = computed<Performance | null>(() => {
 const comboGrade = computed(() =>
   store.multiStrategyResult ? gradePortfolio(store.multiStrategyResult) : null,
 )
+
+// ── 组合附加分析：组合级 Walk-Forward / 一条龙 / AI 解读 ─────────────────────
+// 与单标的/组合回测页同构；按钮在组合结果区按需触发（复用最近一次
+// 组合回测的 items/cash，区间保持不变——检验的是"这组配置"的稳定性）。
+
+function multiComboRequest() {
+  return { items: lastComboItems.value, cash: lastComboCash.value }
+}
+
+async function onComboWf() {
+  if (lastComboItems.value.length === 0) return
+  await store.runMultiStrategyWalkforward(multiComboRequest())
+}
+
+async function onComboEvaluate() {
+  if (lastComboItems.value.length === 0) return
+  await store.runMultiStrategyEvaluate(multiComboRequest())
+}
+
+// AI 解读：组合版 Prompt（multi 模式：N 个策略各跑各自的原标的）
+const showAiModal = ref(false)
+
+const comboStrategyLabel = computed(() =>
+  lastComboItems.value.length > 0
+    ? `${lastComboItems.value.length} 策略组合`
+    : '策略组合',
+)
+
+const aiPromptText = computed(() => {
+  if (!store.multiStrategyResult) return ''
+  return buildPortfolioAiPrompt({
+    stocks: lastComboItems.value.map(
+      (it) => `${it.strategy_label || it.strategy}@${it.symbol}`,
+    ),
+    category: (lastComboItems.value[0]?.category as Category) ?? 'DAY',
+    startDate: (lastComboItems.value[0]?.start_date as string) || '',
+    endDate: (lastComboItems.value[0]?.end_date as string) || isoToday(),
+    strategyLabel: comboStrategyLabel.value,
+    params: {},
+    cash: lastComboCash.value,
+    commission: 0.0003,
+    slippage: 0,
+    execution: 'next_open',
+    result: store.multiStrategyResult,
+    mode: 'multi',
+    wf: store.multiWfResult,
+    evaluate: store.multiEvaluateResult,
+    grade: comboGrade.value,
+    gradeHint: comboGrade.value ? GRADE_META[comboGrade.value.grade].hint : undefined,
+  })
+})
+
+/** 随解读落历史库的策略上下文（历史页「去回测」引导用） */
+const aiContext = computed(() => ({
+  strategy: 'multi',
+  strategy_label: comboStrategyLabel.value,
+  kind: 'multi',
+  symbol: lastComboItems.value.map((it) => it.symbol).join(','),
+  category: (lastComboItems.value[0]?.category as string) || 'DAY',
+  params: {},
+  start_date: (lastComboItems.value[0]?.start_date as string) || '',
+  end_date: isoToday(),
+}))
 </script>
 
 <template>
@@ -631,10 +705,30 @@ const comboGrade = computed(() =>
           · {{ store.multiStrategyResult.total_performance.total_stocks }} 个策略 ·
           总资金 {{ store.multiStrategyResult.total_performance.total_cash.toFixed(0) }}
         </span>
+        <span v-if="store.multiStrategyResult && !store.multiStrategyRunning" class="combo-extra-actions">
+          <button
+            class="save-combo-btn"
+            :disabled="store.multiWfRunning"
+            title="按全部槽位日期并集切窗，每窗各策略独立回测后合成组合净值，检验跨时段稳定性"
+            @click="onComboWf"
+          >
+            {{ store.multiWfRunning ? 'WF 验证中…' : '🔬 WF 样本外验证' }}
+          </button>
+          <button
+            class="save-combo-btn"
+            :disabled="store.multiEvaluateRunning"
+            title="组合回测+组合WF+跨策略适配性体检+综合评分+等权买入持有基准对比，一份报告"
+            @click="onComboEvaluate"
+          >
+            {{ store.multiEvaluateRunning ? '评估中…' : '📋 一条龙评估' }}
+          </button>
+          <button class="save-combo-btn" @click="showAiModal = true">🤖 AI 解读</button>
+          <button class="save-combo-btn" @click="openSaveCombo">💾 保存为组合</button>
+        </span>
         <button
-          v-if="store.multiStrategyResult && !store.multiStrategyRunning"
+          v-else-if="store.multiStrategyResult && store.multiStrategyRunning"
           class="save-combo-btn"
-          @click="openSaveCombo"
+          disabled
         >
           💾 保存为组合
         </button>
@@ -672,6 +766,42 @@ const comboGrade = computed(() =>
         <div class="combo-chart-block">
           <h4>组合净值曲线</h4>
           <EquityChart :equity="store.multiStrategyResult.combined_equity" />
+        </div>
+
+        <!-- 附加分析：组合级 Walk-Forward（与单标的/组合回测页同构面板） -->
+        <div
+          v-if="store.multiWfRunning || store.multiWfResult || store.multiWfError"
+          class="combo-chart-block"
+        >
+          <h4>Walk-Forward 样本外验证</h4>
+          <p v-if="store.multiWfRunning" class="empty-text">
+            验证中…（策略数 × 窗口数 次回测，约需十几秒）
+          </p>
+          <div v-else-if="store.multiWfError" class="warn-box">
+            ⚠ {{ store.multiWfError }}
+          </div>
+          <WalkForwardPanel v-else-if="store.multiWfResult" :wf="store.multiWfResult" />
+        </div>
+
+        <!-- 附加分析：组合级一条龙评估（与单标的/组合回测页同构面板） -->
+        <div
+          v-if="
+            store.multiEvaluateRunning || store.multiEvaluateResult || store.multiEvaluateError
+          "
+          class="combo-chart-block"
+        >
+          <h4>一条龙评估</h4>
+          <p v-if="store.multiEvaluateRunning" class="empty-text">
+            评估中…（组合回测 + 组合WF + 跨策略适配性 + 基准对比，可能需要一两分钟）
+          </p>
+          <div v-else-if="store.multiEvaluateError" class="warn-box">
+            ⚠ {{ store.multiEvaluateError }}
+          </div>
+          <EvaluatePanel
+            v-else-if="store.multiEvaluateResult"
+            :report="store.multiEvaluateResult"
+            :grade-override="comboGrade"
+          />
         </div>
 
         <div v-if="comboPerf" class="combo-chart-block">
@@ -747,6 +877,16 @@ const comboGrade = computed(() =>
         </div>
       </div>
     </section>
+
+    <!-- AI 解读 Prompt 对话框（单标的/组合/策略组合通用组件） -->
+    <AiInterpretModal
+      v-if="showAiModal && store.multiStrategyResult"
+      :prompt="aiPromptText"
+      :filename="`AI解读_${comboStrategyLabel}.md`"
+      :context="aiContext"
+      tip="建议先点「WF 样本外验证」「一条龙评估」，跑完再打开此弹窗，数据会一并打包。"
+      @close="showAiModal = false"
+    />
   </div>
 </template>
 
@@ -1183,6 +1323,22 @@ const comboGrade = computed(() =>
 }
 .save-combo-btn:hover {
   background: linear-gradient(135deg, #fbbf24, #f59e0b);
+}
+.save-combo-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* 组合结果区附加分析按钮组（WF/一条龙/AI 解读/保存）：内联排列，窄屏可换行 */
+.combo-extra-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 10px;
+  flex-wrap: wrap;
+  vertical-align: middle;
+}
+.combo-extra-actions .save-combo-btn {
+  margin-left: 0;
 }
 
 /* 警示条基础类（过拟合 / 免责共享） */

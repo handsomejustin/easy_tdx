@@ -251,3 +251,59 @@ def test_evaluate_portfolio_serializable():
     )
     text = json.dumps(report, default=str)
     assert "excess_return" in text
+
+
+# ── evaluate_multi（v1.31.1：多策略组合一条龙）────────────────────────────────
+def _slots_for_multi() -> list[Any]:
+    from easy_tdx.backtest.multi_strategy_engine import StrategySlot
+
+    return [
+        StrategySlot(
+            label="动量", symbol="SZ:000001", strategy=_CycleTrader(), df=_df(400, drift=0.002)
+        ),
+        StrategySlot(
+            label="反转", symbol="SH:600000", strategy=_CycleTrader(), df=_df(400, drift=0.003)
+        ),
+    ]
+
+
+def test_evaluate_multi_full_report_structure():
+    """多策略组合一条龙报告与 evaluate_portfolio 同构（前端面板可复用）。"""
+    from easy_tdx.backtest.benchmark import evaluate_multi
+
+    report = evaluate_multi(_slots_for_multi(), total_cash=500_000)
+    for key in ("performance", "score", "grade", "walkforward", "fitness", "benchmark", "config"):
+        assert key in report
+    assert "sqn" in report["performance"]
+    assert "max_consecutive_losses" in report["performance"]
+    assert report["performance"]["total_stocks"] == 2
+    assert 0 <= report["score"]["total"] <= 100
+    assert report["score"]["wf_provided"] is True
+    assert report["grade"]["grade"] in ("S", "A", "B", "C", "D")
+    assert report["grade"]["scenario"] == "portfolio"
+    assert len(report["walkforward"]["windows"]) > 0
+    assert report["fitness"]["total_checks"] == 8
+    assert "只标的通过" in report["fitness"]["checks"][0]["detail"]
+    assert "buy_hold" in report["benchmark"]
+    assert report["config"]["slots"] == ["动量@SZ:000001", "反转@SH:600000"]
+
+
+def test_evaluate_multi_buy_hold_excess_near_zero():
+    """各槽位换成买入持有后，组合收益 ≈ 等权买入持有基准（excess 近 0）。"""
+    from easy_tdx.backtest.benchmark import evaluate_multi
+    from easy_tdx.backtest.multi_strategy_engine import StrategySlot
+
+    bh_slots = [
+        StrategySlot(label=s.label, symbol=s.symbol, strategy=_BuyFirstBar(), df=s.df)
+        for s in _slots_for_multi()
+    ]
+    report = evaluate_multi(bh_slots, total_cash=500_000)
+    assert abs(report["benchmark"]["excess_return"]) < 0.05
+
+
+def test_evaluate_multi_serializable():
+    from easy_tdx.backtest.benchmark import evaluate_multi
+
+    report = evaluate_multi(_slots_for_multi(), total_cash=500_000, n_windows=3)
+    text = json.dumps(report, default=str)
+    assert "excess_return" in text

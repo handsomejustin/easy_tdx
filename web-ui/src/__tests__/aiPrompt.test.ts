@@ -330,3 +330,35 @@ test('组合版：WF / 一条龙 / 评级按需拼接', () => {
   assert.match(p, /# 评级（不看收益率，面向「普通人拿不拿得住」）/)
   assert.match(p, /档位：\*\*D\*\*/)
 })
+
+test('组合版 multi 模式：N 个策略各跑原标的的语境与槽位明细', () => {
+  const p = buildPortfolioAiPrompt({
+    stocks: ['双均线交叉@SH:601088', 'MACD 金叉@SZ:000001'],
+    category: 'DAY',
+    startDate: '2023-01-02',
+    endDate: '2026-09-03',
+    strategyLabel: '2 策略组合',
+    params: {},
+    cash: 500000,
+    commission: 0.0003,
+    slippage: 0,
+    execution: 'next_open',
+    mode: 'multi',
+    result: {
+      ...PORTFOLIO_RESULT,
+      individual_results: {
+        '双均线交叉@SH:601088': RESULT,
+        'MACD 金叉@SZ:000001': RESULT,
+      },
+    },
+  })
+
+  // 角色设定为多策略语境（N 个策略各跑各自的原标的）
+  assert.match(p, /N 个策略各跑各自的原标的，资金均分/)
+  // 配置段列策略明细而非标的清单，不再出现单一策略/参数行
+  assert.match(p, /2 个策略各跑各自的原标的，资金均分（各拿总额的 50\.0%）/)
+  assert.match(p, /双均线交叉@SH:601088、MACD 金叉@SZ:000001/)
+  assert.ok(!p.includes('- 策略：2 策略组合'))
+  // 槽位表现段标题为「各策略槽位」
+  assert.match(p, /# 各策略槽位表现（按收益降序；全部）/)
+})

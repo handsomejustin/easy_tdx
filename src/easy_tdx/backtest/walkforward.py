@@ -45,6 +45,7 @@ __all__ = [
     "WalkForwardResult",
     "WalkForwardEngine",
     "PortfolioWalkForwardEngine",
+    "MultiStrategyWalkForwardEngine",
 ]
 
 
@@ -273,7 +274,204 @@ class WalkForwardEngine:
         result.total_trades = int(sum(w.total_trades for w in ws))
 
 
-class PortfolioWalkForwardEngine:
+class _ComboSlot:
+    """组合 WF 的一个回测槽位（内部结构，由各公开引擎组装）。
+
+    Attributes:
+        key: 槽位标识（组合成交表的 symbol 列值）。
+        strategy: 策略类或实例。
+        df: 该槽位的 K 线。
+        cash: 等权分配到的资金。
+        symbol: 品种感知费率标识（auto_fees 用；不感知则 None）。
+        auto_fees: 是否按品种解析费率。
+    """
+
+    __slots__ = ("key", "strategy", "df", "cash", "symbol", "auto_fees")
+
+    def __init__(
+        self,
+        key: str,
+        strategy: type[Strategy] | Strategy,
+        df: pd.DataFrame,
+        cash: float,
+        symbol: str | None = None,
+        auto_fees: bool = False,
+    ) -> None:
+        self.key = key
+        self.strategy = strategy
+        self.df = df
+        self.cash = cash
+        self.symbol = symbol
+        self.auto_fees = auto_fees
+
+
+class _ComboWalkForwardBase:
+    """组合级 WF 共用实现：按参考时间轴切窗，逐槽位独立回测后合成组合净值。
+
+    切窗语义与 :class:`WalkForwardEngine`（单标的）一致，差异仅在「回测单元」
+    从单只标的换成 N 个槽位（标的或策略×标的）。
+    """
+
+    def __init__(
+        self,
+        slots: list[_ComboSlot],
+        n_windows: int,
+        warmup_ratio: float,
+        context_bars: int,
+        engine_kwargs: dict[str, Any],
+    ) -> None:
+        self._slots = list(slots)
+        self._n_windows = max(int(n_windows), 2)
+        self._warmup_ratio = min(max(float(warmup_ratio), 0.0), 0.8)
+        self._context_bars = max(int(context_bars), 0)
+        self._engine_kwargs = dict(engine_kwargs)
+
+    def run(self) -> WalkForwardResult:
+        """执行组合 Walk-Forward 验证。
+
+        Returns:
+            :class:`WalkForwardResult`。数据不足以切窗时返回空结果
+            （``windows`` 为空，聚合指标为 0）。
+        """
+        result = WalkForwardResult(n_windows=self._n_windows, warmup_ratio=self._warmup_ratio)
+        if not self._slots:
+            return result
+
+        # 参考时间轴：全部标的 datetime 的并集（升序）
+        timeline = self._reference_timeline()
+        n = len(timeline)
+        # 最少数据：每窗 ≥ 20 根 + 预热区 ≥ 20 根
+        min_bars = 20 * (1 + self._n_windows)
+        if n < min_bars:
+            return result
+
+        eval_start = int(n * self._warmup_ratio)
+        eval_len = n - eval_start
+        window_len = eval_len // self._n_windows
+
+        for i in range(self._n_windows):
+            s = eval_start + i * window_len
+            e = s + window_len if i < self._n_windows - 1 else n  # 末窗吃到尾部
+            if e - s < 5:
+                continue
+            win = self._run_window(timeline, s, e, i)
+            if win is not None:
+                result.windows.append(win)
+
+        WalkForwardEngine._aggregate(result)
+        return result
+
+    def _reference_timeline(self) -> pd.DatetimeIndex:
+        """全部槽位 datetime 的并集（升序，Timestamp 化）。"""
+        all_dt: list[pd.Timestamp] = []
+        for slot in self._slots:
+            s = self._dt_series(slot.df)
+            if len(s) > 0:
+                all_dt.append(s)
+        if not all_dt:
+            return pd.DatetimeIndex([])
+        return pd.DatetimeIndex(sorted(pd.unique(pd.concat(all_dt))))
+
+    @staticmethod
+    def _dt_series(df: pd.DataFrame) -> pd.Series:
+        """标的 K 线的 datetime 列统一转 Timestamp（int YYYYMMDD 兼容）。"""
+        col = "datetime" if "datetime" in df.columns else "date"
+        dt = df[col]
+        if dt.dtype.kind in "iu":
+            return pd.to_datetime(dt.astype(str), format="%Y%m%d")
+        if not pd.api.types.is_datetime64_any_dtype(dt):
+            return pd.to_datetime(dt)
+        return pd.Series(pd.to_datetime(dt), index=df.index)
+
+    def _run_window(
+        self, timeline: pd.DatetimeIndex, s: int, e: int, index: int
+    ) -> WalkForwardWindow | None:
+        """独立回测单个窗口 [s, e)（参考时间轴下标），合成组合窗内净值。"""
+        window_start = timeline[s]
+        window_end = timeline[e - 1]
+        ctx_start = timeline[max(0, s - self._context_bars)]
+
+        equity_series: list[pd.Series] = []
+        trade_frames: list[pd.DataFrame] = []
+        for slot in self._slots:
+            dt = self._dt_series(slot.df)
+            mask = (dt >= ctx_start) & (dt <= window_end)
+            sub = slot.df.loc[mask].reset_index(drop=True)
+            dt_sub = dt.loc[mask].reset_index(drop=True)
+            # 上下文 bar 数 = 窗口起点之前保留的 bar 数（warmup 压制其信号）
+            lead = int((dt_sub < window_start).sum())
+            if len(sub) < lead + 5:
+                continue  # 该槽位数据不足（晚上市/停牌过多），本窗跳过
+
+            engine = BacktestEngine(
+                strategy=slot.strategy,
+                cash=slot.cash,
+                warmup_bars=lead,
+                symbol=slot.symbol,
+                auto_fees=slot.auto_fees,
+                **self._engine_kwargs,
+            )
+            try:
+                bt = engine.run(sub)
+            except Exception:  # noqa: BLE001 — 单槽位失败不拖垮整窗
+                continue
+
+            # 只取窗内净值点（上下文区恒为现金，不参与窗指标，避免稀释波动率）
+            ec = bt.equity_curve
+            if len(ec) > lead:
+                eq = ec.iloc[lead:]
+                equity_series.append(
+                    pd.Series(eq["total"].to_numpy(), index=self._dt_series(eq), name=slot.key)
+                )
+            if len(bt.trades) > 0:
+                t = bt.trades.copy()
+                t["symbol"] = slot.key
+                trade_frames.append(t)
+
+        if not equity_series:
+            return None  # 所有槽位都跑不了，跳过该窗
+
+        # 合成组合窗内净值：日期并集对齐，ffill 持有不动，上市晚于窗口起点的
+        # 标的其前导缺口用首值回填（首值即其初始资金——还没开仓，持有现金）
+        aligned = pd.concat(equity_series, axis=1).sort_index()
+        aligned = aligned.ffill().bfill()
+        total = aligned.sum(axis=1)
+        peak = total.cummax()
+        drawdown = peak - total
+        peak_safe = peak.where(peak != 0, 1.0)
+        window_equity = pd.DataFrame(
+            {
+                "datetime": total.index,
+                "total": total.to_numpy(),
+                "drawdown": drawdown.to_numpy(),
+                "drawdown_pct": (drawdown / peak_safe).to_numpy(),
+            }
+        )
+
+        all_trades = (
+            pd.concat(trade_frames, ignore_index=True)
+            if trade_frames
+            else pd.DataFrame(columns=["symbol", "direction", "pnl", "rejected"])
+        )
+        from easy_tdx.backtest.performance import PerformanceAnalyzer
+
+        perf = PerformanceAnalyzer(equity_curve=window_equity, trades=all_trades).compute()
+
+        return WalkForwardWindow(
+            index=index,
+            start=window_start.strftime("%Y-%m-%d"),
+            end=window_end.strftime("%Y-%m-%d"),
+            bars=int(e - s),
+            total_return=float(perf.get("total_return", 0.0)),
+            sharpe=float(perf.get("sharpe", 0.0)),
+            max_drawdown=float(perf.get("max_drawdown", 0.0)),
+            total_trades=int(perf.get("total_trades", 0)),
+            win_rate=float(perf.get("win_rate", 0.0)),
+            performance={k: v for k, v in perf.items()},
+        )
+
+
+class PortfolioWalkForwardEngine(_ComboWalkForwardBase):
     """组合级 Walk-Forward：一个策略 × 多只标的，逐窗独立回测并合成组合净值。
 
     与 :class:`WalkForwardEngine`（单标的）共用切窗语义与
@@ -323,163 +521,94 @@ class PortfolioWalkForwardEngine:
             total_cash: 组合总资金（各标的等权分 1/N）。
             其余参数: 透传给各窗各标的的 :class:`BacktestEngine`。
         """
-        self._strategy = strategy
-        self._stocks = list(stocks)
-        self._n_windows = max(int(n_windows), 2)
-        self._warmup_ratio = min(max(float(warmup_ratio), 0.0), 0.8)
-        self._context_bars = max(int(context_bars), 0)
-        self._total_cash = float(total_cash)
-        self._engine_kwargs: dict[str, Any] = {
-            "commission": commission,
-            "min_commission": min_commission,
-            "stamp_tax": stamp_tax,
-            "slippage": slippage,
-            "execution": execution,
-            "chanlun_level": chanlun_level,
-            "auto_fees": auto_fees,
-        }
-
-    def run(self) -> WalkForwardResult:
-        """执行组合 Walk-Forward 验证。
-
-        Returns:
-            :class:`WalkForwardResult`。数据不足以切窗时返回空结果
-            （``windows`` 为空，聚合指标为 0）。
-        """
-        result = WalkForwardResult(n_windows=self._n_windows, warmup_ratio=self._warmup_ratio)
-        if not self._stocks:
-            return result
-
-        # 参考时间轴：全部标的 datetime 的并集（升序）
-        timeline = self._reference_timeline()
-        n = len(timeline)
-        # 最少数据：每窗 ≥ 20 根 + 预热区 ≥ 20 根
-        min_bars = 20 * (1 + self._n_windows)
-        if n < min_bars:
-            return result
-
-        eval_start = int(n * self._warmup_ratio)
-        eval_len = n - eval_start
-        window_len = eval_len // self._n_windows
-
-        for i in range(self._n_windows):
-            s = eval_start + i * window_len
-            e = s + window_len if i < self._n_windows - 1 else n  # 末窗吃到尾部
-            if e - s < 5:
-                continue
-            win = self._run_window(timeline, s, e, i)
-            if win is not None:
-                result.windows.append(win)
-
-        WalkForwardEngine._aggregate(result)
-        return result
-
-    def _reference_timeline(self) -> pd.DatetimeIndex:
-        """全部标的 datetime 的并集（升序，Timestamp 化）。"""
-        all_dt: list[pd.Timestamp] = []
-        for stock in self._stocks:
-            s = self._dt_series(stock.df)
-            if len(s) > 0:
-                all_dt.append(s)
-        if not all_dt:
-            return pd.DatetimeIndex([])
-        return pd.DatetimeIndex(sorted(pd.unique(pd.concat(all_dt))))
-
-    @staticmethod
-    def _dt_series(df: pd.DataFrame) -> pd.Series:
-        """标的 K 线的 datetime 列统一转 Timestamp（int YYYYMMDD 兼容）。"""
-        col = "datetime" if "datetime" in df.columns else "date"
-        dt = df[col]
-        if dt.dtype.kind in "iu":
-            return pd.to_datetime(dt.astype(str), format="%Y%m%d")
-        if not pd.api.types.is_datetime64_any_dtype(dt):
-            return pd.to_datetime(dt)
-        return pd.Series(pd.to_datetime(dt), index=df.index)
-
-    def _run_window(
-        self, timeline: pd.DatetimeIndex, s: int, e: int, index: int
-    ) -> WalkForwardWindow | None:
-        """独立回测单个窗口 [s, e)（参考时间轴下标），合成组合窗内净值。"""
-        window_start = timeline[s]
-        window_end = timeline[e - 1]
-        ctx_start = timeline[max(0, s - self._context_bars)]
-
-        per_cash = self._total_cash / len(self._stocks)
-        equity_series: list[pd.Series] = []
-        trade_frames: list[pd.DataFrame] = []
-        for stock in self._stocks:
-            key = f"{stock.market}{stock.code}"
-            dt = self._dt_series(stock.df)
-            mask = (dt >= ctx_start) & (dt <= window_end)
-            sub = stock.df.loc[mask].reset_index(drop=True)
-            dt_sub = dt.loc[mask].reset_index(drop=True)
-            # 上下文 bar 数 = 窗口起点之前保留的 bar 数（warmup 压制其信号）
-            lead = int((dt_sub < window_start).sum())
-            if len(sub) < lead + 5:
-                continue  # 该标的数据不足（晚上市/停牌过多），本窗跳过
-
-            engine = BacktestEngine(
-                strategy=self._strategy,
-                cash=per_cash,
-                warmup_bars=lead,
-                symbol=key,
-                **self._engine_kwargs,
+        n = max(len(list(stocks)), 1)
+        slots = [
+            _ComboSlot(
+                key=f"{s.market}{s.code}",
+                strategy=strategy,
+                df=s.df,
+                cash=total_cash / n,
+                symbol=f"{s.market}{s.code}",
+                auto_fees=auto_fees,
             )
-            try:
-                bt = engine.run(sub)
-            except Exception:  # noqa: BLE001 — 单标的失败不拖垮整窗
-                continue
-
-            # 只取窗内净值点（上下文区恒为现金，不参与窗指标，避免稀释波动率）
-            ec = bt.equity_curve
-            if len(ec) > lead:
-                eq = ec.iloc[lead:]
-                equity_series.append(
-                    pd.Series(eq["total"].to_numpy(), index=self._dt_series(eq), name=key)
-                )
-            if len(bt.trades) > 0:
-                t = bt.trades.copy()
-                t["symbol"] = key
-                trade_frames.append(t)
-
-        if not equity_series:
-            return None  # 所有标的都跑不了，跳过该窗
-
-        # 合成组合窗内净值：日期并集对齐，ffill 持有不动，上市晚于窗口起点的
-        # 标的其前导缺口用首值回填（首值即其初始资金——还没开仓，持有现金）
-        aligned = pd.concat(equity_series, axis=1).sort_index()
-        aligned = aligned.ffill().bfill()
-        total = aligned.sum(axis=1)
-        peak = total.cummax()
-        drawdown = peak - total
-        peak_safe = peak.where(peak != 0, 1.0)
-        window_equity = pd.DataFrame(
-            {
-                "datetime": total.index,
-                "total": total.to_numpy(),
-                "drawdown": drawdown.to_numpy(),
-                "drawdown_pct": (drawdown / peak_safe).to_numpy(),
-            }
+            for s in stocks
+        ]
+        super().__init__(
+            slots,
+            n_windows=n_windows,
+            warmup_ratio=warmup_ratio,
+            context_bars=context_bars,
+            engine_kwargs={
+                "commission": commission,
+                "min_commission": min_commission,
+                "stamp_tax": stamp_tax,
+                "slippage": slippage,
+                "execution": execution,
+                "chanlun_level": chanlun_level,
+            },
         )
 
-        all_trades = (
-            pd.concat(trade_frames, ignore_index=True)
-            if trade_frames
-            else pd.DataFrame(columns=["symbol", "direction", "pnl", "rejected"])
-        )
-        from easy_tdx.backtest.performance import PerformanceAnalyzer
 
-        perf = PerformanceAnalyzer(equity_curve=window_equity, trades=all_trades).compute()
+class MultiStrategyWalkForwardEngine(_ComboWalkForwardBase):
+    """多策略组合级 Walk-Forward：N 个策略各跑各自的原标的，逐窗独立回测。
 
-        return WalkForwardWindow(
-            index=index,
-            start=window_start.strftime("%Y-%m-%d"),
-            end=window_end.strftime("%Y-%m-%d"),
-            bars=int(e - s),
-            total_return=float(perf.get("total_return", 0.0)),
-            sharpe=float(perf.get("sharpe", 0.0)),
-            max_drawdown=float(perf.get("max_drawdown", 0.0)),
-            total_trades=int(perf.get("total_trades", 0)),
-            win_rate=float(perf.get("win_rate", 0.0)),
-            performance={k: v for k, v in perf.items()},
+    与 :class:`PortfolioWalkForwardEngine` 共用切窗语义、组合窗内净值合成与
+    :class:`WalkForwardResult` 输出结构（前端 WalkForwardPanel 直接复用），
+    唯一差异是槽位划分：每个槽位是「一个策略 × 它自己的标的」
+    （key 形如 ``"{label}@{symbol}"``，与
+    :class:`~easy_tdx.backtest.multi_strategy_engine.MultiStrategyEngine` 的
+    ``individual_results`` key 一致）。
+
+    Example:
+        >>> wf = MultiStrategyWalkForwardEngine(strategies=slots, n_windows=5)
+        >>> result = wf.run()
+        >>> result.consistency  # 组合盈利窗占比
+        0.6
+    """
+
+    def __init__(
+        self,
+        strategies: list[Any],
+        n_windows: int = 7,
+        warmup_ratio: float = 0.3,
+        context_bars: int = 60,
+        total_cash: float = 1_000_000.0,
+        commission: float = 0.0003,
+        min_commission: float = 5.0,
+        stamp_tax: float = 0.001,
+        slippage: float = 0.0,
+        execution: str = "next_open",
+    ) -> None:
+        """Initialize.
+
+        Args:
+            strategies: :class:`~easy_tdx.backtest.multi_strategy_engine.StrategySlot`
+                列表（每个槽位已绑定策略实例与 K 线）。
+            n_windows / warmup_ratio / context_bars: 切窗参数（同单标的 WF）。
+            total_cash: 组合总资金（各槽位等权分 1/N）。
+            其余参数: 透传给各窗各槽位的 :class:`BacktestEngine`
+                （与 MultiStrategyEngine 同口径，不含 auto_fees/chanlun_level）。
+        """
+        n = max(len(list(strategies)), 1)
+        slots = [
+            _ComboSlot(
+                key=f"{s.label}@{s.symbol}",
+                strategy=s.strategy,
+                df=s.df,
+                cash=total_cash / n,
+            )
+            for s in strategies
+        ]
+        super().__init__(
+            slots,
+            n_windows=n_windows,
+            warmup_ratio=warmup_ratio,
+            context_bars=context_bars,
+            engine_kwargs={
+                "commission": commission,
+                "min_commission": min_commission,
+                "stamp_tax": stamp_tax,
+                "slippage": slippage,
+                "execution": execution,
+            },
         )

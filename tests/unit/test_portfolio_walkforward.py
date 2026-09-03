@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -131,3 +132,53 @@ class TestPortfolioWalkForward:
             strategy=PeriodicStrategy, stocks=_stocks(), n_windows=0
         ).run()
         assert wf.n_windows == 2
+
+
+# ── MultiStrategyWalkForwardEngine（v1.31.1：多策略组合槽位 WF）───────────────
+def _slots() -> list[Any]:
+    from easy_tdx.backtest.multi_strategy_engine import StrategySlot
+
+    return [
+        StrategySlot(
+            label="双均线交叉",
+            symbol="SH:601088",
+            strategy=PeriodicStrategy(),
+            df=_make_df(400, seed=42),
+        ),
+        StrategySlot(
+            label="RSI反转",
+            symbol="SZ:000001",
+            strategy=PeriodicStrategy(),
+            df=_make_df(400, seed=99),
+        ),
+    ]
+
+
+def test_multi_strategy_wf_basic_structure() -> None:
+    from easy_tdx.backtest.walkforward import MultiStrategyWalkForwardEngine
+
+    wf = MultiStrategyWalkForwardEngine(strategies=_slots(), n_windows=4, total_cash=200_000).run()
+    assert len(wf.windows) == 4
+    assert wf.total_trades > 0
+    assert wf.total_trades == sum(w.total_trades for w in wf.windows)
+    # 窗口时间升序
+    starts = [pd.Timestamp(w.start) for w in wf.windows]
+    assert starts == sorted(starts)
+
+
+def test_multi_strategy_wf_matches_portfolio_structure() -> None:
+    """与 PortfolioWalkForwardEngine 输出同构（前端面板可复用）。"""
+    from easy_tdx.backtest.walkforward import MultiStrategyWalkForwardEngine
+
+    wf = MultiStrategyWalkForwardEngine(strategies=_slots(), n_windows=3).run()
+    d = wf.to_dict()
+    json.dumps(d)
+    assert "sqn" in d["windows"][0]["performance"]
+    assert "max_consecutive_wins" in d["windows"][0]["performance"]
+
+
+def test_multi_strategy_wf_empty_slots() -> None:
+    from easy_tdx.backtest.walkforward import MultiStrategyWalkForwardEngine
+
+    wf = MultiStrategyWalkForwardEngine(strategies=[], n_windows=3).run()
+    assert wf.windows == []

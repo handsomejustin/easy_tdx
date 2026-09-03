@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -1196,3 +1197,171 @@ def test_portfolio_evaluate_endpoint(client, monkeypatch):
     assert report["grade"]["scenario"] == "portfolio"
     assert report["fitness"]["total_checks"] == 8
     assert report["config"]["stocks"] == ["SZ000001", "SH600519"]
+
+
+# ── 多策略组合级 WF / 一条龙评估端点（v1.31.1）────────────────────────────────
+def _fake_multi_slots(n: int = 400):
+    """构造 _fetch_multi_strategy_bars 的 mock 替身（两槽位合成行情）。"""
+    import pandas as pd
+
+    from easy_tdx.backtest.multi_strategy_engine import StrategySlot
+
+    async def fake_fetch(client_arg, items):  # noqa: ANN001
+        slots = []
+        for item in items:
+            mkt, code = item.symbol.split(":")
+            close = 10 + np.cumsum(np.random.randn(n) * 0.3 + 0.02)
+            df = pd.DataFrame(
+                {
+                    "datetime": pd.date_range("2023-01-02", periods=n, freq="B"),
+                    "open": close - 0.1,
+                    "high": close + 0.2,
+                    "low": close - 0.2,
+                    "close": close,
+                    "vol": np.full(n, 5000.0),
+                    "amount": close * 5000,
+                }
+            )
+            slots.append(
+                StrategySlot(label=item.strategy, symbol=item.symbol, strategy=None, df=df)
+            )
+        return slots
+
+    return fake_fetch
+
+
+def _multi_request() -> dict[str, Any]:
+    from datetime import date as _date
+
+    start = f"{_date.today().year - 3}-01-02"
+    return {
+        "items": [
+            {
+                "strategy": "ma_cross",
+                "strategy_label": "双均线交叉",
+                "params": {"fast": 5, "slow": 20},
+                "symbol": "SH:601088",
+                "category": "DAY",
+                "start_date": start,
+            },
+            {
+                "strategy": "macd",
+                "strategy_label": "MACD 金叉",
+                "params": {},
+                "symbol": "SZ:000001",
+                "category": "DAY",
+                "start_date": start,
+            },
+        ],
+        "cash": 200000,
+    }
+
+
+def test_multi_strategy_wf_endpoint(client, monkeypatch):
+    """POST /backtest/multi-strategy/wf/run/async 端到端（mock 取数 + 真实引擎）。
+
+    StrategySlot 由取数阶段绑定策略实例（_build 时替换 mock 的 None），
+    这里用 router 内的真实 _fetch_multi_strategy_bars 不可行（需 client），
+    故 fake_fetch 直接构造策略实例。
+    """
+    import pandas as pd
+
+    import easy_tdx.web.routers.backtest as bt_router
+    from easy_tdx.backtest.multi_strategy_engine import StrategySlot
+    from easy_tdx.backtest.strategies import get_registry
+
+    async def fake_fetch(client_arg, items):  # noqa: ANN001
+        registry = get_registry()
+        slots = []
+        for item in items:
+            entry = registry.get(item.strategy)
+            strategy = entry.build(item.params)
+            close = 10 + np.cumsum(np.random.randn(400) * 0.3 + 0.02)
+            df = pd.DataFrame(
+                {
+                    "datetime": pd.date_range("2023-01-02", periods=400, freq="B"),
+                    "open": close - 0.1,
+                    "high": close + 0.2,
+                    "low": close - 0.2,
+                    "close": close,
+                    "vol": np.full(400, 5000.0),
+                    "amount": close * 5000,
+                }
+            )
+            slots.append(
+                StrategySlot(
+                    label=item.strategy_label or item.strategy,
+                    symbol=item.symbol,
+                    strategy=strategy,
+                    df=df,
+                )
+            )
+        return slots
+
+    monkeypatch.setattr(bt_router, "_fetch_multi_strategy_bars", fake_fetch)
+
+    resp = client.post(
+        "/api/v1/backtest/multi-strategy/wf/run/async?n_windows=3",
+        json=_multi_request(),
+    )
+    assert resp.status_code == 202, resp.text
+    final = _wait_task(client, resp.json()["task_id"])
+    assert final["status"] == "done", final
+    wf = final["result"]["walkforward"]
+    assert wf["n_windows"] == 3
+    assert len(wf["windows"]) == 3
+    assert "consistency" in wf
+    assert "sqn" in wf["windows"][0]["performance"]
+
+
+def test_multi_strategy_evaluate_endpoint(client, monkeypatch):
+    """POST /backtest/multi-strategy/evaluate/run/async 端到端。"""
+    import pandas as pd
+
+    import easy_tdx.web.routers.backtest as bt_router
+    from easy_tdx.backtest.multi_strategy_engine import StrategySlot
+    from easy_tdx.backtest.strategies import get_registry
+
+    async def fake_fetch(client_arg, items):  # noqa: ANN001
+        registry = get_registry()
+        slots = []
+        for item in items:
+            entry = registry.get(item.strategy)
+            strategy = entry.build(item.params)
+            close = 10 + np.cumsum(np.random.randn(400) * 0.3 + 0.02)
+            df = pd.DataFrame(
+                {
+                    "datetime": pd.date_range("2023-01-02", periods=400, freq="B"),
+                    "open": close - 0.1,
+                    "high": close + 0.2,
+                    "low": close - 0.2,
+                    "close": close,
+                    "vol": np.full(400, 5000.0),
+                    "amount": close * 5000,
+                }
+            )
+            slots.append(
+                StrategySlot(
+                    label=item.strategy_label or item.strategy,
+                    symbol=item.symbol,
+                    strategy=strategy,
+                    df=df,
+                )
+            )
+        return slots
+
+    monkeypatch.setattr(bt_router, "_fetch_multi_strategy_bars", fake_fetch)
+
+    resp = client.post(
+        "/api/v1/backtest/multi-strategy/evaluate/run/async",
+        json=_multi_request(),
+    )
+    assert resp.status_code == 202, resp.text
+    final = _wait_task(client, resp.json()["task_id"])
+    assert final["status"] == "done", final
+    report = final["result"]
+    for key in ("performance", "score", "grade", "walkforward", "fitness", "benchmark", "config"):
+        assert key in report
+    assert report["grade"]["scenario"] == "portfolio"
+    assert report["fitness"]["total_checks"] == 8
+    assert report["config"]["slots"] == ["双均线交叉@SH:601088", "MACD 金叉@SZ:000001"]

@@ -289,6 +289,69 @@ async def run_multi_strategy_backtest_async(
     return TaskSubmitResponse(task_id=task_id, status=status)
 
 
+@router.post(
+    "/backtest/multi-strategy/wf/run/async", response_model=TaskSubmitResponse, status_code=202
+)
+async def run_multi_strategy_walkforward_async(
+    req: MultiStrategyBacktestRequest,
+    n_windows: int = 7,
+    client: Any = Depends(get_client),
+) -> TaskSubmitResponse:
+    """提交多策略组合级 Walk-Forward 样本外验证后台任务。
+
+    逐槽位取行情后，按全部槽位日期并集切窗（预热区 + N 个连续测试窗），
+    每窗各槽位独立回测并合成组合窗内净值。结果为 ``{"walkforward": {...}}``
+    （与单标的 WF 同构），通过 GET /backtest/tasks/{task_id} 轮询。
+    """
+    slots = await _fetch_multi_strategy_bars(client, req.items)
+    if not slots:
+        raise ValueError("所有策略槽位均未取到有效行情数据")
+
+    snapshot = req.model_copy()
+    description = f"多策略组合WF | {len(slots)}个策略 × {n_windows}窗"
+
+    runner = get_runner()
+    task_id = runner.submit(
+        lambda: _run_multi_strategy_walkforward(slots, snapshot, n_windows),
+        description=description,
+    )
+    state = runner.get(task_id)
+    status: Any = state.status if state.status in ("pending", "running") else "running"
+    return TaskSubmitResponse(task_id=task_id, status=status)
+
+
+@router.post(
+    "/backtest/multi-strategy/evaluate/run/async",
+    response_model=TaskSubmitResponse,
+    status_code=202,
+)
+async def run_multi_strategy_evaluate_async(
+    req: MultiStrategyBacktestRequest,
+    client: Any = Depends(get_client),
+) -> TaskSubmitResponse:
+    """提交多策略组合级一条龙评估后台任务：组合回测 + 组合 WF + 跨槽位适配性
+    体检 + 综合评分 + 组合评级 + 等权买入持有基准对比。
+
+    结果结构见 ``easy_tdx.backtest.benchmark.evaluate_multi`` 文档（与
+    单标的 evaluate_strategy 同构），通过 GET /backtest/tasks/{task_id} 轮询。
+    """
+    slots = await _fetch_multi_strategy_bars(client, req.items)
+    if not slots:
+        raise ValueError("所有策略槽位均未取到有效行情数据")
+
+    snapshot = req.model_copy()
+    description = f"多策略组合一条龙 | {len(slots)}个策略"
+
+    runner = get_runner()
+    task_id = runner.submit(
+        lambda: _run_multi_strategy_evaluate(slots, snapshot),
+        description=description,
+    )
+    state = runner.get(task_id)
+    status: Any = state.status if state.status in ("pending", "running") else "running"
+    return TaskSubmitResponse(task_id=task_id, status=status)
+
+
 @router.post("/backtest/optimize/run/async", response_model=TaskSubmitResponse, status_code=202)
 async def run_optimize_async(
     req: OptimizeBacktestRequest,
@@ -1054,8 +1117,14 @@ async def _fetch_multi_strategy_bars(
 def _run_multi_strategy_backtest(
     slots: list[Any], req: MultiStrategyBacktestRequest
 ) -> dict[str, Any]:
-    """执行多策略组合回测并返回清洗后的结果字典（后台线程内调用）。"""
+    """执行多策略组合回测并返回清洗后的结果字典（后台线程内调用）。
+
+    与组合回测 ``_run_portfolio_backtest`` 同构：附带组合评级（净值口径）
+    与综合评分，供前端/REST 直接消费。
+    """
+    from easy_tdx.backtest.grading import grade_portfolio_equity
     from easy_tdx.backtest.multi_strategy_engine import MultiStrategyEngine
+    from easy_tdx.backtest.scoring import score_strategy
 
     engine = MultiStrategyEngine(
         strategies=slots,
@@ -1067,7 +1136,50 @@ def _run_multi_strategy_backtest(
         execution=req.execution,
     )
     result = engine.run()
-    return serialize_result(result)
+    out = serialize_result(result)
+    # 组合评级（净值曲线口径）+ 综合评分——与单标的/多标的组合响应同构
+    if len(result.combined_equity) >= 2:
+        out["grade"] = grade_portfolio_equity(
+            result.combined_equity.to_dict(orient="records")
+        ).to_dict()
+    out["score"] = score_strategy(dict(result.total_performance)).to_dict()
+    return out
+
+
+def _run_multi_strategy_walkforward(
+    slots: list[Any], req: MultiStrategyBacktestRequest, n_windows: int = 7
+) -> dict[str, Any]:
+    """执行多策略组合级 Walk-Forward 验证（后台线程内调用）。"""
+    from easy_tdx.backtest.walkforward import MultiStrategyWalkForwardEngine
+
+    wf = MultiStrategyWalkForwardEngine(
+        strategies=slots,
+        n_windows=n_windows,
+        total_cash=req.cash,
+        commission=req.commission,
+        min_commission=req.min_commission,
+        stamp_tax=req.stamp_tax,
+        slippage=req.slippage,
+        execution=req.execution,
+    ).run()
+    return {"walkforward": wf.to_dict()}
+
+
+def _run_multi_strategy_evaluate(
+    slots: list[Any], req: MultiStrategyBacktestRequest
+) -> dict[str, Any]:
+    """执行多策略组合级一条龙评估（后台线程内调用）。"""
+    from easy_tdx.backtest.benchmark import evaluate_multi
+
+    return evaluate_multi(
+        strategies=slots,
+        total_cash=req.cash,
+        commission=req.commission,
+        min_commission=req.min_commission,
+        stamp_tax=req.stamp_tax,
+        slippage=req.slippage,
+        execution=req.execution,
+    )
 
 
 def _run_optimize(df: pd.DataFrame, req: OptimizeBacktestRequest) -> dict[str, Any]:

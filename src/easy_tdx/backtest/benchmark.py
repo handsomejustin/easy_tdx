@@ -40,7 +40,11 @@ from easy_tdx.backtest.grading import grade_performance, grade_portfolio_equity
 from easy_tdx.backtest.scoring import score_strategy
 from easy_tdx.backtest.strategy import Strategy
 from easy_tdx.backtest.types import to_json_native
-from easy_tdx.backtest.walkforward import PortfolioWalkForwardEngine, WalkForwardEngine
+from easy_tdx.backtest.walkforward import (
+    MultiStrategyWalkForwardEngine,
+    PortfolioWalkForwardEngine,
+    WalkForwardEngine,
+)
 
 if TYPE_CHECKING:
     import numpy.typing as npt
@@ -54,6 +58,7 @@ else:
 __all__ = [
     "evaluate_strategy",
     "evaluate_portfolio",
+    "evaluate_multi",
     "run_buy_hold_benchmark",
     "compute_benchmark_comparison",
 ]
@@ -453,3 +458,119 @@ def _aggregate_fitness(
     )
     aggregated.high_fitness = aggregated.pass_ratio >= 0.75
     return aggregated
+
+
+def evaluate_multi(
+    strategies: list[Any],
+    total_cash: float = 1_000_000.0,
+    commission: float = 0.0003,
+    min_commission: float = 5.0,
+    stamp_tax: float = 0.001,
+    slippage: float = 0.0,
+    execution: str = "next_open",
+    n_windows: int = 7,
+    warmup_ratio: float = 0.3,
+    context_bars: int = 60,
+    split: tuple[float, float, float] = (0.6, 0.2, 0.2),
+) -> dict[str, Any]:
+    """多策略组合一条龙评估：组合回测 + 组合 WF + 跨槽位适配性体检 + 综合评分
+    + 组合评级 + 等权买入持有基准对比。
+
+    与 :func:`evaluate_portfolio`（一个策略 × 多标的）同构，报告结构一致；
+    差异点仅在槽位划分——每个槽位是「一个策略 × 它自己的标的」
+    （:class:`~easy_tdx.backtest.multi_strategy_engine.StrategySlot`）：
+
+    - 全样本回测走 :class:`~easy_tdx.backtest.multi_strategy_engine.MultiStrategyEngine`；
+    - Walk-Forward 走
+      :class:`~easy_tdx.backtest.walkforward.MultiStrategyWalkForwardEngine`；
+    - 适配性体检逐槽位（各自策略 × 各自标的）跑三段后按多数口径聚合；
+    - 买入持有基准 = 各槽位标的的等权买入持有组合（策略换成 _BuyAndHold，
+      其余不变），α/β/信息比率/跟踪误差基于两条组合净值曲线。
+
+    Args:
+        strategies: StrategySlot 列表（每个槽位已绑定策略实例与 K 线）。
+        其余参数: 透传给组合回测 / 组合 WF / 适配性（同口径费率与执行）。
+
+    Returns:
+        完整评估报告字典（结构同 evaluate_strategy，config 记录槽位清单）。
+    """
+    from easy_tdx.backtest.multi_strategy_engine import MultiStrategyEngine, StrategySlot
+
+    engine_kwargs: dict[str, Any] = {
+        "total_cash": total_cash,
+        "commission": commission,
+        "min_commission": min_commission,
+        "stamp_tax": stamp_tax,
+        "slippage": slippage,
+        "execution": execution,
+    }
+
+    # 1. 全样本组合回测（完整 25 项指标 + 合并净值曲线）
+    bt = MultiStrategyEngine(strategies=list(strategies), **engine_kwargs).run()
+    perf = bt.total_performance
+
+    # 2. 组合 Walk-Forward 样本外
+    wf = MultiStrategyWalkForwardEngine(
+        strategies=list(strategies),
+        n_windows=n_windows,
+        warmup_ratio=warmup_ratio,
+        context_bars=context_bars,
+        **engine_kwargs,
+    ).run()
+
+    # 3. 适配性体检：逐槽位（各自策略 × 各自标的）跑三段体检，多数口径聚合
+    per_cash = total_cash / max(len(strategies), 1)
+    fitness_kwargs: dict[str, Any] = {
+        "commission": commission,
+        "min_commission": min_commission,
+        "stamp_tax": stamp_tax,
+        "slippage": slippage,
+        "execution": execution,
+    }
+    per_slot_fitness = [
+        FitnessEngine(
+            strategy=slot.strategy,
+            split=split,
+            context_bars=context_bars,
+            cash=per_cash,
+            **fitness_kwargs,
+        ).evaluate(slot.df)
+        for slot in strategies
+    ]
+    fitness = _aggregate_fitness(per_slot_fitness, split)
+
+    # 4. 综合评分（叠加组合 WF 一致性）+ 组合评级（净值曲线口径）
+    score = score_strategy(dict(perf), wf=wf)
+    grade = grade_portfolio_equity(bt.combined_equity.to_dict(orient="records"))
+
+    # 5. 基准对比：各槽位标的的等权买入持有组合（策略换成 _BuyAndHold，其余不变）
+    bh_slots = [
+        StrategySlot(label=s.label, symbol=s.symbol, strategy=_BuyAndHold(), df=s.df)
+        for s in strategies
+    ]
+    bh_bt = MultiStrategyEngine(strategies=bh_slots, **engine_kwargs).run()
+    bh_keys = ("total_return", "annual_return", "max_drawdown", "sharpe", "calmar", "volatility")
+    bh = dict(to_json_native({k: bh_bt.total_performance.get(k, 0.0) for k in bh_keys}))
+    comparison = compute_benchmark_comparison(bt.combined_equity, bh_bt.combined_equity)
+
+    return {
+        "performance": to_json_native(dict(perf)),
+        "score": score.to_dict(),
+        "grade": grade.to_dict(),
+        "walkforward": wf.to_dict(),
+        "fitness": fitness.to_dict(),
+        "benchmark": {
+            "buy_hold": bh,
+            "excess_return": float(perf.get("total_return", 0.0))
+            - float(bh.get("total_return", 0.0)),
+            **comparison,
+        },
+        "config": {
+            "slots": [f"{s.label}@{s.symbol}" for s in strategies],
+            "total_cash": total_cash,
+            "execution": execution,
+            "n_windows": n_windows,
+            "warmup_ratio": warmup_ratio,
+            "split": list(split),
+        },
+    }

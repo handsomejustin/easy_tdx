@@ -14,6 +14,8 @@ import {
   submitOptimizeAllTask,
   submitOptimizeTask,
   submitMultiStrategyTask,
+  submitMultiStrategyEvaluateTask,
+  submitMultiStrategyWalkforwardTask,
   submitWalkforwardTask,
   submitEvaluateTask,
   fetchTask,
@@ -255,6 +257,8 @@ export const useBacktestStore = defineStore('backtest', () => {
     multiStrategyRunning.value = true
     error.value = ''
     multiStrategyResult.value = null
+    // 新一次组合回测开始时清掉上一轮的附加分析（WF/一条龙面板随主结果一起刷新）
+    clearMultiStrategyExtraAnalysis()
     try {
       const { task_id } = await submitMultiStrategyTask(req)
       const start = Date.now()
@@ -281,7 +285,64 @@ export const useBacktestStore = defineStore('backtest', () => {
 
   function clearMultiStrategy() {
     multiStrategyResult.value = null
+    clearMultiStrategyExtraAnalysis()
     error.value = ''
+  }
+
+  // ── 多策略组合附加分析：组合级 Walk-Forward / 一条龙评估 ──────────────────
+  const multiWfResult = ref<WalkForwardResult | null>(null)
+  const multiWfRunning = ref(false)
+  const multiWfError = ref<string>('')
+  const multiEvaluateResult = ref<EvaluateReport | null>(null)
+  const multiEvaluateRunning = ref(false)
+  const multiEvaluateError = ref<string>('')
+
+  /** 提交多策略组合级 WF 样本外验证后台任务并轮询（N 槽位 × N 窗，较慢）。 */
+  async function runMultiStrategyWalkforward(req: MultiStrategyBacktestRequest, nWindows = 7) {
+    multiWfRunning.value = true
+    multiWfError.value = ''
+    multiWfResult.value = null
+    try {
+      const { task_id } = await submitMultiStrategyWalkforwardTask(req, nWindows)
+      const body = await pollTask<{ walkforward: WalkForwardResult }>(
+        task_id,
+        300_000,
+        '组合 WF 验证',
+      )
+      multiWfResult.value = body.walkforward
+    } catch (e) {
+      multiWfError.value = formatError(e)
+      multiWfResult.value = null
+    } finally {
+      multiWfRunning.value = false
+    }
+  }
+
+  /** 提交多策略组合级一条龙评估后台任务并轮询（组合回测+WF+适配性+评分+基准对比）。 */
+  async function runMultiStrategyEvaluate(req: MultiStrategyBacktestRequest) {
+    multiEvaluateRunning.value = true
+    multiEvaluateError.value = ''
+    multiEvaluateResult.value = null
+    try {
+      const { task_id } = await submitMultiStrategyEvaluateTask(req)
+      multiEvaluateResult.value = await pollTask<EvaluateReport>(
+        task_id,
+        600_000,
+        '组合一条龙评估',
+      )
+    } catch (e) {
+      multiEvaluateError.value = formatError(e)
+      multiEvaluateResult.value = null
+    } finally {
+      multiEvaluateRunning.value = false
+    }
+  }
+
+  function clearMultiStrategyExtraAnalysis() {
+    multiWfResult.value = null
+    multiWfError.value = ''
+    multiEvaluateResult.value = null
+    multiEvaluateError.value = ''
   }
 
   // ── 参数网格寻优（Phase 4） ─────────────────────────────────────────────
@@ -385,6 +446,12 @@ export const useBacktestStore = defineStore('backtest', () => {
     portfolioEvaluateError,
     multiStrategyResult,
     multiStrategyRunning,
+    multiWfResult,
+    multiWfRunning,
+    multiWfError,
+    multiEvaluateResult,
+    multiEvaluateRunning,
+    multiEvaluateError,
     optimizeResult,
     optimizeRunning,
     optimizeContext,
@@ -413,6 +480,9 @@ export const useBacktestStore = defineStore('backtest', () => {
     clearPortfolioExtraAnalysis,
     runMultiStrategy,
     clearMultiStrategy,
+    runMultiStrategyWalkforward,
+    runMultiStrategyEvaluate,
+    clearMultiStrategyExtraAnalysis,
     runOptimize,
     runOptimizeAll,
     setOptimizeContext,

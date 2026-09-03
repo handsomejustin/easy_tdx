@@ -49,7 +49,8 @@ export interface AiPromptInput {
 }
 
 export interface PortfolioAiPromptInput {
-  /** 完整标的代码列表（带市场前缀，如 ["SZ:000001", "SH:600519"]） */
+  /** 完整标的代码列表（带市场前缀，如 ["SZ:000001", "SH:600519"]）；
+   *  multi 模式下传「策略@标的」明细列表（如 ["双均线@SH:601088", …]） */
   stocks: string[]
   category: Category
   startDate: string
@@ -61,6 +62,9 @@ export interface PortfolioAiPromptInput {
   slippage: number
   execution: ExecutionMode
   result: PortfolioResult
+  /** 组合形态：portfolio = 一个策略 × 多只标的（默认）；
+   *  multi = 多个策略各跑各自的原标的（策略库「重跑到今天」） */
+  mode?: 'portfolio' | 'multi'
   /** 附加分析（未勾选/未跑完时传 null，对应段落自动省略） */
   wf?: WalkForwardResult | null
   evaluate?: EvaluateReport | null
@@ -163,15 +167,22 @@ function n(v: number | string | null | undefined): number | undefined {
 
 // ── 各段落构建 ───────────────────────────────────────────────────────────────
 
-function sectionRole(kind: 'single' | 'portfolio' = 'single'): string {
-  const intro =
-    kind === 'portfolio'
-      ? '下面是我跑出来的组合回测报告（同一个策略分别跑在一篮子标的上，资金均分、各标的独立回测后净值加总），帮我看看这个组合策略到底行不行。内容上要说到这六件事，顺序随意，用你自然的说话方式组织：'
-      : '下面是我跑出来的回测报告，帮我看看这个策略到底行不行。内容上要说到这六件事，顺序随意，用你自然的说话方式组织：'
-  const step5 =
-    kind === 'portfolio'
-      ? '5. **给可执行的下一步**：几条我马上能做的事（改什么参数、加什么过滤、换哪些标的、先做什么测试再谈实盘），别空谈；'
-      : '5. **给可执行的下一步**：几条我马上能做的事（改什么参数、加什么过滤、先做什么测试再谈实盘），别空谈；'
+function sectionRole(kind: 'single' | 'portfolio' | 'multi' = 'single'): string {
+  let intro =
+    '下面是我跑出来的回测报告，帮我看看这个策略到底行不行。内容上要说到这六件事，顺序随意，用你自然的说话方式组织：'
+  let step5 =
+    '5. **给可执行的下一步**：几条我马上能做的事（改什么参数、加什么过滤、先做什么测试再谈实盘），别空谈；'
+  if (kind === 'portfolio') {
+    intro =
+      '下面是我跑出来的组合回测报告（同一个策略分别跑在一篮子标的上，资金均分、各标的独立回测后净值加总），帮我看看这个组合策略到底行不行。内容上要说到这六件事，顺序随意，用你自然的说话方式组织：'
+    step5 =
+      '5. **给可执行的下一步**：几条我马上能做的事（改什么参数、加什么过滤、换哪些标的、先做什么测试再谈实盘），别空谈；'
+  } else if (kind === 'multi') {
+    intro =
+      '下面是我跑出来的组合回测报告（N 个策略各跑各自的原标的，资金均分、各策略独立回测后净值加总），帮我看看这个策略组合到底行不行。内容上要说到这六件事，顺序随意，用你自然的说话方式组织：'
+    step5 =
+      '5. **给可执行的下一步**：几条我马上能做的事（改哪些策略的参数、换掉拖后腿的策略、加什么过滤、先做什么测试再谈实盘），别空谈；'
+  }
   return [
     '# 角色设定',
     '',
@@ -370,28 +381,46 @@ function sectionFooter(): string {
 // ── 组合版段落 ───────────────────────────────────────────────────────────────
 
 function sectionPortfolioConfig(i: PortfolioAiPromptInput): string {
-  const stockList =
-    i.stocks.length <= 12
-      ? i.stocks.join('、')
-      : `${i.stocks.slice(0, 12).join('、')} 等 ${i.stocks.length} 只`
-  const lines = [
-    '# 组合回测配置',
-    '',
-    `- 组合形式：同一个策略分别跑在 ${i.stocks.length} 只标的上，资金均分（各拿总额的 ${(
-      100 / i.stocks.length
-    ).toFixed(1)}%），标的间独立回测、净值按日加总`,
-    `- 标的列表：${stockList}`,
-    `- 回测区间：${i.startDate} ~ ${i.endDate}（${CATEGORY_LABELS[i.category] ?? i.category}）`,
-    `- 策略：${i.strategyLabel}`,
-    `- 参数：${fmtParams(i.params)}`,
+  const multi = i.mode === 'multi'
+  const lines = ['# 组合回测配置', '']
+  if (multi) {
+    const detail =
+      i.stocks.length <= 12
+        ? i.stocks.join('、')
+        : `${i.stocks.slice(0, 12).join('、')} 等 ${i.stocks.length} 个策略槽位`
+    lines.push(
+      `- 组合形式：${i.stocks.length} 个策略各跑各自的原标的，资金均分（各拿总额的 ${(
+        100 / i.stocks.length
+      ).toFixed(1)}%），策略间独立回测、净值按日加总`,
+    )
+    lines.push(`- 策略明细：${detail}`)
+  } else {
+    const stockList =
+      i.stocks.length <= 12
+        ? i.stocks.join('、')
+        : `${i.stocks.slice(0, 12).join('、')} 等 ${i.stocks.length} 只`
+    lines.push(
+      `- 组合形式：同一个策略分别跑在 ${i.stocks.length} 只标的上，资金均分（各拿总额的 ${(
+        100 / i.stocks.length
+      ).toFixed(1)}%），标的间独立回测、净值按日加总`,
+    )
+    lines.push(`- 标的列表：${stockList}`)
+    lines.push(`- 策略：${i.strategyLabel}`)
+    lines.push(`- 参数：${fmtParams(i.params)}`)
+  }
+  if (multi) {
+    lines.push('- （各策略的参数见各策略在策略库中保存的配置，此处不逐一展开）')
+  }
+  lines.push(`- 回测区间：${i.startDate} ~ ${i.endDate}（${CATEGORY_LABELS[i.category] ?? i.category}）`)
+  lines.push(
     `- 组合总资金：${fmtMoney(i.cash)} 元；佣金 ${i.commission}；滑点 ${i.slippage}；成交价：${EXECUTION_LABELS[i.execution] ?? i.execution}`,
-    '',
-  ]
+  )
+  lines.push('')
   return lines.join('\n')
 }
 
-/** 各标的表现摘要：按收益降序，超过 12 只时只列最好 6 只 + 最差 6 只。 */
-function sectionStocksSummary(result: PortfolioResult): string {
+/** 各槽位表现摘要：按收益降序，超过 12 个时只列最好 6 个 + 最差 6 个。 */
+function sectionStocksSummary(result: PortfolioResult, multi = false): string {
   const entries = Object.entries(result.individual_results)
   if (entries.length === 0) return ''
   const sorted = entries
@@ -401,9 +430,10 @@ function sectionStocksSummary(result: PortfolioResult): string {
     sorted.length <= 12
       ? sorted
       : [...sorted.slice(0, 6), ...sorted.slice(sorted.length - 6)]
+  const what = multi ? '各策略槽位' : '各标的'
   const lines = [
-    '# 各标的表现（按收益降序；' +
-      (sorted.length <= 12 ? '全部' : `省略中间 ${sorted.length - 12} 只，其余为最好/最差各 6 只`) +
+    `# ${what}表现（按收益降序；` +
+      (sorted.length <= 12 ? '全部' : `省略中间 ${sorted.length - 12} 个，其余为最好/最差各 6 个`) +
       '）',
     '',
   ]
@@ -451,13 +481,14 @@ export function buildAiPrompt(input: AiPromptInput): string {
 
 /** 组装组合回测的 AI 解读 Prompt（与单标的同构，段落随附加分析增减）。 */
 export function buildPortfolioAiPrompt(input: PortfolioAiPromptInput): string {
+  const multi = input.mode === 'multi'
   const parts: string[] = [
-    sectionRole('portfolio'),
+    sectionRole(multi ? 'multi' : 'portfolio'),
     sectionPortfolioConfig(input),
     sectionMetrics(input.result.total_performance),
     sectionEquityPoints(input.result.combined_equity),
   ]
-  const stocksSummary = sectionStocksSummary(input.result)
+  const stocksSummary = sectionStocksSummary(input.result, multi)
   if (stocksSummary) parts.push(stocksSummary)
   if (input.wf) parts.push(sectionWf(input.wf))
   if (input.evaluate) parts.push(sectionEvaluate(input.evaluate))
