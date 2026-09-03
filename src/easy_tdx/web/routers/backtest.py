@@ -457,6 +457,71 @@ async def run_evaluate_async(
     return TaskSubmitResponse(task_id=task_id, status=status)
 
 
+# ── 组合级 Walk-Forward / 一条龙评估（对齐单标的防过拟合链）──────────────────
+
+
+@router.post("/backtest/portfolio/wf/run/async", response_model=TaskSubmitResponse, status_code=202)
+async def run_portfolio_walkforward_async(
+    req: PortfolioBacktestRequest,
+    n_windows: int = 7,
+    client: Any = Depends(get_client),
+) -> TaskSubmitResponse:
+    """提交组合级 Walk-Forward 样本外验证后台任务。
+
+    逐个标的取行情后，按全部标的日期并集切窗（预热区 + N 个连续测试窗），
+    每窗各标的独立回测并合成组合窗内净值。结果为
+    ``{"walkforward": {...}}``（与单标的 WF 同构），通过
+    GET /backtest/tasks/{task_id} 轮询。
+    """
+    stock_data_list = await _fetch_portfolio_bars(
+        client, req.stocks, req.category, req.start_date, req.end_date
+    )
+    if not stock_data_list:
+        raise ValueError("所有标的均未取到有效行情数据")
+
+    snapshot = req.model_copy()
+    description = f"{snapshot.strategy} 组合WF | {len(stock_data_list)}只标的 × {n_windows}窗"
+    runner = get_runner()
+    task_id = runner.submit(
+        lambda: _run_portfolio_walkforward(stock_data_list, snapshot, n_windows),
+        description=description,
+    )
+    state = runner.get(task_id)
+    status: Any = state.status if state.status in ("pending", "running") else "running"
+    return TaskSubmitResponse(task_id=task_id, status=status)
+
+
+@router.post(
+    "/backtest/portfolio/evaluate/run/async", response_model=TaskSubmitResponse, status_code=202
+)
+async def run_portfolio_evaluate_async(
+    req: PortfolioBacktestRequest,
+    client: Any = Depends(get_client),
+) -> TaskSubmitResponse:
+    """提交组合级一条龙评估后台任务：组合回测 + 组合 WF + 跨标的适配性体检
+    + 综合评分 + 组合评级 + 等权买入持有基准对比。
+
+    结果结构见 ``easy_tdx.backtest.benchmark.evaluate_portfolio`` 文档（与
+    单标的 evaluate_strategy 同构），通过 GET /backtest/tasks/{task_id} 轮询。
+    """
+    stock_data_list = await _fetch_portfolio_bars(
+        client, req.stocks, req.category, req.start_date, req.end_date
+    )
+    if not stock_data_list:
+        raise ValueError("所有标的均未取到有效行情数据")
+
+    snapshot = req.model_copy()
+    description = f"{snapshot.strategy} 组合一条龙 | {len(stock_data_list)}只标的"
+    runner = get_runner()
+    task_id = runner.submit(
+        lambda: _run_portfolio_evaluate(stock_data_list, snapshot),
+        description=description,
+    )
+    state = runner.get(task_id)
+    status: Any = state.status if state.status in ("pending", "running") else "running"
+    return TaskSubmitResponse(task_id=task_id, status=status)
+
+
 async def _resolve_df(client: Any, req: BacktestRequest) -> pd.DataFrame:
     """内联 ohlcv 或按 symbol 取行情（/backtest/run/async 同逻辑的复用封装）。"""
     if req.ohlcv is not None:
@@ -583,6 +648,58 @@ def _run_evaluate(df: pd.DataFrame, req: BacktestRequest) -> dict[str, Any]:
         slippage=req.slippage,
         execution=req.execution,
         symbol=req.symbol,
+        auto_fees=req.auto_fees,
+    )
+
+
+def _run_portfolio_walkforward(
+    stock_data_list: list[Any], req: PortfolioBacktestRequest, n_windows: int = 7
+) -> dict[str, Any]:
+    """执行组合级 Walk-Forward 验证（后台线程内调用）。"""
+    from easy_tdx.backtest.strategies import get_registry
+    from easy_tdx.backtest.walkforward import PortfolioWalkForwardEngine
+
+    try:
+        entry = get_registry().get(req.strategy)
+    except KeyError as exc:
+        raise ValueError(str(exc)) from exc
+
+    wf = PortfolioWalkForwardEngine(
+        strategy=entry.build(req.params),
+        stocks=stock_data_list,
+        n_windows=n_windows,
+        total_cash=req.cash,
+        commission=req.commission,
+        min_commission=req.min_commission,
+        stamp_tax=req.stamp_tax,
+        slippage=req.slippage,
+        execution=req.execution,
+        auto_fees=req.auto_fees,
+    ).run()
+    return {"walkforward": wf.to_dict()}
+
+
+def _run_portfolio_evaluate(
+    stock_data_list: list[Any], req: PortfolioBacktestRequest
+) -> dict[str, Any]:
+    """执行组合级一条龙评估（后台线程内调用）。"""
+    from easy_tdx.backtest.benchmark import evaluate_portfolio
+    from easy_tdx.backtest.strategies import get_registry
+
+    try:
+        entry = get_registry().get(req.strategy)
+    except KeyError as exc:
+        raise ValueError(str(exc)) from exc
+
+    return evaluate_portfolio(
+        strategy=entry.build(req.params),
+        stocks=stock_data_list,
+        total_cash=req.cash,
+        commission=req.commission,
+        min_commission=req.min_commission,
+        stamp_tax=req.stamp_tax,
+        slippage=req.slippage,
+        execution=req.execution,
         auto_fees=req.auto_fees,
     )
 
@@ -715,6 +832,27 @@ def _ohlcv_to_df(records: list[dict[str, Any]]) -> pd.DataFrame:
     return df
 
 
+def _normalize_bars_dt(df: pd.DataFrame) -> pd.DataFrame:
+    """把取到的 K 线规范化为引擎可直接消费的列布局（返回新 df 或原 df）。
+
+    引擎（StrategyDataProxy / PortfolioTracker）：时间列必须叫 ``datetime``
+    （``date`` 列会被当成数值列强转 float 而报错），类型接受 int YYYYMMDD
+    或 datetime64。真实 TDX 日线返回 int ``date`` 列、分钟线返回 ``datetime``，
+    而 E2E mock 返回字符串 ``date``——这里统一：改名 ``date``→``datetime``、
+    字符串/对象类型 coerce 成 datetime64、删除遗留的 ``date`` 冗余列。
+    """
+    if "datetime" not in df.columns and "date" in df.columns:
+        df = df.copy()
+        df["datetime"] = df["date"]
+    dt = df["datetime"]
+    if dt.dtype.kind not in "iu" and not pd.api.types.is_datetime64_any_dtype(dt):
+        df = df.copy()
+        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+    if "date" in df.columns:
+        df = df.drop(columns=["date"])
+    return df
+
+
 async def _fetch_bars(client: Any, symbol: str, category: str, count: int) -> pd.DataFrame:
     """按标的取 K 线（async，必须在 event loop 内调用）。"""
     from easy_tdx.web.convert import category_from_str, market_from_str
@@ -729,14 +867,21 @@ async def _fetch_bars(client: Any, symbol: str, category: str, count: int) -> pd
     )
     if len(df) == 0:
         raise ValueError(f"标的 {symbol} 未取到任何 K 线数据")
-    return df
+    return _normalize_bars_dt(df)
 
 
 def _run_portfolio_backtest(
     stock_data_list: list[Any], req: PortfolioBacktestRequest
 ) -> dict[str, Any]:
-    """执行组合回测并返回清洗后的结果字典（后台线程内调用）。"""
+    """执行组合回测并返回清洗后的结果字典（后台线程内调用）。
+
+    与单标的 ``_run_backtest`` 对齐：附带组合评级（``grade_portfolio_equity``，
+    净值曲线 5 维度口径）与综合评分（``score_strategy``，无 WF 时权重自动
+    归一化），供前端/REST 直接消费。
+    """
+    from easy_tdx.backtest.grading import grade_portfolio_equity
     from easy_tdx.backtest.portfolio_engine import PortfolioBacktestEngine
+    from easy_tdx.backtest.scoring import score_strategy
     from easy_tdx.backtest.strategies import get_registry
 
     try:
@@ -757,7 +902,14 @@ def _run_portfolio_backtest(
         auto_fees=req.auto_fees,
     )
     result = engine.run()
-    return serialize_result(result)
+    out = serialize_result(result)
+    # 组合评级（净值曲线口径）+ 综合评分——与单标的回测响应同构
+    if len(result.combined_equity) >= 2:
+        out["grade"] = grade_portfolio_equity(
+            result.combined_equity.to_dict(orient="records")
+        ).to_dict()
+    out["score"] = score_strategy(dict(result.total_performance)).to_dict()
+    return out
 
 
 async def _fetch_portfolio_bars(
@@ -812,6 +964,7 @@ async def _fetch_portfolio_bars(
             df["datetime"] = df["date"]
         # 翻页拼接后按时间正序排序（页间逆序）
         df = df.sort_values("datetime").reset_index(drop=True)
+        df = _normalize_bars_dt(df)
         # 日期范围过滤
         if start_date or end_date:
             dt_str = df["datetime"].astype(str).str.slice(0, 10)
@@ -882,6 +1035,7 @@ async def _fetch_multi_strategy_bars(
             df = df.copy()
             df["datetime"] = df["date"]
         df = df.sort_values("datetime").reset_index(drop=True)
+        df = _normalize_bars_dt(df)
         # 日期范围过滤
         if item.start_date or item.end_date:
             df = _filter_df_by_date(df, item.start_date, item.end_date)

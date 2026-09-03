@@ -1048,3 +1048,151 @@ def test_list_tasks_limit(client, sample_ohlcv):
 
     resp = client.get("/api/v1/backtest/tasks?limit=2")
     assert resp.json()["count"] <= 2
+
+
+# ── 组合级 WF / 一条龙评估端点（v1.31）────────────────────────────────────────
+def _wait_task(client, task_id: str, rounds: int = 400):
+    import time as _time
+
+    final = None
+    for _ in range(rounds):
+        poll = client.get(f"/api/v1/backtest/tasks/{task_id}")
+        final = poll.json()
+        if final["status"] in ("done", "failed"):
+            break
+        _time.sleep(0.05)
+    return final
+
+
+def test_portfolio_backtest_includes_grade_score_trades(client, monkeypatch):
+    """组合回测响应附带 grade/score（对齐单标的）与组合层 trades。"""
+    import pandas as pd
+
+    import easy_tdx.web.routers.backtest as bt_router
+    from easy_tdx.backtest.portfolio_engine import StockData
+
+    async def fake_fetch(client_arg, stocks, category, start, end):  # noqa: ANN001
+        result = []
+        for sym in stocks:
+            mkt, code = sym.split(":")
+            n = 100
+            close = 10 + np.cumsum(np.random.randn(n) * 0.3 + 0.05)
+            df = pd.DataFrame(
+                {
+                    "datetime": pd.date_range("2024-01-01", periods=n, freq="B"),
+                    "open": close - 0.1,
+                    "high": close + 0.2,
+                    "low": close - 0.2,
+                    "close": close,
+                    "vol": np.full(n, 5000.0),
+                    "amount": close * 5000,
+                }
+            )
+            result.append(StockData(code=code, market=mkt, df=df))
+        return result
+
+    monkeypatch.setattr(bt_router, "_fetch_portfolio_bars", fake_fetch)
+
+    resp = client.post(
+        "/api/v1/backtest/portfolio/run/async",
+        json={"strategy": "ma_cross", "cash": 200000, "stocks": ["SZ:000001", "SH:600519"]},
+    )
+    assert resp.status_code == 202, resp.text
+    final = _wait_task(client, resp.json()["task_id"])
+    assert final["status"] == "done", final
+    result = final["result"]
+    # 评级 + 评分（与单标的响应同构）
+    assert result["grade"]["grade"] in ("S", "A", "B", "C", "D")
+    assert result["grade"]["scenario"] == "portfolio"
+    assert 0 <= result["score"]["total"] <= 100
+    # 完整绩效指标（含 SQN/连胜连亏）+ 组合层成交
+    assert "sqn" in result["total_performance"]
+    assert "max_consecutive_losses" in result["total_performance"]
+    assert isinstance(result["trades"], list)
+
+
+def test_portfolio_walkforward_endpoint(client, monkeypatch):
+    """POST /backtest/portfolio/wf/run/async 端到端（mock 行情取数）。"""
+    import pandas as pd
+
+    import easy_tdx.web.routers.backtest as bt_router
+    from easy_tdx.backtest.portfolio_engine import StockData
+
+    async def fake_fetch(client_arg, stocks, category, start, end):  # noqa: ANN001
+        result = []
+        for sym in stocks:
+            mkt, code = sym.split(":")
+            n = 400
+            close = 10 + np.cumsum(np.random.randn(n) * 0.3 + 0.02)
+            df = pd.DataFrame(
+                {
+                    "datetime": pd.date_range("2023-01-02", periods=n, freq="B"),
+                    "open": close - 0.1,
+                    "high": close + 0.2,
+                    "low": close - 0.2,
+                    "close": close,
+                    "vol": np.full(n, 5000.0),
+                    "amount": close * 5000,
+                }
+            )
+            result.append(StockData(code=code, market=mkt, df=df))
+        return result
+
+    monkeypatch.setattr(bt_router, "_fetch_portfolio_bars", fake_fetch)
+
+    resp = client.post(
+        "/api/v1/backtest/portfolio/wf/run/async?n_windows=3",
+        json={"strategy": "ma_cross", "cash": 200000, "stocks": ["SZ:000001", "SH:600519"]},
+    )
+    assert resp.status_code == 202, resp.text
+    final = _wait_task(client, resp.json()["task_id"])
+    assert final["status"] == "done", final
+    wf = final["result"]["walkforward"]
+    assert wf["n_windows"] == 3
+    assert len(wf["windows"]) == 3
+    assert "consistency" in wf
+    assert "sqn" in wf["windows"][0]["performance"]
+
+
+def test_portfolio_evaluate_endpoint(client, monkeypatch):
+    """POST /backtest/portfolio/evaluate/run/async 端到端（mock 行情取数）。"""
+    import pandas as pd
+
+    import easy_tdx.web.routers.backtest as bt_router
+    from easy_tdx.backtest.portfolio_engine import StockData
+
+    async def fake_fetch(client_arg, stocks, category, start, end):  # noqa: ANN001
+        result = []
+        for sym in stocks:
+            mkt, code = sym.split(":")
+            n = 400
+            close = 10 + np.cumsum(np.random.randn(n) * 0.3 + 0.02)
+            df = pd.DataFrame(
+                {
+                    "datetime": pd.date_range("2023-01-02", periods=n, freq="B"),
+                    "open": close - 0.1,
+                    "high": close + 0.2,
+                    "low": close - 0.2,
+                    "close": close,
+                    "vol": np.full(n, 5000.0),
+                    "amount": close * 5000,
+                }
+            )
+            result.append(StockData(code=code, market=mkt, df=df))
+        return result
+
+    monkeypatch.setattr(bt_router, "_fetch_portfolio_bars", fake_fetch)
+
+    resp = client.post(
+        "/api/v1/backtest/portfolio/evaluate/run/async",
+        json={"strategy": "ma_cross", "cash": 200000, "stocks": ["SZ:000001", "SH:600519"]},
+    )
+    assert resp.status_code == 202, resp.text
+    final = _wait_task(client, resp.json()["task_id"])
+    assert final["status"] == "done", final
+    report = final["result"]
+    for key in ("performance", "score", "grade", "walkforward", "fitness", "benchmark", "config"):
+        assert key in report
+    assert report["grade"]["scenario"] == "portfolio"
+    assert report["fitness"]["total_checks"] == 8
+    assert report["config"]["stocks"] == ["SZ000001", "SH600519"]

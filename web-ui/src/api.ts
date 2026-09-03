@@ -201,6 +201,33 @@ export async function submitPortfolioTask(
   return (await resp.json()) as TaskSubmitResponse
 }
 
+/** 提交组合级 Walk-Forward 样本外验证后台任务（n_windows 默认 7）。 */
+export async function submitPortfolioWalkforwardTask(
+  req: PortfolioBacktestRequest,
+  nWindows = 7,
+): Promise<TaskSubmitResponse> {
+  const resp = await fetch(`${BASE}/backtest/portfolio/wf/run/async?n_windows=${nWindows}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()) as TaskSubmitResponse
+}
+
+/** 提交组合级一条龙评估后台任务（组合回测+WF+适配性+评分+基准对比）。 */
+export async function submitPortfolioEvaluateTask(
+  req: PortfolioBacktestRequest,
+): Promise<TaskSubmitResponse> {
+  const resp = await fetch(`${BASE}/backtest/portfolio/evaluate/run/async`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()) as TaskSubmitResponse
+}
+
 /** 提交多策略组合回测后台任务（资金分仓），返回 task_id。 */
 export async function submitMultiStrategyTask(
   req: MultiStrategyBacktestRequest,

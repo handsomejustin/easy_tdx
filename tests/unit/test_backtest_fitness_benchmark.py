@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -194,3 +195,59 @@ def test_evaluate_strategy_auto_fees_for_etf():
     report = evaluate_strategy(_BuyFirstBar, _df(300), symbol="SH:510300", auto_fees=True)
     assert report["config"]["symbol"] == "SH:510300"
     assert report["config"]["auto_fees"] is True
+
+
+# ── evaluate_portfolio（v1.31 组合级一条龙）───────────────────────────────────
+def _stocks_for_portfolio() -> list[Any]:
+    from easy_tdx.backtest.portfolio_engine import StockData
+
+    return [
+        StockData("000001", "SZ", _df(400, drift=0.002)),
+        StockData("600000", "SH", _df(400, drift=0.003)),
+    ]
+
+
+def test_evaluate_portfolio_full_report_structure():
+    """组合一条龙报告与单标的 evaluate_strategy 同构（前端面板可复用）。"""
+    from easy_tdx.backtest.benchmark import evaluate_portfolio
+
+    report = evaluate_portfolio(_CycleTrader(), _stocks_for_portfolio(), total_cash=500_000)
+    for key in ("performance", "score", "grade", "walkforward", "fitness", "benchmark", "config"):
+        assert key in report
+    # 组合绩效：完整指标 + 组合字段
+    assert "sqn" in report["performance"]
+    assert "max_consecutive_losses" in report["performance"]
+    assert report["performance"]["total_stocks"] == 2
+    # 评分/评级
+    assert 0 <= report["score"]["total"] <= 100
+    assert report["score"]["wf_provided"] is True
+    assert report["grade"]["grade"] in ("S", "A", "B", "C", "D")
+    assert report["grade"]["scenario"] == "portfolio"
+    # 组合 WF
+    assert len(report["walkforward"]["windows"]) > 0
+    # 适配性（跨标的聚合）
+    assert report["fitness"]["total_checks"] == 8
+    assert "只标的通过" in report["fitness"]["checks"][0]["detail"]
+    # 基准
+    assert "buy_hold" in report["benchmark"]
+    assert "excess_return" in report["benchmark"]
+    # config 记录标的清单
+    assert report["config"]["stocks"] == ["SZ000001", "SH600000"]
+
+
+def test_evaluate_portfolio_buy_hold_excess_near_zero():
+    """首根买入持有策略 ≈ 等权买入持有基准，excess_return 接近 0（扣费差异）。"""
+    from easy_tdx.backtest.benchmark import evaluate_portfolio
+
+    report = evaluate_portfolio(_BuyFirstBar(), _stocks_for_portfolio(), total_cash=500_000)
+    assert abs(report["benchmark"]["excess_return"]) < 0.05
+
+
+def test_evaluate_portfolio_serializable():
+    from easy_tdx.backtest.benchmark import evaluate_portfolio
+
+    report = evaluate_portfolio(
+        _CycleTrader(), _stocks_for_portfolio(), total_cash=500_000, n_windows=3
+    )
+    text = json.dumps(report, default=str)
+    assert "excess_return" in text

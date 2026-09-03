@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
@@ -36,18 +36,24 @@ class PortfolioResult:
     """组合回测结果。
 
     Attributes:
-        total_performance: 组合整体绩效指标
+        total_performance: 组合整体绩效指标——与单标的回测同口径的完整
+            25 项（夏普/回撤/胜率/盈亏比/SQN/最大连胜连亏等，由合并净值
+            曲线 + 汇总成交喂 :class:`PerformanceAnalyzer` 计算），另附
+            ``total_stocks`` / ``total_cash`` 两个组合字段。
         individual_results: 每只标的的独立回测结果
         equity_allocation: 每只标的的资金分配比例
         combined_equity: 组合整体净值曲线（按日期对齐各标的求和），
             列: datetime/total/drawdown/drawdown_pct。各标的独立回测日期范围
             可能不同，此处按日期并集 forward-fill 对齐后求和。
+        trades: 组合层汇总成交（各标的 concat + ``symbol`` 列标注来源标的），
+            供组合级绩效统计（逐标的 FIFO 配对持仓天数）与前端明细表使用。
     """
 
     total_performance: dict[str, float]
     individual_results: dict[str, BacktestResult]
     equity_allocation: dict[str, float]
     combined_equity: pd.DataFrame
+    trades: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     def to_dict(self) -> dict[str, Any]:
         """转为可序列化字典。"""
@@ -56,6 +62,7 @@ class PortfolioResult:
             "individual_results": {k: v.to_dict() for k, v in self.individual_results.items()},
             "equity_allocation": self.equity_allocation,
             "combined_equity": self.combined_equity.to_dict(orient="records"),
+            "trades": self.trades.to_dict(orient="records"),
         }
 
 
@@ -171,57 +178,84 @@ class PortfolioBacktestEngine:
             result = engine.run(stock.df)
             individual_results[key] = result
 
-        # 汇总整体绩效
-        total_perf = self._aggregate_performance(individual_results, allocations)
+        # 组合整体净值曲线（各标的按日期对齐求和）——绩效指标依赖它，先算
+        combined_equity = self._build_combined_equity(individual_results, allocations)
+
+        # 汇总整体绩效（合并净值 + 汇总成交 → PerformanceAnalyzer 完整指标）
+        all_trades = self._merge_trades(individual_results)
+        total_perf = self._aggregate_performance(
+            individual_results, allocations, combined_equity, all_trades
+        )
 
         # 计算资金占比
         total_alloc = sum(allocations.values())
         equity_pct = {k: v / total_alloc if total_alloc > 0 else 0 for k, v in allocations.items()}
-
-        # 生成组合整体净值曲线（各标的按日期对齐求和）
-        combined_equity = self._build_combined_equity(individual_results, allocations)
 
         return PortfolioResult(
             total_performance=total_perf,
             individual_results=individual_results,
             equity_allocation=equity_pct,
             combined_equity=combined_equity,
+            trades=all_trades,
         )
+
+    @staticmethod
+    def _merge_trades(results: dict[str, BacktestResult]) -> pd.DataFrame:
+        """把各标的成交 concat 成组合层成交表，附 ``symbol`` 列标注来源标的。
+
+        ``symbol`` 列让 PerformanceAnalyzer 的 FIFO 持仓天数配对按标的分组
+        （避免 A 股的买入被 B 股的卖出错误配对）；无成交时返回空表。
+        """
+        frames: list[pd.DataFrame] = []
+        for key, result in results.items():
+            if len(result.trades) > 0:
+                t = result.trades.copy()
+                t["symbol"] = key
+                frames.append(t)
+        if not frames:
+            return pd.DataFrame(columns=["symbol", "direction", "pnl", "rejected"])
+        return pd.concat(frames, ignore_index=True)
 
     def _aggregate_performance(
         self,
         results: dict[str, BacktestResult],
         allocations: dict[str, float],
+        combined_equity: pd.DataFrame,
+        all_trades: pd.DataFrame,
     ) -> dict[str, float]:
         """汇总所有标的的绩效为组合整体绩效。
 
-        使用资金加权方式计算组合收益率。
+        与多策略引擎 ``MultiStrategyEngine._aggregate_performance`` 同口径：
+        合并净值曲线 + 汇总成交喂 :class:`PerformanceAnalyzer`，得到
+        与单标的回测一致的完整指标（夏普/回撤/胜率/盈亏比/SQN/最大连胜连亏
+        等 25 项），便于前端复用 MetricTable 展示。合并曲线的首个值即总投入
+        资金，因此 ``total_return`` 天然等于资金加权收益率。
 
         Args:
             results: 各标的回测结果
             allocations: 各标的资金分配
+            combined_equity: 组合整体净值曲线（_build_combined_equity 产物）
+            all_trades: 组合层汇总成交（_merge_trades 产物，含 symbol 列）
 
         Returns:
-            组合整体绩效指标
+            组合整体绩效指标（另附 total_stocks / total_cash 组合字段）
         """
+        from easy_tdx.backtest.performance import PerformanceAnalyzer
+
         total_cash = sum(allocations.values())
-        if total_cash == 0:
-            return {"total_return": 0.0, "annual_return": 0.0}
+        if not results or len(combined_equity) < 2:
+            return {
+                "total_return": 0.0,
+                "annual_return": 0.0,
+                "total_stocks": float(len(results)),
+                "total_cash": total_cash,
+            }
 
-        # 资金加权收益率
-        weighted_return = 0.0
-        for key, result in results.items():
-            alloc = allocations.get(key, 0)
-            weight = alloc / total_cash
-            ret = result.performance.get("total_return", 0.0)
-            weighted_return += weight * ret
-
-        return {
-            "total_return": weighted_return,
-            "annual_return": weighted_return,  # 简化，实际应根据周期年化
-            "total_stocks": len(results),
-            "total_cash": total_cash,
-        }
+        analyzer = PerformanceAnalyzer(equity_curve=combined_equity, trades=all_trades)
+        metrics = analyzer.compute()
+        metrics["total_stocks"] = float(len(results))
+        metrics["total_cash"] = total_cash
+        return metrics
 
     def _build_combined_equity(
         self,
@@ -265,12 +299,16 @@ class PortfolioBacktestEngine:
         aligned = aligned.ffill().fillna(0)
         total = aligned.sum(axis=1)
 
-        # 计算回撤
+        # 回撤：drawdown 为绝对回撤额（峰值-当前，正值），drawdown_pct 为相对
+        # 当时峰值的回撤比例（drawdown / peak，0~1）。分母必须用逐点 peak 而非
+        # 固定初始值：净值大涨后 peak 是初始值的好几倍，若除以 initial 会把回撤
+        # 百分比严重放大。与单标的 PortfolioTracker.equity_curve、
+        # MultiStrategyEngine._build_combined_equity 的定义保持一致，
+        # PerformanceAnalyzer 直接读 drawdown_pct 列算 max_drawdown。
         peak = total.cummax()
-        drawdown = total - peak
-        # drawdown_pct：以初始总资金为基准（peak 的首个值），避免除零
-        initial = peak.iloc[0] if len(peak) > 0 and peak.iloc[0] != 0 else 1.0
-        drawdown_pct = drawdown / initial
+        drawdown = peak - total
+        peak_safe = peak.where(peak != 0, 1.0)
+        drawdown_pct = drawdown / peak_safe
 
         return pd.DataFrame(
             {

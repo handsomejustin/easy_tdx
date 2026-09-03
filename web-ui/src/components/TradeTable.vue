@@ -1,10 +1,13 @@
 <script setup lang="ts">
 // 成交记录表。展示每笔成交的方向/数量/价格/费用/盈亏。
+// showSymbol 时多一列来源标的（组合页展示各标的汇总成交用）。
 
 import type { Trade } from '../types'
 
 defineProps<{
-  trades: Trade[]
+  /** 行类型兼容组合交易明细（PortfolioTrade = Trade & { symbol }） */
+  trades: (Trade & { symbol?: string })[]
+  showSymbol?: boolean
 }>()
 
 function fmtDate(s: string): string {
@@ -21,6 +24,7 @@ function fmtNum(v: number, digits = 2): string {
     <table v-else class="trade-table">
       <thead>
         <tr>
+          <th v-if="showSymbol">标的</th>
           <th>日期</th>
           <th>方向</th>
           <th class="num">数量</th>
@@ -31,6 +35,7 @@ function fmtNum(v: number, digits = 2): string {
       </thead>
       <tbody>
         <tr v-for="(t, i) in trades" :key="i" :class="{ rejected: t.rejected }">
+          <td v-if="showSymbol" class="muted">{{ t.symbol }}</td>
           <td>{{ fmtDate(t.datetime) }}</td>
           <td :class="t.direction">{{ t.direction }}</td>
           <td class="num">{{ fmtNum(t.size, 0) }}</td>

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from easy_tdx.backtest.portfolio_engine import (
     PortfolioBacktestEngine,
@@ -195,3 +196,106 @@ class TestCombinedEquity:
             "drawdown",
             "drawdown_pct",
         }
+
+
+class TestPortfolioFullMetrics:
+    """v1.31：组合级完整绩效指标（合并净值 + 汇总成交喂 PerformanceAnalyzer）。"""
+
+    def test_total_performance_has_full_metrics(self) -> None:
+        """组合整体绩效应含与单标的同口径的完整指标（SQN/连胜连亏等）。"""
+        stocks = [
+            StockData("000001", "SZ", _make_df(100, seed=42)),
+            StockData("600000", "SH", _make_df(100, seed=99)),
+        ]
+        result = PortfolioBacktestEngine(
+            strategy=SimpleBuyStrategy, stocks=stocks, total_cash=200000
+        ).run()
+
+        perf = result.total_performance
+        # 单标的 PerformanceAnalyzer 的全部关键键 + 组合字段
+        for key in (
+            "total_return",
+            "annual_return",
+            "max_drawdown",
+            "sharpe",
+            "sortino",
+            "calmar",
+            "volatility",
+            "win_rate",
+            "profit_factor",
+            "sqn",
+            "max_consecutive_wins",
+            "max_consecutive_losses",
+            "total_stocks",
+            "total_cash",
+        ):
+            assert key in perf, f"缺少指标 {key}"
+        assert perf["total_stocks"] == 2
+        assert perf["total_cash"] == 200000
+
+    def test_annual_return_is_annualized(self) -> None:
+        """年化收益应基于时间长度换算，不再等于总收益（旧版直接赋值的简化）。"""
+        stocks = [StockData("000001", "SZ", _make_df(400, seed=42))]
+        result = PortfolioBacktestEngine(
+            strategy=SimpleBuyStrategy, stocks=stocks, total_cash=100000
+        ).run()
+        perf = result.total_performance
+        assert perf["annual_return"] != perf["total_return"]
+
+    def test_drawdown_pct_positive_and_relative_to_peak(self) -> None:
+        """drawdown/drawdown_pct 应为正值且相对逐点峰值（与单标的/多策略口径一致）。"""
+        stocks = [
+            StockData("000001", "SZ", _make_df(100, seed=42)),
+            StockData("600000", "SH", _make_df(100, seed=7)),
+        ]
+        result = PortfolioBacktestEngine(
+            strategy=SimpleBuyStrategy, stocks=stocks, total_cash=200000
+        ).run()
+        ce = result.combined_equity
+        assert (ce["drawdown_pct"] >= 0).all()
+        assert (ce["drawdown"] >= 0).all()
+        # 回撤比例 = 回撤额 / 当时峰值
+        peak = ce["total"].cummax()
+        expected = (peak - ce["total"]) / peak.where(peak != 0, 1.0)
+        np.testing.assert_allclose(ce["drawdown_pct"], expected, rtol=1e-9)
+
+    def test_combined_trades_have_symbol_column(self) -> None:
+        """组合层汇总成交应附 symbol 列（FIFO 按标的分组 + 前端明细表用）。"""
+        stocks = [
+            StockData("000001", "SZ", _make_df(100, seed=42)),
+            StockData("600000", "SH", _make_df(100, seed=99)),
+        ]
+        result = PortfolioBacktestEngine(
+            strategy=SimpleBuyStrategy, stocks=stocks, total_cash=200000
+        ).run()
+        assert "symbol" in result.trades.columns
+        assert set(result.trades["symbol"]) == {"SZ000001", "SH600000"}
+        # 每个标的的成交数 == 该标的独立回测的成交数
+        for key, res in result.individual_results.items():
+            n = (result.trades["symbol"] == key).sum()
+            assert n == len(res.trades)
+
+    def test_total_return_matches_capital_weighted(self) -> None:
+        """组合 total_return 应等于各标的资金加权收益（合并曲线首值=总资金）。"""
+        stocks = [
+            StockData("000001", "SZ", _make_df(100, seed=42)),
+            StockData("600000", "SH", _make_df(100, seed=99)),
+        ]
+        result = PortfolioBacktestEngine(
+            strategy=SimpleBuyStrategy, stocks=stocks, total_cash=200000
+        ).run()
+        weighted = sum(
+            0.5 * res.performance.get("total_return", 0.0)
+            for res in result.individual_results.values()
+        )
+        assert result.total_performance["total_return"] == pytest.approx(weighted, abs=1e-9)
+
+    def test_to_dict_contains_trades(self) -> None:
+        """to_dict 应包含组合层成交表（REST/AI 解读消费）。"""
+        stocks = [StockData("000001", "SZ", _make_df(100, seed=42))]
+        result = PortfolioBacktestEngine(
+            strategy=SimpleBuyStrategy, stocks=stocks, total_cash=100000
+        ).run()
+        d = result.to_dict()
+        assert "trades" in d
+        assert isinstance(d["trades"], list)

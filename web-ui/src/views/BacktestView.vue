@@ -6,6 +6,7 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
+import AiInterpretModal from '../components/AiInterpretModal.vue'
 import EquityChart from '../components/EquityChart.vue'
 import EvaluatePanel from '../components/EvaluatePanel.vue'
 import GradeDetails from '../components/GradeDetails.vue'
@@ -15,11 +16,11 @@ import StrategyPicker from '../components/StrategyPicker.vue'
 import SymbolPicker from '../components/SymbolPicker.vue'
 import TradeTable from '../components/TradeTable.vue'
 import WalkForwardPanel from '../components/WalkForwardPanel.vue'
-import { formatError, saveStrategy, fetchLlmConfig, runLlmChatWithPolling } from '../api'
+import { formatError, saveStrategy } from '../api'
 import { detectMarket } from '../market'
 import { GRADE_META, gradePerformance } from '../grading'
 import { buildAiPrompt } from '../aiPrompt'
-import type { Category, ExecutionMode, LlmChatResult } from '../types'
+import type { Category, ExecutionMode } from '../types'
 import { useBacktestStore } from '../stores/backtest'
 
 const store = useBacktestStore()
@@ -202,15 +203,9 @@ async function onSave() {
 }
 
 // ── AI 解读 Prompt（把当前报告组装成提示词，发给任意 LLM 解读）──────────────
+// 弹窗交互（复制/下载/直接解读）抽在 AiInterpretModal 通用组件里，
+// 与组合回测页共用；这里只负责实时组装 Prompt 与策略上下文。
 const showAiModal = ref(false)
-const aiMsg = ref('')
-// 直接解读（服务端 LLM 已配置时可用，配置见「AI 设置」页）
-const llmReady = ref(false)
-const llmLabel = ref('')
-const aiRunning = ref(false)
-const aiElapsed = ref(0)
-const aiReply = ref('')
-let aiTimer = 0
 
 /** 实时组装：附加分析（WF/评估）跑完后内容自动变全 */
 const aiPromptText = computed(() => {
@@ -235,87 +230,22 @@ const aiPromptText = computed(() => {
   })
 })
 
-function openAiModal() {
-  aiMsg.value = ''
-  aiReply.value = ''
-  showAiModal.value = true
-  // 打开时探测 LLM 是否已配置（失败静默——导出 Prompt 的老路径不依赖后端）
-  fetchLlmConfig()
-    .then((resp) => {
-      llmReady.value = resp.configured
-      const p = resp.providers.find((x) => x.id === resp.config.provider)
-      llmLabel.value = p ? `${p.label} · ${resp.resolved.model}` : resp.resolved.model
-    })
-    .catch(() => {
-      llmReady.value = false
-    })
-}
+/** 随解读落历史库的策略上下文（AI 解读历史页「去回测」引导用） */
+const aiContext = computed(() => ({
+  strategy: strategy.value,
+  strategy_label: strategyLabel.value,
+  symbol: code.value,
+  category: category.value,
+  params: { ...params.value },
+  start_date: startDate.value,
+  end_date: endDate.value,
+}))
 
-/** 直接解读：把组装好的 Prompt 提交为后台任务并轮询（不占 HTTP 连接）。 */
-async function runAiInterpret() {
-  if (!aiPromptText.value || aiRunning.value) return
-  aiRunning.value = true
-  aiMsg.value = ''
-  aiReply.value = ''
-  // 后台任务模式：模型生成 1-3 分钟正常——显示已耗时防误判卡死
-  aiElapsed.value = 0
-  aiTimer = window.setInterval(() => {
-    aiElapsed.value += 1
-  }, 1000)
-  try {
-    // 策略上下文随解读落历史库（AI 解读历史页「去回测」引导用）
-    const ctx = {
-      strategy: strategy.value,
-      strategy_label: strategyLabel.value,
-      symbol: code.value,
-      category: category.value,
-      params: { ...params.value },
-      start_date: startDate.value,
-      end_date: endDate.value,
-    }
-    const state = await runLlmChatWithPolling(aiPromptText.value, ctx)
-    // TaskState.result 是多任务类型联合，按 LLM 任务结构收窄
-    const r = state.result as LlmChatResult | null
-    // 后端已保证非空正文（空白正文会以 failed 上浮），前端再拦一道纯空白
-    if (state.status === 'done' && r?.reply?.trim()) {
-      aiReply.value = r.reply
-      aiMsg.value = `✓ ${r.provider} · ${r.model} 已解读（${aiElapsed.value}s）`
-    } else if (state.status === 'done') {
-      aiMsg.value = '解读失败：模型返回了空正文（可能被 Max Tokens 截断），可在「AI 设置」调大后重试'
-    } else {
-      aiMsg.value = `解读失败：${state.error ?? '未知错误'}（可在「AI 设置」检查配置，或复制 Prompt 手动使用）`
-    }
-  } catch (e) {
-    aiMsg.value = `解读失败：${formatError(e)}（可在「AI 设置」检查配置，或复制 Prompt 手动使用）`
-  } finally {
-    window.clearInterval(aiTimer)
-    aiRunning.value = false
-  }
-}
-
-async function copyAiPrompt() {
-  try {
-    await navigator.clipboard.writeText(aiPromptText.value)
-    aiMsg.value = '✓ 已复制，粘贴给任意 AI 助手即可'
-  } catch {
-    // 剪贴板 API 不可用时退回选中文本，让用户手动 Ctrl+C
-    const el = document.querySelector<HTMLTextAreaElement>('.ai-prompt-area')
-    el?.focus()
-    el?.select()
-    aiMsg.value = document.execCommand('copy') ? '✓ 已复制' : '已全选文本，请按 Ctrl+C 复制'
-  }
-}
-
-function downloadAiPrompt() {
-  const blob = new Blob([aiPromptText.value], { type: 'text/markdown;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `AI解读_${code.value}_${strategy.value}.md`
-  a.click()
-  URL.revokeObjectURL(url)
-  aiMsg.value = '✓ 已下载 .md 文件'
-}
+const aiTip = computed(() =>
+  wfEnabled.value || evaluateEnabled.value
+    ? '建议等附加分析跑完再发，Walk-Forward / 一条龙评估的数据会一并打包。'
+    : undefined,
+)
 </script>
 
 <template>
@@ -415,7 +345,7 @@ function downloadAiPrompt() {
       <div v-if="store.result" class="report-content">
         <div class="result-toolbar">
           <button class="ghost" @click="openSaveForm">💾 保存策略</button>
-          <button class="ghost" @click="openAiModal">🤖 AI 解读</button>
+          <button class="ghost" @click="showAiModal = true">🤖 AI 解读</button>
           <span v-if="saveMsg" class="save-msg">{{ saveMsg }}</span>
         </div>
 
@@ -502,51 +432,15 @@ function downloadAiPrompt() {
       </div>
     </div>
 
-    <!-- AI 解读 Prompt 对话框 -->
-    <div v-if="showAiModal" class="modal-overlay" @click.self="showAiModal = false">
-      <div class="modal modal-wide">
-        <h3>🤖 AI 解读</h3>
-        <p class="modal-desc">
-          已把当前回测报告组装成提示词。
-          <template v-if="llmReady">
-            点击「直接解读」发送给已配置的模型（{{ llmLabel }}），
-          </template>
-          <template v-else>
-            在「AI 设置」页配置模型后可一键直接解读；也可
-          </template>
-          复制后发给任意 AI 助手（ChatGPT / Claude / DeepSeek / 豆包…）。
-          <template v-if="wfEnabled || evaluateEnabled">
-            建议等附加分析跑完再发，Walk-Forward / 一条龙评估的数据会一并打包。
-          </template>
-        </p>
-        <textarea
-          :value="aiPromptText"
-          class="ai-prompt-area"
-          :class="{ collapsed: !!aiReply }"
-          readonly
-          :rows="aiReply ? 6 : 16"
-          spellcheck="false"
-        ></textarea>
-        <div v-if="aiReply" class="ai-reply">{{ aiReply }}</div>
-        <div v-if="aiReply" class="ai-note">
-          以上解读由 AI 模型生成，可能存在错误或过时信息，仅供参考，不构成投资建议。
-        </div>
-        <span v-if="aiMsg" class="ai-msg">{{ aiMsg }}</span>
-        <div class="modal-actions">
-          <button class="ghost" @click="showAiModal = false">关闭</button>
-          <button class="ghost" @click="downloadAiPrompt">⬇ 下载 .md</button>
-          <button class="ghost" @click="copyAiPrompt">复制 Prompt</button>
-          <button
-            v-if="llmReady"
-            class="primary"
-            :disabled="aiRunning || !aiPromptText"
-            @click="runAiInterpret"
-          >
-            {{ aiRunning ? `解读中… ${aiElapsed}s` : '✨ 直接解读' }}
-          </button>
-        </div>
-      </div>
-    </div>
+    <!-- AI 解读 Prompt 对话框（单标的/组合通用组件） -->
+    <AiInterpretModal
+      v-if="showAiModal && store.result"
+      :prompt="aiPromptText"
+      :filename="`AI解读_${code}_${strategy}.md`"
+      :context="aiContext"
+      :tip="aiTip"
+      @close="showAiModal = false"
+    />
   </div>
 </template>
 
@@ -783,51 +677,5 @@ function downloadAiPrompt() {
 .modal-actions .ghost:disabled {
   opacity: 0.5;
   cursor: default;
-}
-
-/* AI 解读 Prompt 对话框（比保存对话框更宽，内容等宽小字可滚动） */
-.modal-wide {
-  width: 640px;
-}
-.ai-prompt-area {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  line-height: 1.6;
-  white-space: pre;
-  overflow: auto;
-  max-height: 55vh;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-  color: var(--text-muted);
-  resize: vertical;
-}
-/* 直接解读出结果后 Prompt 区收窄，把版面让给回复 */
-.ai-prompt-area.collapsed {
-  max-height: 18vh;
-}
-.ai-reply {
-  margin-top: 8px;
-  max-height: 38vh;
-  overflow: auto;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-  font-size: 13px;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.ai-msg {
-  font-size: 12px;
-  color: var(--up);
-}
-.ai-note {
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--warn, #ffc107);
 }
 </style>

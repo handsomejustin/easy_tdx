@@ -294,6 +294,27 @@ class PerformanceAnalyzer:
         if len(valid) == 0:
             return 0.0
 
+        # 组合成交表带 symbol 列时按标的分组配对（避免 A 股的买入被 B 股的
+        # 卖出错误配对）；单标的成交表无该列，走原路径。
+        groups: list[pd.DataFrame]
+        if "symbol" in valid.columns:
+            groups = [g for _, g in valid.groupby("symbol", sort=False)]
+        else:
+            groups = [valid]
+
+        total_days = 0.0
+        total_size = 0.0
+        for group in groups:
+            days, size = self._fifo_holding_days(group)
+            total_days += days
+            total_size += size
+
+        if total_size == 0:
+            return 0.0
+        return total_days / total_size
+
+    def _fifo_holding_days(self, valid: pd.DataFrame) -> tuple[float, float]:
+        """对单组（单标的）成交做 FIFO 配对，返回 (加权持仓天数和, 加权数量和)。"""
         buy_queue: deque[tuple[_dt.date, float]] = deque()  # (date, size)
         total_days = 0.0
         total_size = 0.0
@@ -343,9 +364,7 @@ class PerformanceAnalyzer:
                     else:
                         buy_queue[0] = (buy_d, buy_size)
 
-        if total_size == 0:
-            return 0.0
-        return total_days / total_size
+        return total_days, total_size
 
     def _compute_max_dd_duration(self, total: NDArray, drawdown: NDArray) -> int:
         """计算最大回撤持续时间。

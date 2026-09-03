@@ -11,9 +11,12 @@
 import type {
   BacktestResult,
   Category,
+  EquityPoint,
   EvaluateReport,
   ExecutionMode,
   Performance,
+  PortfolioResult,
+  PortfolioTrade,
   Trade,
   WalkForwardResult,
 } from './types'
@@ -37,6 +40,27 @@ export interface AiPromptInput {
   slippage: number
   execution: ExecutionMode
   result: BacktestResult
+  /** 附加分析（未勾选/未跑完时传 null，对应段落自动省略） */
+  wf?: WalkForwardResult | null
+  evaluate?: EvaluateReport | null
+  grade?: GradeResult | null
+  /** 评级档位的一句话含义（GRADE_META[grade].hint，由组件传入） */
+  gradeHint?: string
+}
+
+export interface PortfolioAiPromptInput {
+  /** 完整标的代码列表（带市场前缀，如 ["SZ:000001", "SH:600519"]） */
+  stocks: string[]
+  category: Category
+  startDate: string
+  endDate: string
+  strategyLabel: string
+  params: Record<string, number | string | boolean>
+  cash: number
+  commission: number
+  slippage: number
+  execution: ExecutionMode
+  result: PortfolioResult
   /** 附加分析（未勾选/未跑完时传 null，对应段落自动省略） */
   wf?: WalkForwardResult | null
   evaluate?: EvaluateReport | null
@@ -139,7 +163,15 @@ function n(v: number | string | null | undefined): number | undefined {
 
 // ── 各段落构建 ───────────────────────────────────────────────────────────────
 
-function sectionRole(): string {
+function sectionRole(kind: 'single' | 'portfolio' = 'single'): string {
+  const intro =
+    kind === 'portfolio'
+      ? '下面是我跑出来的组合回测报告（同一个策略分别跑在一篮子标的上，资金均分、各标的独立回测后净值加总），帮我看看这个组合策略到底行不行。内容上要说到这六件事，顺序随意，用你自然的说话方式组织：'
+      : '下面是我跑出来的回测报告，帮我看看这个策略到底行不行。内容上要说到这六件事，顺序随意，用你自然的说话方式组织：'
+  const step5 =
+    kind === 'portfolio'
+      ? '5. **给可执行的下一步**：几条我马上能做的事（改什么参数、加什么过滤、换哪些标的、先做什么测试再谈实盘），别空谈；'
+      : '5. **给可执行的下一步**：几条我马上能做的事（改什么参数、加什么过滤、先做什么测试再谈实盘），别空谈；'
   return [
     '# 角色设定',
     '',
@@ -147,13 +179,13 @@ function sectionRole(): string {
     '',
     '# 任务',
     '',
-    '下面是我跑出来的回测报告，帮我看看这个策略到底行不行。内容上要说到这六件事，顺序随意，用你自然的说话方式组织：',
+    intro,
     '',
     '1. **先给结论**：这策略现在处于什么状态——「可以继续往下走」「底子不错但还差几步」还是「问题不小，得大改」？一句话说清，再讲理由；',
     '2. **优点和毛病都要讲**：先说说它强在哪（哪些数字是真的好看、说明策略做对了什么），再讲你担心什么。别只挑刺，也别光报喜——我是想知道这策略能不能用，不是来听审判也不是来听表扬的。挑最有说服力的几组数字讲，不用面面俱到；',
     '3. **说说持有体验**：真拿钱跑这个策略，过程大概什么感受——多久交易一次、最惨的时候有多惨、普通人拿不拿得住；',
     '4. **判断是规律还是运气**：从分时段数据（Walk-Forward 各窗收益、训练/验证/测试三段、和死拿不动的对比）找证据。有担心就直说，但像朋友提醒那样说，别像下判决书；',
-    '5. **给可执行的下一步**：几条我马上能做的事（改什么参数、加什么过滤、先做什么测试再谈实盘），别空谈；',
+    step5,
     '6. **最后打个分**：给这个策略一个 0-10 的「信心分」，代表你现在有多大把握它值得继续投入。打分要和前面说的话一致（前面夸的多就别打低分，反过来也一样），再用一两句话说说为什么是这个分、到几分你会建议我拿小仓位试试。参考刻度：0-3 建议放弃，4-6 值得继续改（说清往哪改），7-8 可以小仓位试错，9 以上才谈逐步加仓。',
     '',
     '# 说话方式（很重要）',
@@ -198,7 +230,10 @@ function sectionMetrics(perf: Performance): string {
 }
 
 function sectionEquity(result: BacktestResult): string {
-  const eq = result.equity_curve
+  return sectionEquityPoints(result.equity_curve)
+}
+
+function sectionEquityPoints(eq: EquityPoint[] | undefined): string {
   if (!eq || eq.length === 0) return ''
   let peak = eq[0]
   let trough = eq[0]
@@ -327,7 +362,72 @@ function sectionFooter(): string {
     '以上数据来自 easy-tdx 的历史 K 线回测（已计入佣金与滑点）。历史回测存在幸存者偏差与未来不确定性，不构成投资建议，你的解读也以研究学习为目的。',
     '数据里缺失的项（显示 - 或整段没有的）直接跳过，不用专门解释局限。',
     '好了，开始吧。',
+    '# 重要提醒',
+    '禁止使用状语',
   ].join('\n')
+}
+
+// ── 组合版段落 ───────────────────────────────────────────────────────────────
+
+function sectionPortfolioConfig(i: PortfolioAiPromptInput): string {
+  const stockList =
+    i.stocks.length <= 12
+      ? i.stocks.join('、')
+      : `${i.stocks.slice(0, 12).join('、')} 等 ${i.stocks.length} 只`
+  const lines = [
+    '# 组合回测配置',
+    '',
+    `- 组合形式：同一个策略分别跑在 ${i.stocks.length} 只标的上，资金均分（各拿总额的 ${(
+      100 / i.stocks.length
+    ).toFixed(1)}%），标的间独立回测、净值按日加总`,
+    `- 标的列表：${stockList}`,
+    `- 回测区间：${i.startDate} ~ ${i.endDate}（${CATEGORY_LABELS[i.category] ?? i.category}）`,
+    `- 策略：${i.strategyLabel}`,
+    `- 参数：${fmtParams(i.params)}`,
+    `- 组合总资金：${fmtMoney(i.cash)} 元；佣金 ${i.commission}；滑点 ${i.slippage}；成交价：${EXECUTION_LABELS[i.execution] ?? i.execution}`,
+    '',
+  ]
+  return lines.join('\n')
+}
+
+/** 各标的表现摘要：按收益降序，超过 12 只时只列最好 6 只 + 最差 6 只。 */
+function sectionStocksSummary(result: PortfolioResult): string {
+  const entries = Object.entries(result.individual_results)
+  if (entries.length === 0) return ''
+  const sorted = entries
+    .map(([symbol, r]) => ({ symbol, perf: r.performance }))
+    .sort((a, b) => (b.perf.total_return ?? 0) - (a.perf.total_return ?? 0))
+  const shown =
+    sorted.length <= 12
+      ? sorted
+      : [...sorted.slice(0, 6), ...sorted.slice(sorted.length - 6)]
+  const lines = [
+    '# 各标的表现（按收益降序；' +
+      (sorted.length <= 12 ? '全部' : `省略中间 ${sorted.length - 12} 只，其余为最好/最差各 6 只`) +
+      '）',
+    '',
+  ]
+  for (const { symbol, perf } of shown) {
+    lines.push(
+      `- ${symbol}：总收益 ${pct(perf.total_return)}，最大回撤 ${pct(perf.max_drawdown)}，夏普 ${ratio(perf.sharpe)}，${Math.round(perf.total_trades ?? 0)} 笔（胜率 ${pct(perf.win_rate)}）`,
+    )
+  }
+  lines.push('')
+  return lines.join('\n')
+}
+
+function sectionPortfolioTrades(trades: PortfolioTrade[] | undefined): string {
+  if (!trades || trades.length === 0) return ''
+  const recent = trades.slice(-8)
+  const lines = ['# 最近成交（组合合计的最后 8 笔）', '']
+  for (const t of recent) {
+    const dir = t.direction === 'BUY' ? '买入' : '卖出'
+    const pnl =
+      t.direction === 'SELL' && t.pnl !== 0 ? `，本笔盈亏 ${t.pnl >= 0 ? '+' : ''}${fmtMoney(t.pnl)} 元` : ''
+    lines.push(`- ${t.symbol} ${fmtDate(t.datetime)} ${dir} ${Math.round(t.size)} 股 @ ${t.price.toFixed(2)}${pnl}`)
+  }
+  lines.push('')
+  return lines.join('\n')
 }
 
 // ── 主函数 ───────────────────────────────────────────────────────────────────
@@ -344,6 +444,25 @@ export function buildAiPrompt(input: AiPromptInput): string {
   if (input.evaluate) parts.push(sectionEvaluate(input.evaluate))
   if (input.grade) parts.push(sectionGrade(input.grade, input.gradeHint))
   const trades = sectionTrades(input.result.trades)
+  if (trades) parts.push(trades)
+  parts.push(sectionFooter())
+  return parts.join('\n')
+}
+
+/** 组装组合回测的 AI 解读 Prompt（与单标的同构，段落随附加分析增减）。 */
+export function buildPortfolioAiPrompt(input: PortfolioAiPromptInput): string {
+  const parts: string[] = [
+    sectionRole('portfolio'),
+    sectionPortfolioConfig(input),
+    sectionMetrics(input.result.total_performance),
+    sectionEquityPoints(input.result.combined_equity),
+  ]
+  const stocksSummary = sectionStocksSummary(input.result)
+  if (stocksSummary) parts.push(stocksSummary)
+  if (input.wf) parts.push(sectionWf(input.wf))
+  if (input.evaluate) parts.push(sectionEvaluate(input.evaluate))
+  if (input.grade) parts.push(sectionGrade(input.grade, input.gradeHint))
+  const trades = sectionPortfolioTrades(input.result.trades)
   if (trades) parts.push(trades)
   parts.push(sectionFooter())
   return parts.join('\n')

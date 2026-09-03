@@ -35,12 +35,12 @@ import numpy as np
 import pandas as pd
 
 from easy_tdx.backtest.engine import BacktestEngine
-from easy_tdx.backtest.fitness import FitnessEngine
-from easy_tdx.backtest.grading import grade_performance
+from easy_tdx.backtest.fitness import FitnessCheck, FitnessEngine, FitnessReport, FitnessSegment
+from easy_tdx.backtest.grading import grade_performance, grade_portfolio_equity
 from easy_tdx.backtest.scoring import score_strategy
 from easy_tdx.backtest.strategy import Strategy
 from easy_tdx.backtest.types import to_json_native
-from easy_tdx.backtest.walkforward import WalkForwardEngine
+from easy_tdx.backtest.walkforward import PortfolioWalkForwardEngine, WalkForwardEngine
 
 if TYPE_CHECKING:
     import numpy.typing as npt
@@ -51,7 +51,12 @@ if TYPE_CHECKING:
 else:
     NDArray = np.ndarray
 
-__all__ = ["evaluate_strategy", "run_buy_hold_benchmark", "compute_benchmark_comparison"]
+__all__ = [
+    "evaluate_strategy",
+    "evaluate_portfolio",
+    "run_buy_hold_benchmark",
+    "compute_benchmark_comparison",
+]
 
 
 class _BuyAndHold(Strategy):
@@ -280,3 +285,171 @@ def evaluate_strategy(
             "split": list(split),
         },
     }
+
+
+def evaluate_portfolio(
+    strategy: type[Strategy] | Strategy,
+    stocks: list[Any],
+    total_cash: float = 1_000_000.0,
+    commission: float = 0.0003,
+    min_commission: float = 5.0,
+    stamp_tax: float = 0.001,
+    slippage: float = 0.0,
+    execution: str = "next_open",
+    chanlun_level: str | None = None,
+    auto_fees: bool = False,
+    n_windows: int = 7,
+    warmup_ratio: float = 0.3,
+    context_bars: int = 60,
+    split: tuple[float, float, float] = (0.6, 0.2, 0.2),
+) -> dict[str, Any]:
+    """一条龙组合评估：组合回测 + 组合 WF + 适配性体检 + 综合评分 + 组合评级
+    + 等权买入持有基准对比。
+
+    与 :func:`evaluate_strategy`（单标的）同构的报告结构，前端 EvaluatePanel
+    可直接复用；差异点：
+
+    - ``performance`` 来自组合引擎（完整 25 项指标，含 SQN/最大连胜连亏）；
+    - ``walkforward`` 来自 :class:`~easy_tdx.backtest.walkforward.PortfolioWalkForwardEngine`；
+    - ``fitness`` 为**跨标的聚合**：逐标的跑三段体检，检查项按「≥60% 标的
+      通过」的多数口径合成，段指标取截面均值——诚实反映组合整体适配性；
+    - ``grade`` 用组合净值口径 :func:`~easy_tdx.backtest.grading.grade_portfolio_equity`；
+    - ``benchmark`` 为**等权买入持有组合**（每只标的分 1/N 资金首根买入持有
+      到末根，同费率同区间），α/β/信息比率/跟踪误差基于两条组合净值曲线。
+
+    Args:
+        strategy: 策略类或实例。
+        stocks: :class:`~easy_tdx.backtest.portfolio_engine.StockData` 列表。
+        其余参数: 透传给组合回测 / 组合 WF / 适配性（同口径费率与执行）。
+
+    Returns:
+        完整评估报告字典（结构同 evaluate_strategy，config 记录标的清单）。
+    """
+    from easy_tdx.backtest.portfolio_engine import PortfolioBacktestEngine
+
+    engine_kwargs: dict[str, Any] = {
+        "total_cash": total_cash,
+        "commission": commission,
+        "min_commission": min_commission,
+        "stamp_tax": stamp_tax,
+        "slippage": slippage,
+        "execution": execution,
+        "chanlun_level": chanlun_level,
+        "auto_fees": auto_fees,
+    }
+
+    # 1. 全样本组合回测（完整 25 项指标 + 合并净值曲线）
+    bt = PortfolioBacktestEngine(strategy=strategy, stocks=stocks, **engine_kwargs).run()
+    perf = bt.total_performance
+
+    # 2. 组合 Walk-Forward 样本外
+    wf = PortfolioWalkForwardEngine(
+        strategy=strategy,
+        stocks=stocks,
+        n_windows=n_windows,
+        warmup_ratio=warmup_ratio,
+        context_bars=context_bars,
+        **engine_kwargs,
+    ).run()
+
+    # 3. 适配性体检：逐标的跑三段体检，跨标的多数口径聚合
+    fitness_kwargs: dict[str, Any] = {
+        k: v for k, v in engine_kwargs.items() if k not in ("total_cash", "chanlun_level")
+    }
+    per_stock_fitness = [
+        FitnessEngine(
+            strategy=strategy, split=split, context_bars=context_bars, **fitness_kwargs
+        ).evaluate(stock.df)
+        for stock in stocks
+    ]
+    fitness = _aggregate_fitness(per_stock_fitness, split)
+
+    # 4. 综合评分（叠加组合 WF 一致性）+ 组合评级（净值曲线口径）
+    score = score_strategy(dict(perf), wf=wf)
+    grade = grade_portfolio_equity(bt.combined_equity.to_dict(orient="records"))
+
+    # 5. 基准对比：等权买入持有组合（每只标的 1/N 首根买入持有到末根，同费率）
+    bh_bt = PortfolioBacktestEngine(strategy=_BuyAndHold, stocks=stocks, **engine_kwargs).run()
+    bh_keys = ("total_return", "annual_return", "max_drawdown", "sharpe", "calmar", "volatility")
+    bh = dict(to_json_native({k: bh_bt.total_performance.get(k, 0.0) for k in bh_keys}))
+    comparison = compute_benchmark_comparison(bt.combined_equity, bh_bt.combined_equity)
+
+    return {
+        "performance": to_json_native(dict(perf)),
+        "score": score.to_dict(),
+        "grade": grade.to_dict(),
+        "walkforward": wf.to_dict(),
+        "fitness": fitness.to_dict(),
+        "benchmark": {
+            "buy_hold": bh,
+            "excess_return": float(perf.get("total_return", 0.0))
+            - float(bh.get("total_return", 0.0)),
+            **comparison,
+        },
+        "config": {
+            "stocks": [f"{s.market}{s.code}" for s in stocks],
+            "total_cash": total_cash,
+            "auto_fees": auto_fees,
+            "execution": execution,
+            "n_windows": n_windows,
+            "warmup_ratio": warmup_ratio,
+            "split": list(split),
+        },
+    }
+
+
+def _aggregate_fitness(
+    reports: list[FitnessReport],
+    split: tuple[float, float, float],
+    pass_ratio_threshold: float = 0.6,
+) -> FitnessReport:
+    """把逐标的的适配性体检报告聚合为组合级报告（多数口径）。
+
+    - 检查项：同名检查项跨标的计通过率，≥ ``pass_ratio_threshold``（默认
+      60%）标的通过则组合级该项通过，detail 记「x/y 只标的通过」；
+    - 段摘要：段起止取各标的的最早/最晚，收益/夏普/胜率取截面均值，
+      最大回撤取最深（max），交易数取合计——回答「组合整体在三段的形态」。
+    """
+    aggregated = FitnessReport(split=split)
+    valid = [r for r in reports if r.checks]
+    if not valid:
+        return aggregated
+
+    # 检查项：按首份报告的检查顺序（FitnessEngine 的 8 项固定顺序）
+    n = len(valid)
+    for check in valid[0].checks:
+        passed_n = sum(1 for r in valid for c in r.checks if c.name == check.name and c.passed)
+        aggregated.checks.append(
+            FitnessCheck(
+                name=check.name,
+                passed=passed_n >= max(1, int(np.ceil(pass_ratio_threshold * n))),
+                detail=f"{passed_n}/{n} 只标的通过（组合多数口径）",
+            )
+        )
+
+    # 段摘要：train/valid/test 逐段截面聚合
+    for seg in valid[0].segments:
+        same = [s for s in (r.segment_by_name(seg.name) for r in valid) if s is not None]
+        if not same:
+            continue
+        aggregated.segments.append(
+            FitnessSegment(
+                name=seg.name,
+                start=min(s.start for s in same),
+                end=max(s.end for s in same),
+                bars=int(round(float(np.mean([s.bars for s in same])))),
+                total_return=float(np.mean([s.total_return for s in same])),
+                sharpe=float(np.mean([s.sharpe for s in same])),
+                max_drawdown=float(max(s.max_drawdown for s in same)),
+                total_trades=int(sum(s.total_trades for s in same)),
+                win_rate=float(np.mean([s.win_rate for s in same])),
+            )
+        )
+
+    aggregated.pass_ratio = (
+        sum(1 for c in aggregated.checks if c.passed) / len(aggregated.checks)
+        if aggregated.checks
+        else 0.0
+    )
+    aggregated.high_fitness = aggregated.pass_ratio >= 0.75
+    return aggregated

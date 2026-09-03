@@ -2,6 +2,8 @@
 // 与 src/easy_tdx/web/backtest_schemas.py 及 backtest router 的响应保持一致。
 // 后端是唯一事实源；这里只做类型契约。
 
+import type { GradeResult } from './grading/types'
+
 // ── 策略 schema（GET /api/v1/backtest/strategies） ───────────────────────────
 
 export type ParamType = 'int' | 'float' | 'bool' | 'str'
@@ -197,16 +199,27 @@ export interface PortfolioBacktestRequest {
   end_date?: string
 }
 
+/** 组合整体绩效：与单标的同口径的完整指标（PerformanceAnalyzer 算出，
+ * 含 SQN/最大连胜连亏等）+ 组合专属的标的数与总资金。 */
+export type PortfolioTotalPerformance = Performance & {
+  total_stocks: number
+  total_cash: number
+}
+
+/** 组合交易明细行：单标的 Trade 附来源标的（组合层汇总成交表）。 */
+export type PortfolioTrade = Trade & { symbol: string }
+
 export interface PortfolioResult {
-  total_performance: {
-    total_return: number
-    annual_return: number
-    total_stocks: number
-    total_cash: number
-  }
+  total_performance: PortfolioTotalPerformance
   individual_results: Record<string, BacktestResult>
   equity_allocation: Record<string, number>
   combined_equity: EquityPoint[]
+  /** 组合层汇总成交（各标的 concat + symbol 列；v1.31 起返回，老结果缺省） */
+  trades?: PortfolioTrade[]
+  /** 后端组合评级（净值曲线 5 维度口径，v1.31 起返回，老结果缺省） */
+  grade?: GradeResult
+  /** 后端综合评分（v1.31 起返回，老结果缺省） */
+  score?: StrategyScoreReport
 }
 
 // ── 参数网格寻优（Phase 4） ──────────────────────────────────────────────────

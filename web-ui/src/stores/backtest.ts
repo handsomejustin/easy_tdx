@@ -9,6 +9,8 @@ import {
   formatError,
   runBacktest,
   submitPortfolioTask,
+  submitPortfolioEvaluateTask,
+  submitPortfolioWalkforwardTask,
   submitOptimizeAllTask,
   submitOptimizeTask,
   submitMultiStrategyTask,
@@ -187,6 +189,62 @@ export const useBacktestStore = defineStore('backtest', () => {
     error.value = ''
   }
 
+  // ── 组合附加分析：组合级 Walk-Forward / 一条龙评估 ────────────────────────
+  const portfolioWfResult = ref<WalkForwardResult | null>(null)
+  const portfolioWfRunning = ref(false)
+  const portfolioWfError = ref<string>('')
+  const portfolioEvaluateResult = ref<EvaluateReport | null>(null)
+  const portfolioEvaluateRunning = ref(false)
+  const portfolioEvaluateError = ref<string>('')
+
+  /** 提交组合级 WF 样本外验证后台任务并轮询（N 标的 × N 窗，比单标的慢）。 */
+  async function runPortfolioWalkforward(req: PortfolioBacktestRequest, nWindows = 7) {
+    portfolioWfRunning.value = true
+    portfolioWfError.value = ''
+    portfolioWfResult.value = null
+    try {
+      const { task_id } = await submitPortfolioWalkforwardTask(req, nWindows)
+      const body = await pollTask<{ walkforward: WalkForwardResult }>(
+        task_id,
+        300_000,
+        '组合 WF 验证',
+      )
+      portfolioWfResult.value = body.walkforward
+    } catch (e) {
+      portfolioWfError.value = formatError(e)
+      portfolioWfResult.value = null
+    } finally {
+      portfolioWfRunning.value = false
+    }
+  }
+
+  /** 提交组合级一条龙评估后台任务并轮询（组合回测+WF+适配性+评分+基准对比）。 */
+  async function runPortfolioEvaluate(req: PortfolioBacktestRequest) {
+    portfolioEvaluateRunning.value = true
+    portfolioEvaluateError.value = ''
+    portfolioEvaluateResult.value = null
+    try {
+      const { task_id } = await submitPortfolioEvaluateTask(req)
+      portfolioEvaluateResult.value = await pollTask<EvaluateReport>(
+        task_id,
+        600_000,
+        '组合一条龙评估',
+      )
+    } catch (e) {
+      portfolioEvaluateError.value = formatError(e)
+      portfolioEvaluateResult.value = null
+    } finally {
+      portfolioEvaluateRunning.value = false
+    }
+  }
+
+  function clearPortfolioExtraAnalysis() {
+    portfolioWfResult.value = null
+    portfolioWfError.value = ''
+    portfolioEvaluateResult.value = null
+    portfolioEvaluateError.value = ''
+  }
+
   // ── 多策略组合回测（资金分仓） ─────────────────────────────────────────
   const multiStrategyResult = ref<PortfolioResult | null>(null)
   const multiStrategyRunning = ref(false)
@@ -319,6 +377,12 @@ export const useBacktestStore = defineStore('backtest', () => {
     error,
     portfolioResult,
     portfolioRunning,
+    portfolioWfResult,
+    portfolioWfRunning,
+    portfolioWfError,
+    portfolioEvaluateResult,
+    portfolioEvaluateRunning,
+    portfolioEvaluateError,
     multiStrategyResult,
     multiStrategyRunning,
     optimizeResult,
@@ -344,6 +408,9 @@ export const useBacktestStore = defineStore('backtest', () => {
     clearExtraAnalysis,
     runPortfolio,
     clearPortfolio,
+    runPortfolioWalkforward,
+    runPortfolioEvaluate,
+    clearPortfolioExtraAnalysis,
     runMultiStrategy,
     clearMultiStrategy,
     runOptimize,

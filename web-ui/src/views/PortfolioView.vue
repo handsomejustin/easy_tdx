@@ -1,18 +1,26 @@
 <script setup lang="ts">
-// 组合回测主页面：左配置（多标的 + 策略 + 日期）/ 右报告（组合净值 + 各标的对比）。
+// 组合回测主页面：左配置（多标的 + 策略 + 日期 + 附加分析）/ 右报告
+// （组合净值 + 完整绩效指标 + 各标的对比 + 附加分析 WF/一条龙 + 成交明细 + AI 解读）。
+// 附加分析与单标的回测页（BacktestView）同构：勾选后随「开始组合回测」并行运行。
 
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
+import AiInterpretModal from '../components/AiInterpretModal.vue'
 import EquityChart from '../components/EquityChart.vue'
+import EvaluatePanel from '../components/EvaluatePanel.vue'
 import GradeDetails from '../components/GradeDetails.vue'
+import MetricTable from '../components/MetricTable.vue'
 import PortfolioCompareChart from '../components/PortfolioCompareChart.vue'
 import PortfolioSummaryTable from '../components/PortfolioSummaryTable.vue'
 import StocksPicker from '../components/StocksPicker.vue'
 import StrategyPicker from '../components/StrategyPicker.vue'
+import TradeTable from '../components/TradeTable.vue'
+import WalkForwardPanel from '../components/WalkForwardPanel.vue'
 import { formatError, saveStrategy } from '../api'
-import { gradePortfolio } from '../grading'
-import type { Category, ExecutionMode } from '../types'
+import { buildPortfolioAiPrompt } from '../aiPrompt'
+import { GRADE_META, gradePortfolio } from '../grading'
+import type { Category, ExecutionMode, PortfolioTrade } from '../types'
 import { useBacktestStore } from '../stores/backtest'
 
 const store = useBacktestStore()
@@ -40,6 +48,11 @@ function isoDaysFromNow(days: number): string {
 }
 const startDate = ref('2020-01-06')
 const endDate = ref(isoDaysFromNow(0))
+
+// 附加分析开关（与单标的回测页同构）：组合级 WF / 一条龙评估
+const wfEnabled = ref(false)
+const wfWindows = ref(7)
+const evaluateEnabled = ref(false)
 
 onMounted(async () => {
   store.loadStrategies().catch((e) => {
@@ -75,8 +88,8 @@ onMounted(async () => {
   if (qCategory) category.value = qCategory
 })
 
-async function onRun() {
-  await store.runPortfolio({
+function currentRequest() {
+  return {
     strategy: strategy.value,
     params: params.value,
     cash: cash.value,
@@ -85,7 +98,20 @@ async function onRun() {
     category: category.value,
     start_date: startDate.value,
     end_date: endDate.value,
-  })
+  }
+}
+
+async function onRun() {
+  store.error = ''
+  store.clearPortfolioExtraAnalysis()
+  // 1. 主组合回测（后端返回完整 25 项指标 + grade/score）
+  await store.runPortfolio(currentRequest())
+  // 2. 附加分析：勾选的组合级 WF / 一条龙并行跑（互不阻塞，各自独立错误提示）
+  if (!store.portfolioResult) return
+  const jobs: Promise<void>[] = []
+  if (wfEnabled.value) jobs.push(store.runPortfolioWalkforward(currentRequest(), wfWindows.value))
+  if (evaluateEnabled.value) jobs.push(store.runPortfolioEvaluate(currentRequest()))
+  await Promise.allSettled(jobs)
 }
 
 // ── 保存策略（把当前组合结果 + 配置 + 上下文存进策略库）──────────────────────
@@ -100,8 +126,8 @@ const strategyLabel = computed(
   () => store.strategies.find((s) => s.name === strategy.value)?.label ?? strategy.value,
 )
 
-// 组合评级：从 combined_equity 重算夏普/卡玛/波动率等（组合级净值算不出胜率/利润因子），
-// 用 5 维度评分。净值点数过少（< 60 个交易日）视为样本不足。
+// 组合评级：从 combined_equity 重算夏普/卡玛/波动率等（组合级 5 维度口径，
+// 与后端 grade_portfolio_equity 一致）。净值点数过少（< 60 个交易日）视为样本不足。
 const grade = computed(() =>
   store.portfolioResult ? gradePortfolio(store.portfolioResult) : null,
 )
@@ -155,6 +181,62 @@ async function onSave() {
     saving.value = false
   }
 }
+
+// ── AI 解读（与单标的回测页共用 AiInterpretModal）────────────────────────────
+const showAiModal = ref(false)
+
+const aiPromptText = computed(() => {
+  if (!store.portfolioResult) return ''
+  return buildPortfolioAiPrompt({
+    stocks: stocks.value,
+    category: category.value,
+    startDate: startDate.value,
+    endDate: endDate.value,
+    strategyLabel: strategyLabel.value,
+    params: params.value,
+    cash: cash.value,
+    commission: 0.0003,
+    slippage: 0,
+    execution: execution.value,
+    result: store.portfolioResult,
+    wf: store.portfolioWfResult,
+    evaluate: store.portfolioEvaluateResult,
+    grade: grade.value,
+    gradeHint: grade.value ? GRADE_META[grade.value.grade].hint : undefined,
+  })
+})
+
+/** 随解读落历史库的策略上下文（历史页「去回测」引导用） */
+const aiContext = computed(() => ({
+  strategy: strategy.value,
+  strategy_label: strategyLabel.value,
+  kind: 'portfolio',
+  symbol: stocks.value.join(','),
+  category: category.value,
+  params: { ...params.value },
+  start_date: startDate.value,
+  end_date: endDate.value,
+}))
+
+const aiTip = computed(() =>
+  wfEnabled.value || evaluateEnabled.value
+    ? '建议等附加分析跑完再发，Walk-Forward / 一条龙评估的数据会一并打包。'
+    : undefined,
+)
+
+// ── 组合成交明细（各标的汇总，按时间倒序）────────────────────────────────────
+const TRADES_SHOW_LIMIT = 200
+const portfolioTrades = computed<PortfolioTrade[]>(() => {
+  const r = store.portfolioResult
+  if (!r) return []
+  // 优先用后端汇总的成交表；老结果无该字段时从 individual_results 客户端汇总
+  const rows: PortfolioTrade[] = r.trades
+    ? [...r.trades]
+    : Object.entries(r.individual_results).flatMap(([symbol, res]) =>
+        res.trades.map((t) => ({ ...t, symbol })),
+      )
+  return rows.sort((a, b) => String(b.datetime).localeCompare(String(a.datetime)))
+})
 </script>
 
 <template>
@@ -210,12 +292,45 @@ async function onSave() {
         </div>
       </section>
 
+      <section class="panel-section">
+        <h3>附加分析</h3>
+        <div class="check-row">
+          <label
+            class="check-label"
+            title="按全部标的日期并集切窗，每窗各标的独立回测后合成组合净值，检验跨时段稳定性"
+          >
+            <input v-model="wfEnabled" type="checkbox" />
+            <span>Walk-Forward 样本外验证</span>
+          </label>
+          <span v-if="wfEnabled" class="wf-windows">
+            窗口数
+            <input v-model.number="wfWindows" type="number" min="2" max="12" step="1" />
+          </span>
+        </div>
+        <div class="check-row">
+          <label
+            class="check-label"
+            title="组合回测+组合WF+跨标的适配性体检+综合评分+等权买入持有基准对比，一份报告"
+          >
+            <input v-model="evaluateEnabled" type="checkbox" />
+            <span>一条龙评估</span>
+          </label>
+        </div>
+        <p class="extra-hint">勾选后随「开始组合回测」自动附加运行（标的越多越慢）</p>
+      </section>
+
       <button
         class="primary run-btn"
-        :disabled="store.portfolioRunning || stocks.length === 0"
+        :disabled="
+          store.portfolioRunning || store.portfolioWfRunning || store.portfolioEvaluateRunning || stocks.length === 0
+        "
         @click="onRun"
       >
-        {{ store.portfolioRunning ? '组合回测中…' : '开始组合回测' }}
+        {{
+          store.portfolioRunning || store.portfolioWfRunning || store.portfolioEvaluateRunning
+            ? '组合回测中…'
+            : '开始组合回测'
+        }}
       </button>
     </aside>
 
@@ -232,6 +347,7 @@ async function onSave() {
       <div v-if="store.portfolioResult" class="report-content">
         <div class="result-toolbar">
           <button class="ghost" @click="openSaveForm">💾 保存策略</button>
+          <button class="ghost" @click="showAiModal = true">🤖 AI 解读</button>
           <span v-if="saveMsg" class="save-msg">{{ saveMsg }}</span>
         </div>
 
@@ -253,6 +369,15 @@ async function onSave() {
               </span>
             </div>
             <div class="perf-item">
+              <span class="label">年化收益</span>
+              <span
+                class="value"
+                :class="store.portfolioResult.total_performance.annual_return > 0 ? 'pos' : 'neg'"
+              >
+                {{ (store.portfolioResult.total_performance.annual_return * 100).toFixed(2) }}%
+              </span>
+            </div>
+            <div class="perf-item">
               <span class="label">标的数量</span>
               <span class="value">{{ store.portfolioResult.total_performance.total_stocks }}</span>
             </div>
@@ -263,9 +388,50 @@ async function onSave() {
           </div>
         </section>
 
+        <!-- 附加分析：组合级 Walk-Forward（v1.31，与单标的同构面板） -->
+        <section
+          v-if="store.portfolioWfRunning || store.portfolioWfResult || store.portfolioWfError"
+          class="report-section"
+        >
+          <h3>Walk-Forward 样本外验证</h3>
+          <p v-if="store.portfolioWfRunning" class="loading-text">
+            验证中…（标的数 × 窗口数 次回测，约需十几秒）
+          </p>
+          <div v-else-if="store.portfolioWfError" class="error-banner">
+            ⚠ {{ store.portfolioWfError }}
+          </div>
+          <WalkForwardPanel v-else-if="store.portfolioWfResult" :wf="store.portfolioWfResult" />
+        </section>
+
+        <!-- 附加分析：组合级一条龙评估（v1.31，与单标的同构面板） -->
+        <section
+          v-if="
+            store.portfolioEvaluateRunning || store.portfolioEvaluateResult || store.portfolioEvaluateError
+          "
+          class="report-section"
+        >
+          <h3>一条龙评估</h3>
+          <p v-if="store.portfolioEvaluateRunning" class="loading-text">
+            评估中…（组合回测 + 组合WF + 跨标的适配性 + 基准对比，可能需要一两分钟）
+          </p>
+          <div v-else-if="store.portfolioEvaluateError" class="error-banner">
+            ⚠ {{ store.portfolioEvaluateError }}
+          </div>
+          <EvaluatePanel
+            v-else-if="store.portfolioEvaluateResult"
+            :report="store.portfolioEvaluateResult"
+            :grade-override="grade"
+          />
+        </section>
+
         <section class="report-section">
           <h3>组合净值曲线</h3>
           <EquityChart :equity="store.portfolioResult.combined_equity" />
+        </section>
+
+        <section class="report-section">
+          <h3>组合绩效指标</h3>
+          <MetricTable :perf="store.portfolioResult.total_performance" />
         </section>
 
         <section class="report-section">
@@ -279,6 +445,17 @@ async function onSave() {
         <section class="report-section">
           <h3>各标的净值叠加（归一化）</h3>
           <PortfolioCompareChart :results="store.portfolioResult.individual_results" />
+        </section>
+
+        <section class="report-section">
+          <h3>组合成交明细（{{ portfolioTrades.length }} 笔，按时间倒序）</h3>
+          <p v-if="portfolioTrades.length > TRADES_SHOW_LIMIT" class="loading-text">
+            仅显示最近 {{ TRADES_SHOW_LIMIT }} 笔，导出请用「对比分析」页的任务导出
+          </p>
+          <TradeTable
+            :trades="portfolioTrades.slice(0, TRADES_SHOW_LIMIT)"
+            show-symbol
+          />
         </section>
       </div>
     </main>
@@ -318,6 +495,16 @@ async function onSave() {
         </div>
       </div>
     </div>
+
+    <!-- AI 解读 Prompt 对话框（单标的/组合通用组件） -->
+    <AiInterpretModal
+      v-if="showAiModal && store.portfolioResult"
+      :prompt="aiPromptText"
+      :filename="`AI解读_组合${stocks.length}只_${strategy}.md`"
+      :context="aiContext"
+      :tip="aiTip"
+      @close="showAiModal = false"
+    />
   </div>
 </template>
 
@@ -350,6 +537,53 @@ async function onSave() {
 .loading-text {
   color: var(--text-dim);
   font-size: 12px;
+}
+/* 附加分析开关：勾选框靠左、文字单行不折行，窗口数同行跟排（与回测页一致） */
+.check-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin-bottom: 8px;
+  min-width: 0;
+}
+.check-label {
+  display: inline-flex; /* 覆盖全局 label { display: block } */
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 0;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.check-label input[type='checkbox'] {
+  width: auto;
+  flex-shrink: 0;
+  margin: 0;
+  accent-color: var(--accent, #4a9eff);
+}
+.wf-windows {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.wf-windows input {
+  width: 44px;
+  padding: 3px 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 12px;
+  color: var(--text);
+}
+.extra-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 2px 0 0;
 }
 .run-btn {
   width: 100%;
@@ -393,6 +627,7 @@ async function onSave() {
 .perf-summary {
   display: flex;
   gap: 32px;
+  flex-wrap: wrap;
 }
 .perf-item {
   display: flex;

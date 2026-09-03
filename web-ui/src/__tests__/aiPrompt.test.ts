@@ -217,3 +217,116 @@ test('可选段：WF / 一条龙评估 / 评级按需拼接', () => {
   assert.match(p, /档位：\*\*D\*\*（总分 31\.2\/100）——持有体验差或系统亏损，不建议参与/)
   assert.match(p, /一票否决：最大回撤 41\.7%/)
 })
+
+// ── 组合版 Prompt（buildPortfolioAiPrompt，v1.31）────────────────────────────
+
+import { buildPortfolioAiPrompt } from '../aiPrompt.ts'
+import type { PortfolioResult } from '../types.ts'
+
+const PORTFOLIO_RESULT: PortfolioResult = {
+  total_performance: {
+    ...PERF,
+    total_return: 0.42,
+    annual_return: 0.098,
+    max_drawdown: 0.18,
+    total_stocks: 2,
+    total_cash: 1000000,
+  },
+  individual_results: {
+    'SZ:000001': RESULT,
+    'SH:600519': RESULT,
+  },
+  equity_allocation: { 'SZ:000001': 0.5, 'SH:600519': 0.5 },
+  combined_equity: [
+    { datetime: '2020-01-06', cash: 1000000, position_value: 0, total: 1000000, drawdown: 0, drawdown_pct: 0 },
+    { datetime: '2022-04-26', cash: 0, position_value: 1420000, total: 1420000, drawdown: 0, drawdown_pct: 0 },
+  ],
+  trades: [
+    { symbol: 'SZ:000001', datetime: '2020-02-03', direction: 'BUY', size: 1000, price: 4.52, commission: 5, slippage: 0, pnl: 0, rejected: false },
+    { symbol: 'SH:600519', datetime: '2020-03-10', direction: 'SELL', size: 500, price: 4.71, commission: 5, slippage: 0, pnl: 90, rejected: false },
+  ],
+}
+
+test('组合版：组合配置/标的清单/完整指标/各标的表现/组合成交齐全', () => {
+  const p = buildPortfolioAiPrompt({
+    stocks: ['SZ:000001', 'SH:600519'],
+    category: 'DAY',
+    startDate: '2020-01-06',
+    endDate: '2026-09-02',
+    strategyLabel: '双均线交叉',
+    params: { fast: 5, slow: 20 },
+    cash: 1000000,
+    commission: 0.0003,
+    slippage: 0,
+    execution: 'next_open',
+    result: PORTFOLIO_RESULT,
+  })
+
+  // 组合角色设定（明确「一篮子标的、资金均分」语境）
+  assert.match(p, /# 角色设定/)
+  assert.match(p, /组合回测报告（同一个策略分别跑在一篮子标的上/)
+  // 配置段
+  assert.match(p, /# 组合回测配置/)
+  assert.match(p, /2 只标的上，资金均分（各拿总额的 50\.0%）/)
+  assert.match(p, /SZ:000001、SH:600519/)
+  assert.match(p, /组合总资金：1,000,000 元/)
+  // 完整 25 项指标（含 SQN/连胜连亏）
+  for (const label of ['SQN 系统质量', '最大连胜', '最大连亏', 'Ulcer 指数']) {
+    assert.ok(p.includes(`- ${label}：`), `缺少指标行：${label}`)
+  }
+  assert.match(p, /- 总收益率：42\.00%/)
+  // 净值概览 + 各标的表现（降序）
+  assert.match(p, /# 净值概览/)
+  assert.match(p, /# 各标的表现（按收益降序；全部）/)
+  assert.match(p, /- SZ:000001：总收益 \+126\.43%，最大回撤 -41\.65%，夏普 0\.53，90 笔（胜率 \+35\.56%）/)
+  // 组合成交（带标的）
+  assert.match(p, /# 最近成交（组合合计的最后 8 笔）/)
+  assert.match(p, /SH:600519 2020-03-10 卖出 500 股 @ 4\.71，本笔盈亏 \+90 元/)
+  assert.match(p, /# 背景与免责/)
+
+  // 未提供可选数据时，对应段落不出现
+  assert.ok(!p.includes('Walk-Forward 样本外验证'))
+  assert.ok(!p.includes('一条龙评估'))
+  assert.ok(!p.includes('评级（不看收益率）'))
+})
+
+test('组合版：WF / 一条龙 / 评级按需拼接', () => {
+  const p = buildPortfolioAiPrompt({
+    stocks: ['SZ:000001', 'SH:600519'],
+    category: 'DAY',
+    startDate: '2020-01-06',
+    endDate: '2026-09-02',
+    strategyLabel: '双均线交叉',
+    params: {},
+    cash: 1000000,
+    commission: 0.0003,
+    slippage: 0,
+    execution: 'next_open',
+    result: PORTFOLIO_RESULT,
+    wf: {
+      n_windows: 5,
+      warmup_ratio: 0.3,
+      windows: [
+        { index: 0, start: '2021-01-01', end: '2021-12-31', bars: 240, total_return: 0.03, sharpe: 0.6, max_drawdown: -0.05, total_trades: 30, win_rate: 0.53 },
+        { index: 1, start: '2022-01-01', end: '2022-12-31', bars: 240, total_return: -0.01, sharpe: -0.2, max_drawdown: -0.09, total_trades: 26, win_rate: 0.46 },
+      ],
+      consistency: 0.5,
+      chained_return: 0.0197,
+      mean_window_return: 0.01,
+      median_window_return: 0.01,
+      worst_window: -0.01,
+      best_window: 0.03,
+      mean_sharpe: 0.2,
+      worst_drawdown: -0.09,
+      total_trades: 56,
+    },
+    grade: { ...GRADE, scenario: 'portfolio' },
+    gradeHint: '持有体验差或系统亏损，不建议参与',
+  })
+
+  assert.match(p, /Walk-Forward 样本外验证（同参数跨时段稳定性）/)
+  assert.match(p, /窗口数：5/)
+  assert.match(p, /窗1（2021-01-01 ~ 2021-12-31）：\+3\.00%，夏普 0\.60，最大回撤 -5\.00%，30 笔（胜率 \+53\.00%）/)
+  assert.match(p, /# 评级（不看收益率，面向「普通人拿不拿得住」）/)
+  assert.match(p, /档位：\*\*D\*\*/)
+})

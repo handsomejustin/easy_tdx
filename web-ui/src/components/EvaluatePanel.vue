@@ -10,9 +10,13 @@ import HelpCollapse from './HelpCollapse.vue'
 import { gradePerformance } from '../grading'
 import { evaluateGlossary } from '../data/glossary'
 import type { EvaluateReport } from '../types'
+import type { GradeResult } from '../grading/types'
 
 const props = defineProps<{
   report: EvaluateReport
+  /** 评级覆盖：组合级报告传入组合口径评级（gradePortfolio / 后端
+   * grade_portfolio_equity），缺省时按单标的 6 维度本地重算。 */
+  gradeOverride?: GradeResult | null
 }>()
 
 /** 综合评分分项（含权重，展示顺序固定） */
@@ -32,7 +36,7 @@ const scoreComponents = computed(() => {
   }))
 })
 
-const grade = computed(() => gradePerformance(props.report.performance))
+const grade = computed(() => props.gradeOverride ?? gradePerformance(props.report.performance))
 
 const excess = computed(() => props.report.benchmark.excess_return)
 

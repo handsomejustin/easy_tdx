@@ -98,6 +98,10 @@ class FitnessReport:
     def passed_count(self) -> int:
         return sum(1 for c in self.checks if c.passed)
 
+    def segment_by_name(self, name: str) -> FitnessSegment | None:
+        """按段名（train/valid/test）取段摘要，无该段时返回 None。"""
+        return next((s for s in self.segments if s.name == name), None)
+
     def to_dict(self) -> dict[str, Any]:
         return dict(
             to_json_native(
