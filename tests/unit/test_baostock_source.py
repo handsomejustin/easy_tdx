@@ -282,3 +282,106 @@ def test_index_endpoint_falls_back_to_baostock(fake_bs):
     body = resp.json()
     assert body["source"] == "baostock"
     assert fake_bs["code"] == "sh.000001"
+
+
+# ---------------------------------------------------------------------------
+# Warehouse 适配（BaostockClient / AutoKlineClient）
+# ---------------------------------------------------------------------------
+
+
+def test_baostock_client_maps_and_returns_datetime(fake_bs):
+    """适配器满足 WarehouseSyncer 协议：market/period 数字与名称映射正确，
+    输出 datetime 列（仓库 schema）。"""
+    from easy_tdx.sources.baostock import BaostockClient
+
+    df = BaostockClient().get_stock_kline(
+        1, "600519", period="DAILY", start=0, count=5, adjust="QFQ"
+    )
+    assert len(df) == 5
+    assert "datetime" in df.columns
+    assert fake_bs["code"] == "sh.600519"
+    assert fake_bs["frequency"] == "d"
+
+
+def test_baostock_client_unsupported_market_returns_empty(fake_bs):
+    """BJ（market=2）等不覆盖范围：返回空表（上层按无数据跳过），不报错。"""
+    from easy_tdx.sources.baostock import BaostockClient
+
+    df = BaostockClient().get_stock_kline(2, "430047", period="DAILY")
+    assert len(df) == 0
+    assert "calls" not in fake_bs
+
+
+def test_baostock_client_no_data_returns_empty_not_raise(fake_bs):
+    """无数据（如超出上市范围）返回空表而非异常。"""
+    from easy_tdx.sources.baostock import BaostockClient
+
+    _install_fake_bs([], fake_bs)
+    df = BaostockClient().get_stock_kline(0, "000001", period="DAILY")
+    assert len(df) == 0
+
+
+def test_baostock_client_not_installed_raises_with_hint(monkeypatch: pytest.MonkeyPatch):
+    """显式 --source baostock 但未安装：报错且信息带安装提示。"""
+    monkeypatch.delenv("EASY_TDX_BAOSTOCK", raising=False)
+    monkeypatch.setitem(sys.modules, "baostock", None)
+    from easy_tdx.sources.baostock import BaostockClient
+
+    with pytest.raises(RuntimeError, match="easy-tdx\[baostock\]"):
+        BaostockClient().get_stock_kline(1, "600519", period="DAILY")
+
+
+class _OkClient:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def get_stock_kline(self, market, code, **kwargs):  # noqa: ANN001, ANN003
+        self.calls += 1
+        return pd.DataFrame({"datetime": [1], "close": [10.0]})
+
+
+class _EmptyThenOkClient(_OkClient):
+    def get_stock_kline(self, market, code, **kwargs):  # noqa: ANN001, ANN003
+        self.calls += 1
+        return pd.DataFrame()
+
+
+class _RaisingClient(_OkClient):
+    def get_stock_kline(self, market, code, **kwargs):  # noqa: ANN001, ANN003
+        self.calls += 1
+        raise RuntimeError("主源失败")
+
+
+def test_auto_kline_client_primary_ok_skips_fallback():
+    from easy_tdx.sources import AutoKlineClient
+
+    primary, fallback = _OkClient(), _OkClient()
+    df = AutoKlineClient(primary, fallback).get_stock_kline(1, "600519", period="DAILY")
+    assert len(df) == 1
+    assert primary.calls == 1
+    assert fallback.calls == 0
+
+
+def test_auto_kline_client_primary_empty_falls_back():
+    from easy_tdx.sources import AutoKlineClient
+
+    primary, fallback = _EmptyThenOkClient(), _OkClient()
+    df = AutoKlineClient(primary, fallback).get_stock_kline(1, "600519", period="DAILY")
+    assert len(df) == 1
+    assert fallback.calls == 1
+
+
+def test_auto_kline_client_primary_error_falls_back():
+    from easy_tdx.sources import AutoKlineClient
+
+    fallback = _OkClient()
+    df = AutoKlineClient(_RaisingClient(), fallback).get_stock_kline(1, "600519")
+    assert len(df) == 1
+    assert fallback.calls == 1
+
+
+def test_auto_kline_client_fallback_error_propagates():
+    from easy_tdx.sources import AutoKlineClient
+
+    with pytest.raises(RuntimeError, match="主源失败"):
+        AutoKlineClient(_RaisingClient(), _RaisingClient()).get_stock_kline(1, "600519")

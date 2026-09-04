@@ -24,6 +24,9 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 hiddenimports: list[str] = []
 hiddenimports += collect_submodules("uvicorn")
 hiddenimports += collect_submodules("easy_tdx")
+# baostock 兜底数据源（v1.33：/bars 与 warehouse 的最后一级回退）在
+# sources/baostock.py 里经 importlib 懒加载，静态分析扫不到，需显式声明。
+hiddenimports += collect_submodules("baostock")
 # pandas / numpy / scipy 由 PyInstaller 自带 hook 处理（见
 # PyInstaller/hooks/hook-pandas.* 等），无需手动 collect_submodules——
 # 手动全量收集会把 numpy.typing.tests / pandas._numba.kernels 等可选/测试

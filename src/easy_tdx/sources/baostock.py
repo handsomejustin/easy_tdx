@@ -169,3 +169,48 @@ def fetch_bars(
         return None
 
     return df[["date", "open", "close", "high", "low", "vol", "amount"]].reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Warehouse 适配：满足 WarehouseSyncer 客户端协议（get_stock_kline）
+# ---------------------------------------------------------------------------
+
+# TDX Market 枚举值 → baostock 市场前缀（0=SZ 1=SH；2=BJ 不覆盖）
+_TDX_TO_MARKET_STR = {0: "SZ", 1: "SH"}
+# 仓库周期名（Period 名）→ 本模块 category 键
+_PERIOD_TO_CATEGORY = {"DAILY": "DAY", "WEEKLY": "WEEK", "MONTHLY": "MONTH"}
+
+
+class BaostockClient:
+    """把 baostock 包装成 ``WarehouseSyncer`` 可直接使用的行情客户端。
+
+    只需实现 ``get_stock_kline(market:int, code, period=, start=, count=,
+    adjust=)`` 签名（``MacClient`` 同款）。语义差异：
+    - 数据缺失（未上市 / 超出范围）返回**空 DataFrame**——上层按"无数据"处理；
+    - baostock 未安装 / 已禁用 / 查询失败抛 ``RuntimeError``——错误信息带
+      安装提示，便于 ``--source baostock`` 显式使用时定位。
+    """
+
+    def get_stock_kline(
+        self,
+        market: int,
+        code: str,
+        period: str = "DAILY",
+        start: int = 0,
+        count: int = 8000,
+        adjust: str = "QFQ",
+    ) -> pd.DataFrame:
+        market_str = _TDX_TO_MARKET_STR.get(int(market))
+        category = _PERIOD_TO_CATEGORY.get(str(period).upper())
+        if market_str is None or category is None:
+            # 不覆盖的市场/周期：按"无数据"处理而非报错（调用方可跳过）
+            return pd.DataFrame()
+        if not is_enabled():
+            raise RuntimeError(
+                "baostock 未安装或已禁用（EASY_TDX_BAOSTOCK=0）。"
+                "安装: pip install easy-tdx[baostock]"
+            )
+        df = fetch_bars(market_str, code, category, start, count, adjust)
+        if df is None or df.empty:
+            return pd.DataFrame()
+        return df.rename(columns={"date": "datetime"})

@@ -6,6 +6,7 @@
 示例::
 
     easy-tdx warehouse sync --symbols SH:600519,SZ:000001
+    easy-tdx warehouse sync --symbols SH:600519 --source baostock   # 仅 baostock 源
     easy-tdx warehouse query SH 600519 --count 30
     easy-tdx warehouse stats
     easy-tdx warehouse check --symbols SH:600519
@@ -49,6 +50,16 @@ def warehouse() -> None:
     help="复权口径（默认 QFQ）",
 )
 @click.option(
+    "--source",
+    "source",
+    default="auto",
+    type=click.Choice(["auto", "tdx", "baostock"]),
+    help=(
+        "数据源（默认 auto）：auto=TDX 失败/为空自动转 baostock 兜底（需 "
+        "easy-tdx[baostock]）/ tdx=仅通达信 / baostock=仅 baostock"
+    ),
+)
+@click.option(
     "--db", "db_path", default=None, help="仓库文件路径（默认 ~/.easy_tdx/warehouse.duckdb）"
 )
 def warehouse_sync(
@@ -57,6 +68,7 @@ def warehouse_sync(
     max_bars: int,
     tail_bars: int,
     adjust: str,
+    source: str,
     db_path: str | None,
 ) -> None:
     """增量同步行情进仓库（首同步全量、此后只补尾部）。"""
@@ -81,13 +93,29 @@ def warehouse_sync(
         def _progress(done: int, total: int, sym: str) -> None:
             click.echo(f"[{done}/{total}] {sym}", err=True)
 
-        from ..cli.conn import get_mac_client
+        if source == "baostock":
+            from easy_tdx.sources.baostock import BaostockClient
 
-        with get_mac_client() as client:
+            kline_client: Any = BaostockClient()
             syncer = WarehouseSyncer(
-                client, wh, max_bars=max_bars, tail_bars=tail_bars, adjust=adjust
+                kline_client, wh, max_bars=max_bars, tail_bars=tail_bars, adjust=adjust
             )
             summary = syncer.sync(symbol_list, period=period, progress=_progress)
+        else:
+            from ..cli.conn import get_mac_client
+
+            with get_mac_client() as client:
+                if source == "auto":
+                    from easy_tdx.sources import AutoKlineClient
+                    from easy_tdx.sources.baostock import BaostockClient
+
+                    kline_client = AutoKlineClient(client, BaostockClient())
+                else:
+                    kline_client = client
+                syncer = WarehouseSyncer(
+                    kline_client, wh, max_bars=max_bars, tail_bars=tail_bars, adjust=adjust
+                )
+                summary = syncer.sync(symbol_list, period=period, progress=_progress)
         click.echo(
             json.dumps(
                 {k: v for k, v in summary.items() if k != "details"},

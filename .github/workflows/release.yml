@@ -39,10 +39,11 @@ jobs:
           npm run build
         working-directory: web-ui
 
-      # 安装后端（含 [web,packaging] extras：fastapi/uvicorn + pystray/Pillow）
+      # 安装后端（含 [web,packaging,baostock] extras：fastapi/uvicorn +
+      # pystray/Pillow + baostock 自动兜底数据源——EXE 内置全量灾备链）
       - name: Install Python deps
         run: |
-          pip install -e ".[web,packaging]"
+          pip install -e ".[web,packaging,baostock]"
           pip install pyinstaller
 
       - name: Build EXE

@@ -156,6 +156,16 @@ pip install -e ".[dev]"
 pip install -e ".[web]"
 ```
 
+### 可选：baostock 自动兜底数据源
+
+通达信协议依赖第三方行情服务器，为了"部分兜底、总好过全挂"，可选安装 baostock 作为最后一级自动回退：
+
+```bash
+pip install "easy-tdx[baostock]"
+```
+
+装完即自动生效，平时**一次都不会调用**——只有当 MAC 协议与标准协议两条 TDX 路径全部失败或返回空时才启用，响应中会带 `source: "baostock"` 字段标注数据来源。设置环境变量 `EASY_TDX_BAOSTOCK=0` 可随时关闭。边界：baostock 是收盘后更新的数据源（当日数据约 17:30 后才有），因此只兜 **日/周/月 K 线** 的历史数据（覆盖沪深，不含北交所），实时行情、分时、板块等能力仍由通达信协议提供。本地 K 线仓库同步同样支持：`easy-tdx warehouse sync --symbols SH:600519 --source auto|tdx|baostock`（默认 auto）。
+
 ## CLI 参考
 
 `easy-tdx` 默认输出 JSON（一行一条记录），`--table` 切换表格，`--output csv` 输出 CSV。
