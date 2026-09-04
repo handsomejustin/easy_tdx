@@ -124,6 +124,18 @@ class DataFrameResponse(BaseModel):
         return cls(data=[], count=0)
 
 
+class BarsResponse(DataFrameResponse):
+    """K 线响应。``source`` 非 None 表示数据来自自动兜底源（如 baostock，
+    TDX 全部路径失败时启用）——口径透明：调用方可据此展示数据来源。"""
+
+    source: str | None = None
+
+    @classmethod
+    def from_dataframe(cls, df: Any) -> BarsResponse:
+        resp = DataFrameResponse.from_dataframe(df)
+        return cls(data=resp.data, count=resp.count)
+
+
 class DictResponse(BaseModel):
     """通用 dict 响应（用于非 DataFrame 返回值）。"""
 

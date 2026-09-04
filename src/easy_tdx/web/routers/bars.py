@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -18,7 +19,7 @@ from easy_tdx.web.convert import (
     period_times_from_category,
 )
 from easy_tdx.web.deps import get_client, get_mac_client_optional
-from easy_tdx.web.schemas import DataFrameResponse
+from easy_tdx.web.schemas import BarsResponse, DataFrameResponse
 
 _logger = logging.getLogger(__name__)
 
@@ -216,7 +217,40 @@ async def _fetch_120m(
     return _resample_pairs(df, count)
 
 
-@router.get("/bars", response_model=DataFrameResponse)
+async def _baostock_last_resort(
+    market: str, code: str, category: str, start: int, count: int, adjust: str
+) -> tuple[pd.DataFrame | None, str | None]:
+    """TDX 全部路径失败/为空后的最后一级兜底：baostock（仅日线及以上）。
+
+    未安装 baostock / 设置了 EASY_TDX_BAOSTOCK=0 / 周期不适用 / 查询失败
+    一律返回 ``(None, None)``——兜底源自身的任何失败都不影响原错误语义。
+    baostock 客户端阻塞且非线程安全：丢线程池执行，模块内部持锁串行。
+    """
+    from easy_tdx.sources import baostock as baostock_source
+
+    if not baostock_source.is_enabled():
+        return None, None
+    try:
+        df = await asyncio.to_thread(
+            baostock_source.fetch_bars, market, code, category, start, count, adjust
+        )
+    except Exception as exc:  # noqa: BLE001 — 兜底失败不改变原错误路径
+        _logger.warning("/bars baostock 兜底异常 (%s%s): %s", market, code, exc)
+        return None, None
+    if df is None or df.empty:
+        return None, None
+    _logger.info("/bars 已启用 baostock 兜底 (%s%s %s，%d 根)", market, code, category, len(df))
+    return df, "baostock"
+
+
+def _bars_resp(df: pd.DataFrame | None, source: str | None) -> BarsResponse:
+    """构建带来源标注的 K 线响应（source 非 None = 命中兜底源）。"""
+    resp = BarsResponse.from_dataframe(df)
+    resp.source = source
+    return resp
+
+
+@router.get("/bars", response_model=BarsResponse)
 async def security_bars(
     market: str = Query(..., description="市场: SZ, SH, BJ"),
     code: str = Query(..., min_length=6, max_length=6),
@@ -237,11 +271,14 @@ async def security_bars(
     ),
     mac_client: Any = Depends(get_mac_client_optional),
     client: Any = Depends(get_client),
-) -> DataFrameResponse:
+) -> BarsResponse:
     """获取股票K线数据（MAC 协议，支持复权）。
 
-    优先走 AsyncMacClient.get_stock_kline（支持 NONE/QFQ/HFQ 复权 + QFQ 负价兜底）；
-    MAC 主机未连接时自动回退 AsyncTdxClient.get_security_bars（无复权，adjust 参数忽略）。
+    多级自动回退：MAC 优先（支持 NONE/QFQ/HFQ 复权 + QFQ 负价兜底）→
+    失败/为空转标准 TdxClient（无复权，adjust 参数忽略）→ 仍失败/为空且
+    周期为日线及以上时，最后一级自动兜底 baostock（需 ``pip install
+    easy-tdx[baostock]``，可用 ``EASY_TDX_BAOSTOCK=0`` 关闭）。兜底命中时
+    响应带 ``source: "baostock"``，否则该字段为 null。
     输出契约与旧版一致：日线返回 ``date`` 列，分钟线返回 ``datetime`` 列。
 
     ``category=MIN_120`` 为 120 分钟线：MAC 原生 ``Period.MINS × times=120``
@@ -256,37 +293,65 @@ async def security_bars(
     成交量/100，回退路径（标准 TdxClient）已 ×100 还原为股。
     """
     if category.upper() in _MIN_120_ALIASES:
-        df = await _fetch_120m(market, code, start, count, adjust, bar_time, mac_client, client)
-        return _df_resp(_attach_derived(df))
+        df120 = await _fetch_120m(market, code, start, count, adjust, bar_time, mac_client, client)
+        return _bars_resp(_attach_derived(df120), None)
 
     cat = category_from_str(category)
+    df: pd.DataFrame | None = None
+    source: str | None = None
+    last_exc: Exception | None = None
+
     if mac_client is not None:
-        period, times = period_times_from_category(cat)
-        df = await mac_client.get_stock_kline(
-            market_value_from_str(market),
-            code,
-            period,
-            start,
-            count,
-            times,
-            adjust=adjust_from_str(adjust),
-            bar_time=bar_time,
-        )
-        # daily_plus：日线及以上周期 datetime→date（枚举值无序，显式查表判定）
-        df = _normalize_mac_df(df, daily_plus=_is_daily_plus(cat))
-    else:
-        # MAC 不可用：回退标准 TdxClient（无复权），adjust 参数忽略
-        _logger.warning(
-            "/bars MAC 客户端未连接，回退标准 TdxClient（不支持复权，adjust=%s 被忽略）",
-            adjust,
-        )
-        df = await client.get_security_bars(
-            market_from_str(market), code, cat, start, count, bar_time=bar_time
-        )
-    return _df_resp(_attach_derived(df))
+        try:
+            period, times = period_times_from_category(cat)
+            df = await mac_client.get_stock_kline(
+                market_value_from_str(market),
+                code,
+                period,
+                start,
+                count,
+                times,
+                adjust=adjust_from_str(adjust),
+                bar_time=bar_time,
+            )
+            # daily_plus：日线及以上周期 datetime→date（枚举值无序，显式查表判定）
+            df = _normalize_mac_df(df, daily_plus=_is_daily_plus(cat))
+        except Exception as exc:  # noqa: BLE001 — 降级到标准客户端，不中断
+            last_exc = exc
+            df = None
+            _logger.warning("/bars MAC 获取失败，转标准 TdxClient (%s%s): %s", market, code, exc)
+    if df is None or df.empty:
+        if mac_client is None:
+            _logger.warning(
+                "/bars MAC 客户端未连接，回退标准 TdxClient（不支持复权，adjust=%s 被忽略）",
+                adjust,
+            )
+        elif df is not None and df.empty:
+            # MAC 抛异常的情况已在 except 分支记录
+            _logger.info("/bars MAC 返回空，转标准 TdxClient (%s%s)", market, code)
+        try:
+            df = await client.get_security_bars(
+                market_from_str(market), code, cat, start, count, bar_time=bar_time
+            )
+        except Exception as exc:  # noqa: BLE001 — 降级到 baostock，不中断
+            last_exc = exc
+            df = None
+            _logger.warning("/bars 标准 TdxClient 获取失败 (%s%s): %s", market, code, exc)
+
+    if df is None or df.empty:
+        bdf, bsource = await _baostock_last_resort(market, code, category, start, count, adjust)
+        if bdf is not None:
+            df, source = bdf, bsource
+
+    if df is None:
+        # TDX 两级都抛了异常且兜底不可用：维持原错误语义（503/500）
+        if last_exc is not None:
+            raise last_exc
+        df = pd.DataFrame()
+    return _bars_resp(_attach_derived(df), source)
 
 
-@router.get("/bars/index", response_model=DataFrameResponse)
+@router.get("/bars/index", response_model=BarsResponse)
 async def index_bars(
     market: str = Query(..., description="市场: SZ, SH"),
     code: str = Query(..., min_length=6, max_length=6),
@@ -297,8 +362,11 @@ async def index_bars(
         "start", description="时间戳: start=bar开始时间(默认) / end=bar结束时间(对齐Tushare)"
     ),
     client: Any = Depends(get_client),
-) -> DataFrameResponse:
+) -> BarsResponse:
     """获取指数K线数据。
+
+    指数K线并非所有 TDX 服务器都提供：失败/为空时自动兜底 baostock
+    （仅日线及以上，见 /bars 说明），命中时响应带 ``source: "baostock"``。
 
     vol 单位：日线/周线/月线/季线/年线 = 成交量(手)（周及以上周期服务端
     原样返回真实成交量/100，已 ×100 还原）；**分钟线协议不提供成交量**
@@ -306,10 +374,32 @@ async def index_bars(
 
     每根 bar 同样附带 ``pre_close/change/change_pct/amplitude_pct`` 衍生字段。
     """
-    df = await client.get_index_bars(
-        market_from_str(market), code, category_from_str(category), start, count, bar_time=bar_time
-    )
-    return _df_resp(_attach_derived(df))
+    df: pd.DataFrame | None = None
+    source: str | None = None
+    last_exc: Exception | None = None
+    try:
+        df = await client.get_index_bars(
+            market_from_str(market),
+            code,
+            category_from_str(category),
+            start,
+            count,
+            bar_time=bar_time,
+        )
+    except Exception as exc:  # noqa: BLE001 — 降级到 baostock，不中断
+        last_exc = exc
+        _logger.warning("/bars/index TdxClient 获取失败 (%s%s): %s", market, code, exc)
+
+    if df is None or df.empty:
+        bdf, bsource = await _baostock_last_resort(market, code, category, start, count, "QFQ")
+        if bdf is not None:
+            df, source = bdf, bsource
+
+    if df is None:
+        if last_exc is not None:
+            raise last_exc
+        df = pd.DataFrame()
+    return _bars_resp(_attach_derived(df), source)
 
 
 @router.get("/minute", response_model=DataFrameResponse)

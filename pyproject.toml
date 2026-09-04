@@ -21,6 +21,9 @@ science = ["scipy>=1.10,<1.16"]
 web = ["fastapi>=0.110,<1", "uvicorn[standard]>=0.29"]
 # 本地 K 线数据仓库（easy-tdx warehouse ...）：DuckDB 单文件列存
 warehouse = ["duckdb>=1.0"]
+# baostock 自动兜底数据源（TDX 全部路径失败时的最后一级回退，仅日线及以上）。
+# 可选安装：不装则该回退环自动关闭，核心功能不受影响。
+baostock = ["baostock>=0.9"]
 # 打包成桌面 EXE 用：系统托盘（pystray）+ 图标生成（Pillow）。
 # 仅 PyInstaller 打包态需要，开发态 ``pip install -e .[web]`` 不强制装。
 packaging = ["pystray>=0.19", "Pillow>=10.0"]
