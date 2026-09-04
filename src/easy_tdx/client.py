@@ -39,7 +39,7 @@ from .commands.base import BaseCommand
 from .commands.block_info import GetBlockInfoCmd, GetBlockInfoMetaCmd
 from .commands.company_info import GetCompanyInfoCategoryCmd, GetCompanyInfoContentCmd
 from .commands.finance_info import GetFinanceInfoCmd
-from .commands.minute_time import GetHistoryMinuteTimeDataCmd, GetMinuteTimeDataCmd
+from .commands.minute_time import GetHistoryMinuteTimeDataCmd
 from .commands.report_file import GetReportFileCmd
 from .commands.security_bars import GetIndexBarsCmd, GetSecurityBarsCmd
 from .commands.security_count import GetSecurityCountCmd
@@ -608,27 +608,23 @@ class TdxClient:
     # ------------------------------------------------------------------ #
 
     def get_minute_time_data(self, market: Market, code: str) -> pd.DataFrame:
-        """获取最近交易日分时数据（盘中=今日实时分时；盘前/休市=最近交易日历史分时）。
+        """获取最近交易日分时数据（个股与指数通用）。
 
-        历史分时接口对当日返回空（数据收盘后才生成），实时分时接口在盘前
-        返回价格自 0 累加的占位数据——单纯用"今天"查任一接口在盘前/周末/
-        节假日都会拿到空/脏数据。这里以最新一根日 K 的日期锚定最近交易日：
-        等于今天（盘中/收盘后）走实时分时命令；早于今天则查该日的历史分时。
+        历史分时接口盘中对"当日"即返回已成交分钟（实测 12:33 午休时返回
+        上午 120 条），收盘后为全天 240 条——先查今天，无数据（盘前/周末/
+        节假日）回退最近交易日（最新日 K 锚定，指数自动走指数 K 线命令）。
+        实时分时命令（0x0c1b）响应每条 2 字段而解析器按 3 字段读，必然
+        错位出负量/天价乱码，不使用。
         """
         today = _today_in_shanghai()
         latest = self._latest_trade_date(market, code)
-        if latest == today:
-            bars = self._execute(GetMinuteTimeDataCmd(market, code))
-            # 盘前占位数据首条价格恒为 0（价格差自 0 累加），视为无效
-            if bars and bars[0].price > 0:
-                return _add_minute_datetime(_to_df(bars), today)
-        if latest is not None and latest != today:
-            bars = self._execute(GetHistoryMinuteTimeDataCmd(market, code, latest))
+        for date in dict.fromkeys((today, latest)):
+            if date is None:
+                continue
+            bars = self._execute(GetHistoryMinuteTimeDataCmd(market, code, date))
             if bars:
-                return _add_minute_datetime(_to_df(bars), latest)
-        # 兜底（无日 K 数据等场景）：维持旧契约，查今日历史分时（可能为空）
-        bars = self._execute(GetHistoryMinuteTimeDataCmd(market, code, today))
-        return _add_minute_datetime(_to_df(bars), today)
+                return _add_minute_datetime(_to_df(bars), date)
+        return _add_minute_datetime(_to_df([]), today)
 
     def _latest_trade_date(self, market: Market, code: str) -> int | None:
         """最新一根日 K 的日期（YYYYMMDD），无日 K 数据（如未上市新股）返回 None。
@@ -1382,16 +1378,13 @@ class AsyncTdxClient(AsyncHeartbeatMixin):
         """获取最近交易日分时数据，语义见同步版 :meth:`get_minute_time_data`。"""
         today = _today_in_shanghai()
         latest = await self._latest_trade_date(market, code)
-        if latest == today:
-            bars = await self._execute(GetMinuteTimeDataCmd(market, code))
-            if bars and bars[0].price > 0:
-                return _add_minute_datetime(_to_df(bars), today)
-        if latest is not None and latest != today:
-            bars = await self._execute(GetHistoryMinuteTimeDataCmd(market, code, latest))
+        for date in dict.fromkeys((today, latest)):
+            if date is None:
+                continue
+            bars = await self._execute(GetHistoryMinuteTimeDataCmd(market, code, date))
             if bars:
-                return _add_minute_datetime(_to_df(bars), latest)
-        bars = await self._execute(GetHistoryMinuteTimeDataCmd(market, code, today))
-        return _add_minute_datetime(_to_df(bars), today)
+                return _add_minute_datetime(_to_df(bars), date)
+        return _add_minute_datetime(_to_df([]), today)
 
     async def _latest_trade_date(self, market: Market, code: str) -> int | None:
         """最新一根日 K 的日期（YYYYMMDD），语义见同步版 :meth:`_latest_trade_date`。"""

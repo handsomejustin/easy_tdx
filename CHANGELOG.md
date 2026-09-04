@@ -2,11 +2,18 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
-## [未发布]
+## [1.31.3] — 2026-09-04
 
-**CLI 对齐 WebUI/Python SDK 的分析能力**——补齐 CLI 此前缺失的三块：一键参数寻优、内置策略列表、组合级 WF/一条龙。引擎层全部复用现成实现（`ParamGridOptimizer`/`STRATEGY_PRESETS`/`evaluate_portfolio`/`PortfolioWalkForwardEngine`），CLI、Web API（`/backtest/optimize`、`/backtest/evaluate` 等）与 Python SDK 三条通路能力对等。
+**紧急修复盘中分时数据错乱（v1.31.2 回归），并包含 CLI 分析能力对齐**——v1.31.2 引入的"盘中走实时分时命令"路径存在解析错位：实时分时命令（0x0c1b）响应每条记录实际 2 个字段，解析器按 3 字段读取，从第二条起全部错位——个股与指数**盘中**分时出现天文价格（如科创50 出现 67008）与负成交量（如 -2296）。实测确认历史分时接口盘中查"当日"即返回已成交分钟（午休 12:33 时返回上午 120 条，尾价与实时行情现价吻合），实时命令本无必要。本版同时包含此前合入 main 的 CLI 分析能力对齐与寻优指标缓存修复。
 
-### 新增
+### 紧急修复（分时）
+
+- **分时全程改走历史分时接口**（[client.py](src/easy_tdx/client.py) `get_minute_time_data`，同步+异步）：先查今天——盘中=已成交部分、收盘后=全天 240 条；空（盘前/周末/节假日）回退最近交易日。实时分时命令从 client 移除，docstring 记录弃用原因（响应布局与解析器不匹配）。
+- v1.31.2 的**盘前/休市回退**与**指数K线命令适配**（乱码日期检测自动换 `GetIndexBarsCmd`）经验证正确，保持不变。
+
+### 新增（CLI 对齐 WebUI/Python SDK 的分析能力）
+
+补齐 CLI 此前缺失的三块：一键参数寻优、内置策略列表、组合级 WF/一条龙。引擎层全部复用现成实现（`ParamGridOptimizer`/`STRATEGY_PRESETS`/`evaluate_portfolio`/`PortfolioWalkForwardEngine`），CLI、Web API（`/backtest/optimize`、`/backtest/evaluate` 等）与 Python SDK 三条通路能力对等。
 
 - **`easy-tdx optimize` 参数网格寻优命令**（[backtest/cli.py](src/easy_tdx/backtest/cli.py)）：单策略网格搜索（`--strategy ma_cross` 用该策略预设网格，或 `--param fast=5,10,15 --param slow=20,60` 自定义），以及 `--all` 一键寻优所有内置策略——逐策略按 `STRATEGY_PRESETS` 预设网格寻优后按总收益率全局排名（对齐 Web UI /optimize 页与 `/backtest/optimize-all/run/async`）。支持 `--workers N` 进程级并行、`--table` 排名表 / JSON 全量输出（含热力图矩阵）。`--strategy` 与 `--param` 在联网取数前前置校验（未知策略/未知参数/网格超限快速失败）。
 - **`easy_tdx.backtest.optimizer.optimize_all_strategies` Python API**（[optimizer.py](src/easy_tdx/backtest/optimizer.py)）：一键全策略寻优的规范实现（`_optimize_strategy_best` 模块级 worker 可 pickle，主进程解析 label、跨策略 ProcessPool 并行），CLI 与后续 Web 端可共用；`presets` 参数支持注入子集网格（测试用）。
@@ -19,9 +26,10 @@
 
 ### 测试
 
-- 新增 13 例：`optimize` 命令互斥/未知策略/未知参数/畸形参数校验（联网前快速失败）、`strategies` 表格与 JSON 输出、`portfolio --help` 新旗标、`optimize_all_strategies` 排名序/label/skipped/JSON 原生类型、指标缓存「同内容不同对象必须命中」回归。
+- **分时单测重写为 7 例**（同步/异步双口径）：盘中只查今日历史分时（断言单次请求）、盘前回退最近交易日、指数锚点换指数K线命令、无日 K 兜底；盘中实测四类标的（个股 301008 / 上证指数 / 科创50 000688 / 880 板块指数）全部返回当日已成交分钟、尾价与实时现价吻合、零异常行（价格 ≤0 或成交量 <0 的行数为 0）。
+- CLI 侧新增 13 例：`optimize` 命令互斥/未知策略/未知参数/畸形参数校验（联网前快速失败）、`strategies` 表格与 JSON 输出、`portfolio --help` 新旗标、`optimize_all_strategies` 排名序/label/skipped/JSON 原生类型、指标缓存「同内容不同对象必须命中」回归。
 - 实测验证：`strategies` 列出 54 策略；`optimize --strategy`（3×3 网格）与 `optimize --all --workers 4`（54 策略 316 网格点）真实行情跑通；`portfolio --evaluate`（完整报告含评分/评级/WF/基准）与 `--wf` 真实跑通。
-- 全量回归：pytest 1613 全部通过、ruff/ruff format/mypy 全绿（原 v1.25 既有失败 `test_optimizer_cache_reuse_across_grid_points` 随缓存键修复转绿）。
+- 全量回归：pytest 1629 全部通过、ruff/ruff format/mypy 全绿（v1.25 既有失败 `test_optimizer_cache_reuse_across_grid_points` 随缓存键修复转绿）。
 
 ## [1.31.2] — 2026-09-04
 

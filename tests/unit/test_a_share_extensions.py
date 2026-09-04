@@ -11,7 +11,6 @@ from easy_tdx import AsyncTdxClient, Market, TdxClient
 from easy_tdx.client import _classify_fund_flow
 from easy_tdx.commands.minute_time import (
     GetHistoryMinuteTimeDataCmd,
-    GetMinuteTimeDataCmd,
 )
 from easy_tdx.commands.security_bars import GetIndexBarsCmd, GetSecurityBarsCmd
 from easy_tdx.commands.security_list import GetSecurityListCmd
@@ -321,17 +320,17 @@ def test_get_price_limits_uses_listing_window(_mock_conn_cls):
 
 
 @patch("easy_tdx.client.TdxConnection")
-def test_get_minute_time_data_preopen_falls_back_to_last_trade_day(_mock_conn_cls):
-    """盘前/周末/节假日：今日分时尚不存在，应回退查最近交易日（最新日K日期）的历史分时。"""
+def test_get_minute_time_data_intraday_uses_history_today(_mock_conn_cls):
+    """盘中（最新日K=今天）：历史分时接口对当日即返回已成交分钟，只查今天一次。"""
     client = TdxClient("127.0.0.1")
-    day_bars = [SecurityBar(10, 10, 10, 10, 100, 1000, 2026, 9, 3, 15, 0)]
-    expected = [MinuteBar(price=40.91, vol=3677)]
+    day_bars = [SecurityBar(10, 10, 10, 10, 100, 1000, 2026, 9, 4, 15, 0)]
+    expected = [MinuteBar(price=44.2, vol=118)]
 
     def mock_execute(cmd):
         if isinstance(cmd, GetSecurityBarsCmd):
             return day_bars
         if isinstance(cmd, GetHistoryMinuteTimeDataCmd):
-            assert cmd.date == 20260903, "应查最近交易日 20260903 而非今天"
+            assert cmd.date == 20260904, "盘中应只查今天的历史分时"
             return expected
         return []
 
@@ -342,55 +341,26 @@ def test_get_minute_time_data_preopen_falls_back_to_last_trade_day(_mock_conn_cl
         result = client.get_minute_time_data(Market.SH, "600000")
 
     assert isinstance(result, pd.DataFrame)
-    assert result["price"].iloc[0] == 40.91
-    assert str(result["datetime"].iloc[0]).startswith("2026-09-03")
-    # 不应请求今日历史分时（旧实现盘前必然拿到空的来源）
-    history_dates = [
-        c[0][0].date
-        for c in mock_exec.call_args_list
-        if isinstance(c[0][0], GetHistoryMinuteTimeDataCmd)
-    ]
-    assert history_dates == [20260903]
-
-
-@patch("easy_tdx.client.TdxConnection")
-def test_get_minute_time_data_intraday_uses_live_cmd(_mock_conn_cls):
-    """盘中/收盘后（最新日K=今天）：走实时分时命令，返回今日数据。"""
-    client = TdxClient("127.0.0.1")
-    day_bars = [SecurityBar(10, 10, 10, 10, 100, 1000, 2026, 9, 4, 15, 0)]
-    live = [MinuteBar(price=41.0, vol=100)]
-
-    def mock_execute(cmd):
-        if isinstance(cmd, GetSecurityBarsCmd):
-            return day_bars
-        if isinstance(cmd, GetMinuteTimeDataCmd):
-            return live
-        raise AssertionError(f"盘中不应请求历史分时: {cmd}")
-
-    with (
-        patch("easy_tdx.client._today_in_shanghai", return_value=20260904),
-        patch.object(TdxClient, "_execute", side_effect=mock_execute),
-    ):
-        result = client.get_minute_time_data(Market.SH, "600000")
-
-    assert result["price"].iloc[0] == 41.0
+    assert result["price"].iloc[0] == 44.2
     assert str(result["datetime"].iloc[0]).startswith("2026-09-04")
+    history_calls = [
+        c for c in mock_exec.call_args_list if isinstance(c[0][0], GetHistoryMinuteTimeDataCmd)
+    ]
+    assert len(history_calls) == 1
 
 
 @patch("easy_tdx.client.TdxConnection")
-def test_get_minute_time_data_live_placeholder_falls_back(_mock_conn_cls):
-    """防御：实时分时接口返回盘前占位数据（首条价格 0）时不应采用，回退历史分时。"""
+def test_get_minute_time_data_preopen_falls_back_to_last_trade_day(_mock_conn_cls):
+    """盘前/周末/节假日：今日分时尚不存在（历史分时当日返回空），回退最近交易日。"""
     client = TdxClient("127.0.0.1")
-    day_bars = [SecurityBar(10, 10, 10, 10, 100, 1000, 2026, 9, 4, 15, 0)]
-    expected = [MinuteBar(price=41.0, vol=100)]
+    day_bars = [SecurityBar(10, 10, 10, 10, 100, 1000, 2026, 9, 3, 15, 0)]
+    expected = [MinuteBar(price=40.91, vol=3677)]
 
     def mock_execute(cmd):
         if isinstance(cmd, GetSecurityBarsCmd):
             return day_bars
-        if isinstance(cmd, GetMinuteTimeDataCmd):
-            return [MinuteBar(price=0.0, vol=48)] * 240
         if isinstance(cmd, GetHistoryMinuteTimeDataCmd):
-            return expected
+            return expected if cmd.date == 20260903 else []
         return []
 
     with (
@@ -399,7 +369,8 @@ def test_get_minute_time_data_live_placeholder_falls_back(_mock_conn_cls):
     ):
         result = client.get_minute_time_data(Market.SH, "600000")
 
-    assert result["price"].iloc[0] == 41.0
+    assert result["price"].iloc[0] == 40.91
+    assert str(result["datetime"].iloc[0]).startswith("2026-09-03")
 
 
 @patch("easy_tdx.client.TdxConnection")
@@ -432,8 +403,7 @@ def test_get_minute_time_data_index_anchor_uses_index_bars(_mock_conn_cls):
         if isinstance(cmd, GetSecurityBarsCmd):
             return garbage_bars
         if isinstance(cmd, GetHistoryMinuteTimeDataCmd):
-            assert cmd.date == 20260903, "应以指数K线锚定的 20260903 查历史分时"
-            return expected
+            return expected if cmd.date == 20260903 else []
         return []
 
     with (
@@ -462,8 +432,7 @@ def test_async_get_minute_time_data_index_anchor_uses_index_bars():
                 if isinstance(cmd, GetSecurityBarsCmd):
                     return garbage_bars
                 if isinstance(cmd, GetHistoryMinuteTimeDataCmd):
-                    assert cmd.date == 20260903
-                    return expected
+                    return expected if cmd.date == 20260903 else []
                 return []
 
             with (
@@ -491,8 +460,7 @@ def test_async_get_minute_time_data_preopen_falls_back_to_last_trade_day():
                 if isinstance(cmd, GetSecurityBarsCmd):
                     return day_bars
                 if isinstance(cmd, GetHistoryMinuteTimeDataCmd):
-                    assert cmd.date == 20260903, "应查最近交易日 20260903 而非今天"
-                    return expected
+                    return expected if cmd.date == 20260903 else []
                 return []
 
             with (
@@ -507,10 +475,10 @@ def test_async_get_minute_time_data_preopen_falls_back_to_last_trade_day():
     asyncio.run(run_test())
 
 
-def test_async_get_minute_time_data_intraday_uses_live_cmd():
-    """异步客户端：盘中走实时分时命令。"""
+def test_async_get_minute_time_data_intraday_uses_history_today():
+    """异步客户端：盘中走历史分时接口查今天。"""
     day_bars = [SecurityBar(10, 10, 10, 10, 100, 1000, 2026, 9, 4, 15, 0)]
-    live = [MinuteBar(price=41.0, vol=100)]
+    expected = [MinuteBar(price=44.2, vol=118)]
 
     async def run_test() -> None:
         with patch("easy_tdx.client.AsyncTdxConnection"):
@@ -519,9 +487,10 @@ def test_async_get_minute_time_data_intraday_uses_live_cmd():
             async def mock_execute(cmd):
                 if isinstance(cmd, GetSecurityBarsCmd):
                     return day_bars
-                if isinstance(cmd, GetMinuteTimeDataCmd):
-                    return live
-                raise AssertionError(f"盘中不应请求历史分时: {cmd}")
+                if isinstance(cmd, GetHistoryMinuteTimeDataCmd):
+                    assert cmd.date == 20260904, "盘中应只查今天的历史分时"
+                    return expected
+                return []
 
             with (
                 patch("easy_tdx.client._today_in_shanghai", return_value=20260904),
@@ -529,6 +498,6 @@ def test_async_get_minute_time_data_intraday_uses_live_cmd():
             ):
                 result = await client.get_minute_time_data(Market.SH, "600000")
 
-            assert result["price"].iloc[0] == 41.0
+            assert result["price"].iloc[0] == 44.2
 
     asyncio.run(run_test())
