@@ -13,11 +13,15 @@
 - **`easy-tdx strategies` 内置策略列表命令**：列出注册表全部策略（名称/中文标签/参数默认值/预设寻优网格点数/说明），`--output json` 输出与 Web API `GET /backtest/strategies` 同构的完整 schema。
 - **`easy-tdx portfolio --evaluate / --wf`**：组合级一条龙评估（组合回测 + 组合 WF + 跨标的适配性体检 + 综合评分 + 组合评级 + 等权买入持有基准对比，调 `evaluate_portfolio`）与组合级 Walk-Forward（`PortfolioWalkForwardEngine`），输出与 Web UI /portfolio 页同构；同时补上 `--auto-fees` 品种感知费率旗标。
 
+### 修复
+
+- **寻优指标缓存自 v1.25 起全程 0 命中（两段式加速静默失效）**（[indicator_cache.py](src/easy_tdx/backtest/indicator_cache.py)）：缓存键此前用数组**对象 id** 做签名，而引擎每次 run 会重建数组对象，id 逐点漂移导致跨网格点永不命中——`test_optimizer_cache_reuse_across_grid_points` 一直在失败（仅在带缓存统计的测试里暴露，正确性对拍不受影响，属纯性能回归）。改为**内容哈希**签名（blake2b 16 字节 + dtype/shape），同值不同对象视为同一数据；附带删除防 id 复用的 `_array_refs` 强引用表（内容寻址下不再需要，缓存生命周期内的数组引用也随之释放）。实测 16 点网格命中率 38%，新增「同内容不同对象必须命中」回归测试。
+
 ### 测试
 
-- 新增 12 例：`optimize` 命令互斥/未知策略/未知参数/畸形参数校验（联网前快速失败）、`strategies` 表格与 JSON 输出、`portfolio --help` 新旗标、`optimize_all_strategies` 排名序/label/skipped/JSON 原生类型。
+- 新增 13 例：`optimize` 命令互斥/未知策略/未知参数/畸形参数校验（联网前快速失败）、`strategies` 表格与 JSON 输出、`portfolio --help` 新旗标、`optimize_all_strategies` 排名序/label/skipped/JSON 原生类型、指标缓存「同内容不同对象必须命中」回归。
 - 实测验证：`strategies` 列出 54 策略；`optimize --strategy`（3×3 网格）与 `optimize --all --workers 4`（54 策略 316 网格点）真实行情跑通；`portfolio --evaluate`（完整报告含评分/评级/WF/基准）与 `--wf` 真实跑通。
-- 全量回归：pytest 1611 通过（`test_optimizer_cache_reuse_across_grid_points` 为 main 既有失败，与本次无关）、ruff/ruff format/mypy 全绿。
+- 全量回归：pytest 1613 全部通过、ruff/ruff format/mypy 全绿（原 v1.25 既有失败 `test_optimizer_cache_reuse_across_grid_points` 随缓存键修复转绿）。
 
 ## [1.31.2] — 2026-09-04
 

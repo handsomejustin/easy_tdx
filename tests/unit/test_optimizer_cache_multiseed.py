@@ -62,6 +62,22 @@ def test_indicator_cache_distinguishes_arrays():
     assert cache.misses == 2  # 不同数组不误命中
 
 
+def test_indicator_cache_hits_copied_array_with_same_content():
+    """同内容、不同对象（引擎每次 run 重建数组的情形）必须命中。
+
+    回归：键曾用对象 id 做数组签名，引擎逐 run 重建数组对象导致寻优
+    缓存全程 0 命中（两段式加速静默失效）。
+    """
+    from easy_tdx.MyTT import MA
+
+    arr = _pool_df(100)["close"].to_numpy()
+    cache = IndicatorCache()
+    cache.get_or_compute(MA, (arr, 5), {})
+    cache.get_or_compute(MA, (arr.copy(), 5), {})  # 同内容不同对象
+    assert cache.hits == 1
+    assert cache.misses == 1
+
+
 # ── 优化器集成（缓存命中 + 结果一致 + 并行）─────────────────────────────────
 
 
