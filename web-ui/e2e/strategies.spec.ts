@@ -9,11 +9,12 @@ test('回测结果保存到策略库并在策略库页可见', async ({ page }) 
   await page.getByRole('button', { name: '开始回测' }).click()
   await expect(page.getByRole('button', { name: '💾 保存策略' })).toBeVisible({ timeout: 60_000 })
 
-  // 打开保存对话框（名称已预填「双均线交叉 · 000001」）
+  // 打开保存对话框（名称已预填「双均线交叉 · 000001 · 平安银行」，
+  // 股票名由 /mac/symbol-info 异步补全，toHaveValue 自动重试等待）
   await page.getByRole('button', { name: '💾 保存策略' }).click()
   await expect(page.locator('.modal')).toBeVisible()
   const nameInput = page.getByPlaceholder('给这个策略起个名')
-  await expect(nameInput).toHaveValue('双均线交叉 · 000001')
+  await expect(nameInput).toHaveValue('双均线交叉 · 000001 · 平安银行')
   await nameInput.fill('E2E 冒烟策略')
 
   await page.locator('.modal-actions .primary').click()
