@@ -26,6 +26,8 @@ const sseLabel: Record<string, string> = {
         <nav class="side-nav">
           <div class="nav-group">行情</div>
           <RouterLink to="/" exact-active-class="active">市场看板</RouterLink>
+          <RouterLink to="/industries" active-class="active">行业总览</RouterLink>
+          <RouterLink to="/concepts" active-class="active">概念总览</RouterLink>
           <RouterLink to="/watchlist" active-class="active">自选行情</RouterLink>
           <RouterLink to="/leaders" active-class="active">龙头池</RouterLink>
           <RouterLink to="/ccpm" active-class="active">期货持仓排名</RouterLink>

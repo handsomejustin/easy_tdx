@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 import BacktestView from './views/BacktestView.vue'
+import BoardOverviewView from './views/BoardOverviewView.vue'
 import CcpmView from './views/CcpmView.vue'
 import CompareView from './views/CompareView.vue'
 import CoreLeadersView from './views/CoreLeadersView.vue'
@@ -20,6 +21,9 @@ import WatchlistView from './views/WatchlistView.vue'
 // + 设置（/settings 服务器 / /llm AI 模型）。
 const routes = [
   { path: '/', name: 'dashboard', component: DashboardView },
+  // 行业/概念总览（同一视图组件，路由 props 区分板块类型）
+  { path: '/industries', name: 'industries', component: BoardOverviewView, props: { boardType: 'HY' } },
+  { path: '/concepts', name: 'concepts', component: BoardOverviewView, props: { boardType: 'GN' } },
   { path: '/watchlist', name: 'watchlist', component: WatchlistView },
   { path: '/backtest', name: 'backtest', component: BacktestView },
   { path: '/portfolio', name: 'portfolio', component: PortfolioView },

@@ -558,6 +558,46 @@ export interface RankRow {
   [key: string]: unknown
 }
 
+// ── 行业/概念总览（GET /api/v1/board-mac/overview，服务端归并多排序键） ──────
+
+/** 板块总览行。多周期指标未请求/缺失时为 null；当日涨跌幅由后端按 price/pre_close 计算。 */
+export interface BoardOverviewRow {
+  market: number
+  code: string
+  name: string
+  price: number
+  pre_close: number
+  change_pct: number | null
+  speed: number | null
+  chg_3d: number | null
+  chg_5d: number | null
+  chg_10d: number | null
+  chg_20d: number | null
+  chg_60d: number | null
+  chg_ytd: number | null
+  leader_code: string
+  leader_name: string
+  leader_change_pct: number | null
+}
+
+export interface BoardOverviewResp {
+  board_type: string
+  /** 数据抓取时刻（epoch 秒） */
+  ts: number
+  count: number
+  rows: BoardOverviewRow[]
+}
+
+/** 板块翻红/翻绿事件（前端对相邻两次快照 diff 产生）。 */
+export interface BoardFlipEvent {
+  code: string
+  name: string
+  /** up = 翻红（负转正），down = 翻绿（正转负） */
+  type: 'up' | 'down'
+  time: string
+  change_pct: number
+}
+
 // ── Walk-Forward 样本外验证（v1.27 POST /backtest/wf/run/async）──────────────
 
 export interface WalkForwardWindow {

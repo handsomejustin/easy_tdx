@@ -6,6 +6,7 @@ import type {
   BacktestRequest,
   BacktestResult,
   Bar,
+  BoardOverviewResp,
   BoardRow,
   Category,
   CoreLeaderRow,
@@ -565,6 +566,20 @@ export async function fetchBoards(boardType = 'HY', count = 60): Promise<BoardRo
     r.change_pct = pre > 0 ? (price / pre - 1) * 100 : Number(r.change_pct ?? 0)
     return r as BoardRow
   })
+}
+
+/** 板块总览（服务端一次归并当日涨跌幅 + 涨速 + 多周期涨幅，15s 缓存）。
+ *  当日涨跌幅后端已按 price/pre_close-1 计算；未请求/缺失的周期指标为 null。 */
+export async function fetchBoardOverview(
+  boardType: string,
+  metrics = 'SPEED,CHANGE_3D,CHANGE_5D,CHANGE_20D,YTD',
+): Promise<BoardOverviewResp> {
+  const params = new URLSearchParams({ board_type: boardType, metrics })
+  const resp = await fetch(`${BASE}/board-mac/overview?${params}`)
+  if (!resp.ok) await throwError(resp)
+  // 后端 DictResponse 包装为 {data: {...}}，这里解包
+  const body = (await resp.json()) as { data: BoardOverviewResp }
+  return body.data
 }
 
 /** 市场异动流（火箭发射/大笔买入/封涨停板/打开跌停板/快速反弹等）。 */
