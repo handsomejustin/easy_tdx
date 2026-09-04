@@ -196,6 +196,10 @@ function onViewAll(strategyName: string, params: Record<string, number | string>
 function pct(v: number | null | undefined): string {
   return v !== null && v !== undefined && Number.isFinite(v) ? `${(v * 100).toFixed(2)}%` : '-'
 }
+/** 买入持有的盈亏配色（A 股习惯：涨红跌绿；非数值不加色） */
+function bhClass(v: number | null | undefined): string {
+  return v !== null && v !== undefined && Number.isFinite(v) ? (v >= 0 ? 'pos' : 'neg') : ''
+}
 function num(v: number | null | undefined, d = 2): string {
   return v !== null && v !== undefined && Number.isFinite(v) ? v.toFixed(d) : '-'
 }
@@ -316,6 +320,11 @@ const rankingGrades = computed<GradeResult[]>(() =>
             <span class="best-return pos">
               {{ (store.optimizeResult.best.total_return! * 100).toFixed(2) }}%
             </span>
+            <span v-if="store.optimizeResult.buy_hold" class="best-bh">
+              [买入持有：<span :class="bhClass(store.optimizeResult.buy_hold.total_return)">{{
+                pct(store.optimizeResult.buy_hold.total_return)
+              }}</span>]
+            </span>
             <span class="best-meta">
               夏普 {{ store.optimizeResult.best.sharpe?.toFixed(2) }} · 回撤
               {{ (store.optimizeResult.best.max_drawdown! * 100).toFixed(2) }}%
@@ -350,6 +359,11 @@ const rankingGrades = computed<GradeResult[]>(() =>
             </span>
             <span class="best-return pos">
               {{ (store.optimizeAllResult.best.total_return! * 100).toFixed(2) }}%
+            </span>
+            <span v-if="store.optimizeAllResult.buy_hold" class="best-bh">
+              [买入持有：<span :class="bhClass(store.optimizeAllResult.buy_hold.total_return)">{{
+                pct(store.optimizeAllResult.buy_hold.total_return)
+              }}</span>]
             </span>
             <span class="best-meta">
               夏普 {{ store.optimizeAllResult.best.sharpe?.toFixed(2) }} · 回撤
@@ -540,6 +554,12 @@ const rankingGrades = computed<GradeResult[]>(() =>
 .best-return {
   font-size: 22px;
   font-weight: 700;
+  font-family: var(--font-mono);
+}
+/* 买入持有对比项：标签/括号弱化不抢焦点，百分比按盈亏走 .pos/.neg 红绿 */
+.best-bh {
+  color: var(--text-dim);
+  font-size: 13px;
   font-family: var(--font-mono);
 }
 .best-meta {

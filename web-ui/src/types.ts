@@ -257,12 +257,24 @@ export interface OptimizeHeatmap {
   data: Array<[number, number, number | null]>
 }
 
+/** 买入持有基准（同区间/同费率，首根买入持有到末根，与一条龙评估同口径） */
+export interface BuyHoldBenchmark {
+  total_return: number
+  annual_return: number
+  max_drawdown: number
+  sharpe: number
+  calmar: number
+  volatility: number
+}
+
 export interface OptimizeResult {
   strategy: string
   param_names: string[]
   results: GridPointResult[]
   best: GridPointResult | null
   heatmap: OptimizeHeatmap | null
+  /** 买入持有基准，供直观对比「策略 vs 买入不动」（老版本后端结果可能缺省） */
+  buy_hold?: BuyHoldBenchmark | null
 }
 
 // ── 一键寻优所有策略（Phase 6） ──────────────────────────────────────────────
@@ -299,6 +311,8 @@ export interface OptimizeAllResult {
   best: OptimizeAllRankEntry | null
   per_strategy: Record<string, OptimizeAllRankEntry>
   total_grid_points: number
+  /** 买入持有基准，供直观对比「策略 vs 买入不动」（老版本后端结果可能缺省） */
+  buy_hold?: BuyHoldBenchmark | null
 }
 
 // ── 错误响应（后端 ApiErrorResponse） ─────────────────────────────────────────

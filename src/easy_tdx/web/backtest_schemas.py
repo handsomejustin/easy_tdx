@@ -360,6 +360,9 @@ class OptimizeAllResult(BaseModel):
     best: OptimizeAllRankEntry | None = None
     per_strategy: dict[str, OptimizeAllRankEntry] = {}  # 策略名 → 最优点
     total_grid_points: int = 0  # 所有策略网格点合计
+    # 买入持有基准（同区间/同费率/同资金；含 total_return 等 6 项指标），
+    # 供前端在全局最佳旁直观对比「策略 vs 买入不动」。老版本结果可能缺省。
+    buy_hold: dict[str, Any] | None = None
 
 
 # ── 已保存策略（策略库 / StrategyLibrary）───────────────────────────────────────

@@ -1184,6 +1184,7 @@ def _run_multi_strategy_evaluate(
 
 def _run_optimize(df: pd.DataFrame, req: OptimizeBacktestRequest) -> dict[str, Any]:
     """执行参数网格寻优并返回清洗后的结果字典（后台线程内调用）。"""
+    from easy_tdx.backtest.benchmark import run_buy_hold_benchmark
     from easy_tdx.backtest.optimizer import ParamGridOptimizer
 
     optimizer = ParamGridOptimizer(
@@ -1197,7 +1198,17 @@ def _run_optimize(df: pd.DataFrame, req: OptimizeBacktestRequest) -> dict[str, A
         workers=req.workers,
     )
     result = optimizer.run()
-    return result.to_dict()
+    out = result.to_dict()
+    # 买入持有基准（同区间/同费率/同资金，与一条龙评估同口径），
+    # 供前端在最优结果旁直观对比「策略 vs 买入不动」。
+    out["buy_hold"] = run_buy_hold_benchmark(
+        df,
+        cash=req.cash,
+        commission=req.commission,
+        slippage=req.slippage,
+        execution=req.execution,
+    )
+    return out
 
 
 def _optimize_one_strategy(
@@ -1263,6 +1274,7 @@ def _run_optimize_all(df: pd.DataFrame, req: OptimizeAllBacktestRequest) -> dict
     ``workers`` 为 0 或 1 时串行。进程池在函数内 ``with`` 创建/销毁，对前端
     轮询与 task_runner 透明。
     """
+    from easy_tdx.backtest.benchmark import run_buy_hold_benchmark
     from easy_tdx.backtest.strategies import get_registry
     from easy_tdx.backtest.strategies.presets import STRATEGY_PRESETS
 
@@ -1338,6 +1350,14 @@ def _run_optimize_all(df: pd.DataFrame, req: OptimizeAllBacktestRequest) -> dict
         best=best,
         per_strategy=per_strategy,
         total_grid_points=total_grid,
+        # 买入持有基准（同区间/同费率/同资金），供前端在全局最佳旁直观对比
+        buy_hold=run_buy_hold_benchmark(
+            df,
+            cash=req.cash,
+            commission=req.commission,
+            slippage=req.slippage,
+            execution=req.execution,
+        ),
     )
     return result_obj.model_dump()
 
