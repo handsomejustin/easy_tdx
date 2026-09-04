@@ -642,6 +642,7 @@ onBeforeUnmount(() => {
   opacity: 0.6;
 }
 .fund-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -682,6 +683,7 @@ onBeforeUnmount(() => {
 .empty-hint {
   position: absolute;
   inset: 0;
+  pointer-events: none;
   display: flex;
   align-items: center;
   justify-content: center;
