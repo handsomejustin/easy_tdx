@@ -659,10 +659,11 @@ export async function fetchSymbolName(market: string, code: string): Promise<str
   }
 }
 
-/** 板块成分股（MAC 协议；按涨跌幅排序，列与排行行情同构，做同款归一化）。 */
+/** 板块成分股（MAC 协议；按涨跌幅排序，列与排行行情同构，做同款归一化）。
+ *  count 缺省 1000 覆盖最大概念板块（后端单页 80 自动翻页拉满）。 */
 export async function fetchBoardMembers(
   boardSymbol: string,
-  count = 100,
+  count = 1000,
   sortOrder: 'DESC' | 'ASC' = 'DESC',
 ): Promise<RankRow[]> {
   const params = new URLSearchParams({

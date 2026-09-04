@@ -135,11 +135,15 @@ const memberOrder = ref<'DESC' | 'ASC'>('DESC')
 const membersError = ref('')
 const membersLoading = ref(false)
 
+// 全量拉取成分股（此前写死 120，大板块如 CPO 205 只/半导体 185 只被截断）。
+// 后端单页 80 自动翻页，1000 覆盖最大概念板块，拉满后按成员清单自然终止。
+const MEMBER_FETCH_COUNT = 1000
+
 async function loadMembers() {
   membersLoading.value = true
   membersError.value = ''
   try {
-    members.value = await fetchBoardMembers(props.code, 120, memberOrder.value)
+    members.value = await fetchBoardMembers(props.code, MEMBER_FETCH_COUNT, memberOrder.value)
   } catch (e) {
     members.value = []
     membersError.value = formatError(e)
