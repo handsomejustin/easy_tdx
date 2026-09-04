@@ -97,3 +97,81 @@ class SentimentSampler:
             }
         )
         self.samples += 1
+
+
+class FundFlowSampler:
+    """每日收盘前记录一次行业主力净流入排行（板块资金日历数据源）。
+
+    采样窗口：交易时段内 14:45 之后（临近收盘的净流入已基本定型），
+    每日只采一次（``latest_fund_date`` 幂等）。数据走 MAC
+    ``get_board_ranking(sort_by="main_net_amount")``——该实现先按涨幅
+    取候选池再聚合 summary，因此口径是"涨幅前 ``top_n`` 名中主力净流入
+    最高的 ``keep`` 个行业"，并非全市场严格排序（逐板块 summary 太贵）。
+    """
+
+    def __init__(
+        self,
+        client: Any,
+        store: SentimentStore | None = None,
+        interval: float = 300.0,
+        top_n: int = 50,
+        keep: int = 10,
+    ):
+        self._client = client
+        self._store = store or get_sentiment_store()
+        self._interval = interval
+        self._top_n = top_n
+        self._keep = keep
+        self._task: asyncio.Task | None = None
+
+    def start(self) -> None:
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._run())
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+
+    async def _run(self) -> None:
+        logger.info("FundFlowSampler 启动（间隔 %ss，交易日 14:45 后每日一条）", self._interval)
+        while True:
+            try:
+                now = datetime.now()
+                if is_trading_time(now) and (now.hour * 100 + now.minute) >= 1445:
+                    await self._sample_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — 采样器永不退出
+                logger.warning("板块资金采样失败", exc_info=True)
+            await asyncio.sleep(self._interval)
+
+    async def _sample_once(self) -> None:
+        from easy_tdx.mac.enums import BoardType
+
+        today = int(datetime.now().strftime("%Y%m%d"))
+        if self._store.latest_fund_date() == today:
+            return  # 当日已采样
+        df = await self._client.get_board_ranking(
+            board_type=BoardType.HY,
+            top_n=self._top_n,
+            sort_by="main_net_amount",
+            ascending=False,
+        )
+        if df is None or df.empty:
+            return
+        ranked = df.sort_values("main_net_amount", ascending=False).head(self._keep)
+        boards = [
+            {
+                "code": str(r["code"]),
+                "name": str(r.get("name", r["code"])),
+                "main_net": round(float(r["main_net_amount"]), 0),
+            }
+            for _, r in ranked.iterrows()
+        ]
+        self._store.upsert_fund_day(today, boards)
+        logger.info("板块资金采样完成：%s，Top1 %s", today, boards[0]["name"] if boards else "-")

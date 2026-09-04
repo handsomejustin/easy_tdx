@@ -173,6 +173,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             ex_client = None
     app.state.ex_client = ex_client
 
+    # --- 板块资金采样器（交易日 14:45 后记一次行业主力净流入排行，供资金日历） ---
+    app.state.fund_flow_sampler = None
+    if mac_client is not None:
+        try:
+            from easy_tdx.web.sentiment_sampler import FundFlowSampler
+
+            fund_sampler = FundFlowSampler(mac_client)
+            fund_sampler.start()
+            app.state.fund_flow_sampler = fund_sampler
+            logger.info("FundFlowSampler 已启动")
+        except Exception:
+            logger.warning("FundFlowSampler 启动失败 — 资金日历不可用", exc_info=True)
+
     # --- 市场情绪采样器（交易时段每分钟落一条广度快照，供 /market/sentiment/*） ---
     # 依赖标准 TDX 客户端（get_market_stat），mock 模式缩短间隔让曲线快速成形。
     app.state.sentiment_sampler = None
@@ -190,6 +203,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.warning("SentimentSampler 启动失败 — 情绪采样不可用", exc_info=True)
 
     yield
+
+    # --- 停止板块资金采样器 ---
+    fund_svc = getattr(app.state, "fund_flow_sampler", None)
+    if fund_svc is not None:
+        try:
+            await fund_svc.stop()
+        except Exception:
+            logger.warning("FundFlowSampler stop failed", exc_info=True)
 
     # --- 停止市场情绪采样器 ---
     sampler_svc = getattr(app.state, "sentiment_sampler", None)

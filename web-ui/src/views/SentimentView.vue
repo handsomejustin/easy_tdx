@@ -7,14 +7,23 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import echarts, { DOWN_COLOR, UP_COLOR } from '../echarts-setup'
 import {
   fetchBars,
+  fetchBoardFundHistory,
+  fetchLimitUpEcology,
   fetchLimitUpHistory,
   fetchMarketStat,
   fetchSentimentHistory,
   fetchSentimentToday,
   formatError,
+  runLlmChatWithPolling,
 } from '../api'
 import { fmtAmount, fmtPctSigned } from '../format'
-import type { LimitUpHistoryRow, MarketStat, SentimentDay, SentimentSample } from '../types'
+import type {
+  BoardFundDay,
+  LimitUpHistoryRow,
+  MarketStat,
+  SentimentDay,
+  SentimentSample,
+} from '../types'
 
 const today = ref<{ date: number; count?: number; samples: SentimentSample[] } | null>(null)
 const histDays = ref<SentimentDay[]>([])
@@ -212,6 +221,7 @@ const volEl = ref<HTMLDivElement>()
 let volChart: echarts.ECharts | null = null
 const volRatio = ref<number | null>(null)
 const volDate = ref('')
+const fundDays = ref<BoardFundDay[]>([])
 
 async function loadVolume() {
   try {
@@ -304,11 +314,91 @@ async function loadVolume() {
   }
 }
 
+async function loadFund() {
+  try {
+    fundDays.value = await fetchBoardFundHistory(15)
+  } catch {
+    fundDays.value = [] // 资金日历独立降级
+  }
+}
+
+
 let timer = 0
+
+// ── ⑩ AI 盘面复盘：自动汇总上方数据 → LLM 生成 → 自动归档「AI 解读历史」 ─────
+
+const aiReply = ref('')
+const aiBusy = ref(false)
+const aiError = ref('')
+const aiModel = ref('')
+
+async function buildDigest(): Promise<string> {
+  const lines: string[] = []
+  const s = stat.value
+  if (s) {
+    const denom = Math.max(s.up_count + s.down_count, 1)
+    lines.push(
+      `上涨 ${s.up_count} 家 / 下跌 ${s.down_count} 家（上涨占比 ${((100 * s.up_count) / denom).toFixed(1)}%），` +
+        `涨停 ${s.limit_up_count} 家，跌停 ${s.limit_down_count} 家，两市成交 ${fmtAmount(s.total_amount)}。`,
+    )
+  }
+  if (volRatio.value !== null) {
+    lines.push(`量能：当日两市累计成交较近 5 日同期均值 ${fmtPctSigned(volRatio.value)}。`)
+  }
+  try {
+    const eco = await fetchLimitUpEcology()
+    const sm = eco.summary
+    lines.push(`连板高度 ${sm.max_streak} 板（首板 ${sm.first_board}、二板 ${sm.second_board}、3 板以上 ${sm.plus3}），炸板率 ${sm.blown_rate ?? '-'}%。`)
+  } catch {
+    // 涨停生态不可用时跳过该维度
+  }
+  const lu = luHistory.value.slice(-5)
+  if (lu.length) {
+    lines.push(
+      `近 5 日涨停家数：${lu.map((r) => `${String(r.date).slice(4, 6)}-${String(r.date).slice(6, 8)} ${r.limit_up}`).join('；')}。`,
+    )
+  }
+  const sampled = histDays.value.filter((d) => d.n >= 10).slice(-5)
+  if (sampled.length) {
+    lines.push(
+      `采样上涨占比：${sampled.map((d) => `${String(d.date).slice(4, 6)}-${String(d.date).slice(6, 8)} ${d.up_ratio}%`).join('；')}。`,
+    )
+  }
+  if (lines.length === 0) return ''
+  return `以下是最新的 A 股盘面数据摘要：\n${lines.join('\n')}\n\n` +
+    '请以资深市场分析师的口吻写一段 200~400 字的盘面复盘，依次覆盖：1) 市场情绪与赚钱效应；' +
+    '2) 量能特征（放量/缩量及其含义）；3) 涨停梯队与炸板率反映的题材热度与分歧；4) 结尾一句风险提示。' +
+    '直接给观点和逻辑，不要复述数据。'
+}
+
+async function generateReview() {
+  aiBusy.value = true
+  aiError.value = ''
+  aiReply.value = ''
+  try {
+    const digest = await buildDigest()
+    if (!digest) {
+      aiError.value = '暂无盘面数据可生成复盘'
+      return
+    }
+    const state = await runLlmChatWithPolling(digest)
+    if (state.status === 'failed') {
+      throw new Error(String((state as { error?: string }).error ?? 'AI 解读任务失败'))
+    }
+    const result = state.result as { reply?: string; model?: string }
+    aiReply.value = result.reply ?? ''
+    aiModel.value = result.model ?? ''
+  } catch (e) {
+    aiError.value = formatError(e)
+  } finally {
+    aiBusy.value = false
+  }
+}
 
 onMounted(async () => {
   await load()
   loadVolume()
+  loadFund()
   timer = window.setInterval(() => {
     if (document.hidden) return
     load()
@@ -386,6 +476,41 @@ onBeforeUnmount(() => {
         </div>
         <div class="card chart-card">
           <div ref="volEl" class="chart"></div>
+        </div>
+      </div>
+
+      <!-- 板块主力资金日历 -->
+      <div class="section">
+        <div class="sec-title">行业主力资金 · 每日净流入 Top 10（交易日 14:45 后采样，需积累）</div>
+        <div class="card fund-card">
+          <div v-for="d in fundDays" :key="d.date" class="fund-row">
+            <span class="mono dim fund-date">{{ String(d.date).slice(4, 6) }}-{{ String(d.date).slice(6, 8) }}</span>
+            <span v-for="b in d.boards" :key="b.code" class="fund-chip mono">
+              {{ b.name }} <span class="up">+{{ (b.main_net / 1e8).toFixed(1) }}亿</span>
+            </span>
+          </div>
+          <div v-if="fundDays.length === 0" class="empty-hint dim">
+            尚无采样：每个交易日的 14:45 后自动记录一次行业主力净流入排行（涨幅前 50 名口径），持续运行后日历成形。
+          </div>
+        </div>
+      </div>
+
+      <!-- AI 盘面复盘 -->
+      <div class="section">
+        <div class="sec-title-ai">
+          AI 盘面复盘
+          <button class="gen-btn" :disabled="aiBusy" @click="generateReview">
+            {{ aiBusy ? '生成中…（约 1~3 分钟）' : aiReply ? '重新生成' : '生成 AI 复盘' }}
+          </button>
+          <span v-if="aiModel" class="dim">{{ aiModel }}</span>
+        </div>
+        <div class="card ai-card">
+          <div v-if="aiBusy" class="dim">模型基于上方情绪 / 量能 / 涨停数据生成中…</div>
+          <div v-else-if="aiError" class="up">{{ aiError }}</div>
+          <div v-else-if="aiReply" class="ai-reply">{{ aiReply }}</div>
+          <div v-else class="dim">
+            汇总本页情绪 / 量能 / 涨停数据交给已配置的模型生成复盘，自动归档到「AI 解读历史」。
+          </div>
         </div>
       </div>
 
@@ -500,6 +625,49 @@ onBeforeUnmount(() => {
   font-size: 12.5px;
   font-weight: 600;
   color: var(--text-muted);
+}
+.sec-title-ai {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.gen-btn {
+  font-size: 11.5px;
+  padding: 3px 12px;
+}
+.gen-btn:disabled {
+  opacity: 0.6;
+}
+.fund-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  padding: 10px 12px;
+}
+.fund-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.fund-date {
+  width: 44px;
+  flex-shrink: 0;
+}
+.fund-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+}
+.ai-card {
+  font-size: 13px;
+  line-height: 1.8;
+  white-space: pre-wrap;
 }
 .chart-card {
   padding: 8px;

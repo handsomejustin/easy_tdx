@@ -56,6 +56,18 @@ class SentimentStore:
                     """
                 )
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_samples_date ON samples(date)")
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS board_fund (
+                        date INTEGER NOT NULL,          -- YYYYMMDD
+                        rank INTEGER NOT NULL,          -- 主力净流入名次（1 起）
+                        code TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        main_net REAL NOT NULL,         -- 主力净流入（元）
+                        PRIMARY KEY (date, rank)
+                    )
+                    """
+                )
                 conn.commit()
             finally:
                 conn.close()
@@ -93,6 +105,62 @@ class SentimentStore:
                 conn.commit()
             finally:
                 conn.close()
+
+    def latest_fund_date(self) -> int:
+        """最近有板块资金采样的交易日（YYYYMMDD），无数据返回 0。"""
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT MAX(date) AS d FROM board_fund").fetchone()
+            return int(row["d"] or 0)
+        finally:
+            conn.close()
+
+    def upsert_fund_day(self, date: int, boards: list[dict[str, Any]]) -> None:
+        """覆盖写入某日行业主力净流入排行（rank 按列表顺序 1 起）。"""
+        with _write_lock:
+            conn = self._connect()
+            try:
+                conn.execute("DELETE FROM board_fund WHERE date = ?", (int(date),))
+                conn.executemany(
+                    "INSERT INTO board_fund (date, rank, code, name, main_net) VALUES (?,?,?,?,?)",
+                    [
+                        (int(date), i + 1, str(b["code"]), str(b["name"]), float(b["main_net"]))
+                        for i, b in enumerate(boards)
+                    ],
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+    def list_fund_days(self, days: int = 15) -> list[dict[str, Any]]:
+        """近 N 个有采样的交易日（降序），每日主力净流入排行。"""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT date, rank, code, name, main_net
+                FROM board_fund
+                WHERE date IN (
+                    SELECT DISTINCT date FROM board_fund ORDER BY date DESC LIMIT ?
+                )
+                ORDER BY date DESC, rank
+                """,
+                (int(days),),
+            ).fetchall()
+            grouped: dict[int, dict[str, Any]] = {}
+            for r in rows:
+                g = grouped.setdefault(int(r["date"]), {"date": int(r["date"]), "boards": []})
+                g["boards"].append(
+                    {
+                        "rank": int(r["rank"]),
+                        "code": str(r["code"]),
+                        "name": str(r["name"]),
+                        "main_net": float(r["main_net"]),
+                    }
+                )
+            return list(grouped.values())
+        finally:
+            conn.close()
 
     def day_samples(self, date: int) -> list[dict[str, Any]]:
         """某交易日的全部分钟采样（按时间升序）。"""

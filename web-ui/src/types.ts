@@ -748,6 +748,13 @@ export interface LimitUpHistoryRow {
   limit_down: number
 }
 
+// ── 板块主力资金日历（GET /api/v1/market/board-fund/history，每日采样） ─────
+
+export interface BoardFundDay {
+  date: number
+  boards: Array<{ rank: number; code: string; name: string; main_net: number }>
+}
+
 // ── Walk-Forward 样本外验证（v1.27 POST /backtest/wf/run/async）──────────────
 
 export interface WalkForwardWindow {

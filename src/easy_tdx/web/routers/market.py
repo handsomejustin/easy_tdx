@@ -195,6 +195,21 @@ async def limitup_history(
     return DictResponse.from_dict(payload)
 
 
+@router.get("/market/board-fund/history", response_model=DictResponse)
+async def board_fund_history(
+    days: int = Query(15, ge=1, le=90, description="返回交易日数"),
+) -> DictResponse:
+    """行业主力净流入逐日排行（FundFlowSampler 每交易日 14:45 后采样一条）。
+
+    口径：涨幅前 50 名行业中主力净流入最高的 10 个（逐板块 summary 太贵，
+    非全市场严格排序）。数据需采样积累，页面空态有明示。
+    """
+    from easy_tdx.web.sentiment_store import get_sentiment_store
+
+    days_rows = get_sentiment_store().list_fund_days(days)
+    return DictResponse.from_dict({"count": len(days_rows), "days": days_rows})
+
+
 @router.get("/fund-flow", response_model=DataFrameResponse)
 async def fund_flow(
     market: str = Query(..., description="市场: SZ, SH"),
