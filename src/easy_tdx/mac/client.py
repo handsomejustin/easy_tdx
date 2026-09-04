@@ -388,7 +388,7 @@ class MacClient:
             )
             if not batch:
                 break
-            all_quotes = batch + all_quotes
+            all_quotes = all_quotes + batch
             fetched += len(batch)
             offset += len(batch)
             if len(batch) < page_size:
@@ -799,7 +799,7 @@ class MacClient:
             )
             if not batch:
                 break
-            all_quotes = batch + all_quotes
+            all_quotes = all_quotes + batch
             fetched += len(batch)
             offset += len(batch)
             if len(batch) < page_size:
@@ -1448,7 +1448,7 @@ class AsyncMacClient(AsyncHeartbeatMixin):
             )
             if not batch:
                 break
-            all_quotes = batch + all_quotes
+            all_quotes = all_quotes + batch
             fetched += len(batch)
             offset += len(batch)
             if len(batch) < page_size:
@@ -1787,7 +1787,7 @@ class AsyncMacClient(AsyncHeartbeatMixin):
             )
             if not batch:
                 break
-            all_quotes = batch + all_quotes
+            all_quotes = all_quotes + batch
             fetched += len(batch)
             offset += len(batch)
             if len(batch) < page_size:
