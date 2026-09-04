@@ -16,7 +16,7 @@ import StrategyPicker from '../components/StrategyPicker.vue'
 import SymbolPicker from '../components/SymbolPicker.vue'
 import TradeTable from '../components/TradeTable.vue'
 import WalkForwardPanel from '../components/WalkForwardPanel.vue'
-import { formatError, saveStrategy } from '../api'
+import { fetchSymbolName, formatError, saveStrategy } from '../api'
 import { detectMarket } from '../market'
 import { GRADE_META, gradePerformance } from '../grading'
 import { buildAiPrompt } from '../aiPrompt'
@@ -146,12 +146,23 @@ function fullSymbol(code6: string): string {
   return `${detectMarket(code6)}:${code6}`
 }
 
-function openSaveForm() {
-  saveName.value = `${strategyLabel.value} · ${code.value}`
+// 当前标的的股票名（打开保存弹窗时异步查询，挂到名称/摘要后；查不到则为空）
+const symbolName = ref('')
+
+async function openSaveForm() {
+  const baseName = `${strategyLabel.value} · ${code.value}`
+  saveName.value = baseName
   saveTags.value = ''
   saveNotes.value = ''
   saveMsg.value = ''
+  symbolName.value = ''
   showSaveForm.value = true
+  // 查询股票中文名，拼成「策略 · 代码 · 股票名」（如 双均线交叉 · 002163 · 海南发展）。
+  // 查询失败/市场不支持（如 BJ）时保持原名称；若用户在等待期间已手动改名则不打扰。
+  const name = await fetchSymbolName(detectMarket(code.value), code.value)
+  if (!name) return
+  symbolName.value = name
+  if (saveName.value === baseName) saveName.value = `${baseName} · ${name}`
 }
 
 async function onSave() {
@@ -420,7 +431,7 @@ const aiTip = computed(() =>
           <textarea v-model="saveNotes" rows="2" placeholder="为什么觉得它好？"></textarea>
         </div>
         <div class="modal-summary">
-          {{ strategyLabel }} · {{ code }} ·
+          {{ strategyLabel }} · {{ code }}{{ symbolName ? ` · ${symbolName}` : '' }} ·
           {{ store.result ? (store.result.performance.total_return * 100).toFixed(2) + '%' : '' }}
         </div>
         <div class="modal-actions">
