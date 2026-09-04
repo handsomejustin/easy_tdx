@@ -2,6 +2,29 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.32.2] — 2026-09-04
+
+**baostock 自动兜底数据源：TDX 全部路径失败时的最后一级回退**——通达信协议依赖第三方行情服务器（且非官方授权），存在被封锁/改协议/服务中断的结构性风险。本版引入 [baostock](https://pypi.org/project/baostock/)（BSD，2026 年恢复活跃维护）作为最后一级**自动**回退：平时一次都不调用，MAC 协议与标准协议两条 TDX 路径全部失败或返回空时才启用——部分兜底、总好过全挂。至此形成完整灾备链：**TDX 双协议多主机 → baostock EOD 第二源 → 本地 DuckDB 仓库**。
+
+### 新增
+
+- **`/bars`、`/bars/index` 三级自动回退链**（[bars.py](src/easy_tdx/web/routers/bars.py)）：MAC 协议（支持复权）→ 失败/为空转标准 TdxClient → 仍失败/为空且周期为日线及以上时转 baostock。响应新增 `source` 字段：正常为 `null`，兜底命中为 `"baostock"`——口径透明，调用方可据此展示数据来源；TDX 全挂且兜底不可用时**维持原错误语义**（不返回空数据伪装成功）。
+- **启用全自动判断，零配置**：baostock 为可选依赖（`pip install "easy-tdx[baostock]"`），未安装则该回退环自动消失、核心功能零影响；设置环境变量 `EASY_TDX_BAOSTOCK=0` 随时关闭。
+- **仓库同步多数据源**（`easy-tdx warehouse sync --source auto|tdx|baostock`，默认 auto）：新增 `BaostockClient` 适配器（满足 `WarehouseSyncer` 客户端协议，无数据返回空表、未安装报错并带安装提示）与通用组合客户端 `AutoKlineClient`（主源出错/为空自动转兜底源，任何只认 `get_stock_kline` 协议的组件可复用）。
+- **发布 EXE 内置兜底源**：release workflow 安装清单加 `baostock` extra + `easy_tdx.spec` 显式 `collect_submodules("baostock")`（懒加载库 PyInstaller 静态分析扫不到，不声明则兜底环在 EXE 内静默失效）。
+
+### 边界与口径（诚实声明）
+
+- baostock 是 EOD 数据源（当日数据约 17:30 后才有）：只兜 **日/周/月 K 线** 的历史数据，覆盖沪深（不含北交所）；实时行情、分时、逐笔、板块等能力仍由通达信协议提供，看盘链路无兜底。
+- offset 分页与 TDX 语义严格对齐（`start` = 跳过最新 N 根）；停牌日（tradestatus=0 / volume=0）剔除，对齐通达信 K 线不含停牌日的口径；volume 单位为股，与 `/bars` 契约一致无需换算。
+- baostock 客户端单条全局连接、非线程安全：模块内持锁串行 + 30s 锁等待超时（兜底路径宁快勿堵），async 环境经线程池调用。
+
+### 测试
+
+- 新增 19 例（[test_baostock_source.py](tests/unit/test_baostock_source.py)，注入假 baostock 模块离线运行）：参数映射（代码/周期/复权）、offset 切片语义、停牌剔除、环境变量与未安装门控、`/bars` 与 `/bars/index` 端到端兜底、TDX 正常时兜底零调用、兜底不可用时错误语义保持、`BaostockClient` / `AutoKlineClient` 适配行为。
+- **真网冒烟**：真实登录 baostock 服务器，贵州茅台 QFQ 日线 offset 切片正确（`start=3, count=5` 止于倒数第 4 个交易日）、上证指数当日数据可取。
+- 全量回归：pytest 1654 通过、ruff / ruff format / mypy（261 文件）全绿。
+
 ## [1.32.1] — 2026-09-04
 
 **行业/概念总览上线：WebUI 新增板块全景双栏目**——此前板块信息只有首页两张「热/冷」小榜单（各 ~10 条、仅当日涨跌幅），想看全部行业/概念的强弱全景、多周期走势与板块间轮动，只能逐个点开。本版在左侧导航新增「行业总览」（/industries，行业一级/二级可切）与「概念总览」（/concepts）两个栏目：全部板块一屏尽览（一级行业 128 / 概念 269 / 二级行业 345），热力图+表格双视图、板块广度统计与涨跌幅分布直方图、涨幅/跌幅/涨速异动三榜、翻红/翻绿轮动时间线；点击板块复用首页弹窗（左分时/日K、右成分股涨跌榜，可再叠个股弹窗）。
