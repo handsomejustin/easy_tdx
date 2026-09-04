@@ -12,6 +12,7 @@ import type {
   CcpmProductsResponse,
   CcpmRankResponse,
   DataFrameResponse,
+  HotspotCorrelationResp,
   HotspotResp,
   LimitUpEcologyResp,
   LimitUpHistoryRow,
@@ -844,6 +845,23 @@ export async function fetchLimitUpEcology(): Promise<LimitUpEcologyResp> {
   const resp = await fetch(`${BASE}/limitup-ecology`)
   if (!resp.ok) await throwError(resp)
   const body = (await resp.json()) as { data: LimitUpEcologyResp }
+  return body.data
+}
+
+/** 热点板块相关性矩阵（复用热点历史缓存；未构建时返回 building/error）。 */
+export async function fetchHotspotCorrelation(
+  boardType: string,
+  days: number,
+  perDay = 5,
+): Promise<HotspotCorrelationResp> {
+  const params = new URLSearchParams({
+    board_type: boardType,
+    days: String(days),
+    per_day: String(perDay),
+  })
+  const resp = await fetch(`${BASE}/board-mac/hotspot-correlation?${params}`)
+  if (!resp.ok) await throwError(resp)
+  const body = (await resp.json()) as { data: HotspotCorrelationResp }
   return body.data
 }
 

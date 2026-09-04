@@ -12,6 +12,7 @@ import LlmHistoryView from './views/LlmHistoryView.vue'
 import LlmSettingsView from './views/LlmSettingsView.vue'
 import OptimizeView from './views/OptimizeView.vue'
 import PortfolioView from './views/PortfolioView.vue'
+import RadarView from './views/RadarView.vue'
 import SentimentView from './views/SentimentView.vue'
 import ServerSettingsView from './views/ServerSettingsView.vue'
 import SignalRadarView from './views/SignalRadarView.vue'
@@ -38,6 +39,8 @@ const routes = [
   { path: '/limitup', name: 'limitup', component: LimitUpView },
   // 市场情绪（宽度分时 + 涨停温度计；采样器盘中逐分钟积累）
   { path: '/sentiment', name: 'sentiment', component: SentimentView },
+  // 异动雷达（沪深异动流时间线：封板/炸板/大笔买入…）
+  { path: '/radar', name: 'radar', component: RadarView },
   { path: '/backtest', name: 'backtest', component: BacktestView },
   { path: '/portfolio', name: 'portfolio', component: PortfolioView },
   { path: '/optimize', name: 'optimize', component: OptimizeView },

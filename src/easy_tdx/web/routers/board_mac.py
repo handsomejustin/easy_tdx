@@ -336,6 +336,39 @@ async def _hotspot_build(board_key: str, bt: Any, client: Any) -> None:
         _logger.warning("热点矩阵构建失败 (%s): %s", board_key, exc)
 
 
+def _hotspot_history_or_build(
+    key: str,
+    bt: Any,
+    client: Any,
+    *,
+    retry: bool = False,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """热点历史缓存的公共入口。
+
+    缓存就绪返回 ``(history, None)``；否则触发/汇报后台构建，返回
+    ``(None, building_or_error_payload)``。error 状态保持稳定不自动重建，
+    保证失败原因能被前端读到（``retry=1`` 才重建）。
+    """
+    cached = _hotspot_history_cache.get(key)
+    if cached is not None and cached[0] == _today_str():
+        return cached[1], None
+    state = _hotspot_builds.get(key)
+    running = state is not None and state.get("task") is not None and not state["task"].done()
+    # 需要新建：无状态 / 上次成功但缓存已过期 / 显式重试
+    if not running and (retry or state is None or state.get("status") == "ready"):
+        state = {"status": "building", "progress": 0.0, "task": None, "error": ""}
+        _hotspot_builds[key] = state
+        state["task"] = asyncio.create_task(_hotspot_build(key, bt, client))
+        running = True
+    if running:
+        return None, {"status": "building", "progress": state.get("progress", 0.0)}
+    return None, {
+        "status": "error",
+        "error": state.get("error") or "热点矩阵构建失败",
+        "progress": 1.0,
+    }
+
+
 @router.get("/board-mac/hotspot", response_model=DictResponse)
 async def board_hotspot(
     board_type: str = Query("HY", description="板块类型: HY/HY2/GN/FG/DQ"),
@@ -363,26 +396,9 @@ async def board_hotspot(
     bt = board_type_from_str(board_type)
     key = bt.name
 
-    cached = _hotspot_history_cache.get(key)
-    if cached is None or cached[0] != _today_str():
-        state = _hotspot_builds.get(key)
-        running = state is not None and state.get("task") is not None and not state["task"].done()
-        # 需要新建：无状态 / 上次成功但缓存已过期 / 显式重试。
-        # error 状态保持稳定不自动重建，保证失败原因能被前端读到。
-        if not running and (retry or state is None or state.get("status") == "ready"):
-            state = {"status": "building", "progress": 0.0, "task": None, "error": ""}
-            _hotspot_builds[key] = state
-            state["task"] = asyncio.create_task(_hotspot_build(key, bt, client))
-            running = True
-        if running:
-            return DictResponse.from_dict(
-                {"status": "building", "progress": state.get("progress", 0.0)}
-            )
-        return DictResponse.from_dict(
-            {"status": "error", "error": state.get("error") or "热点矩阵构建失败", "progress": 1.0}
-        )
-
-    history = cached[1]
+    history, build_payload = _hotspot_history_or_build(key, bt, client, retry=retry)
+    if build_payload is not None:
+        return DictResponse.from_dict(build_payload)
     axis_all: list[str] = history["axis"]
     pct_map: dict[str, dict[str, float]] = history["pct"]
     names: dict[str, str] = dict(history["names"])
@@ -495,6 +511,75 @@ async def board_hotspot(
         "rows": rows_out,
     }
     return DictResponse.from_dict(payload)
+
+
+@router.get("/board-mac/hotspot-correlation", response_model=DictResponse)
+async def board_hotspot_correlation(
+    board_type: str = Query("HY", description="板块类型: HY/HY2/GN/FG/DQ"),
+    days: int = Query(20, ge=5, le=_HOTSPOT_MAX_DAYS, description="相关性窗口交易日数"),
+    per_day: int = Query(5, ge=2, le=10, description="每日入选名次阈值（行集合口径）"),
+    top: int = Query(15, ge=5, le=25, description="入阵板块数上限（按上榜次数取前 N）"),
+    client: Any = Depends(get_mac_client),
+) -> DictResponse:
+    """热点板块相关性矩阵：窗口内活跃板块两两日涨跌幅的 Pearson 相关系数。
+
+    行集合与 ``/board-mac/hotspot`` 同口径（每日 mode=top 前 per_day 名的并集，
+    不含今日实时列），按上榜次数取前 ``top`` 个板块入阵。复用热点历史矩阵缓存
+    （无缓存时返回与 hotspot 相同的 building/error 状态，前端先拉 hotspot 即可）。
+    相关系数 >0（红）= 同涨同跌，<0（绿）= 跷跷板。
+    """
+    bt = board_type_from_str(board_type)
+    key = bt.name
+
+    history, build_payload = _hotspot_history_or_build(key, bt, client)
+    if build_payload is not None:
+        return DictResponse.from_dict(build_payload)
+
+    axis_all: list[str] = history["axis"]
+    pct_map: dict[str, dict[str, float]] = history["pct"]
+    names: dict[str, str] = dict(history["names"])
+
+    # 仅用已完成交易日（不含今日），与热点矩阵的历史段对齐
+    window = [d for d in axis_all if d != _today_str()][-days:]
+    col_pct: list[dict[str, float]] = [
+        {c: m[d] for c, m in pct_map.items() if d in m} for d in window
+    ]
+    in_top: list[set[str]] = [
+        set(sorted(col, key=lambda c: col[c], reverse=True)[:per_day]) for col in col_pct
+    ]
+    days_in: dict[str, int] = {}
+    for s in in_top:
+        for c in s:
+            days_in[c] = days_in.get(c, 0) + 1
+
+    chosen = sorted(days_in, key=lambda c: -days_in[c])[:top]
+    if len(chosen) < 2:
+        return DictResponse.from_dict(
+            {"status": "ready", "boards": [], "matrix": [], "days": len(window)}
+        )
+
+    frame = pd.DataFrame({c: pct_map[c] for c in chosen}).T  # 板块 × 交易日，缺失为 NaN
+    corr = frame.T.corr(min_periods=max(3, len(window) // 2))
+
+    boards = [
+        {"code": c, "name": names.get(c, c), "days_in": days_in[c]} for c in chosen
+    ]
+    matrix: list[list[float | None]] = [
+        [
+            None if pd.isna(corr.loc[a, b]) else round(float(corr.loc[a, b]), 2)
+            for b in chosen
+        ]
+        for a in chosen
+    ]
+    return DictResponse.from_dict(
+        {
+            "status": "ready",
+            "board_type": bt.name,
+            "days": days,
+            "boards": boards,
+            "matrix": matrix,
+        }
+    )
 
 
 def _trailing_streak(flags: list[bool]) -> int:

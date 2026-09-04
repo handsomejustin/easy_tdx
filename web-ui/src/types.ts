@@ -687,6 +687,19 @@ export interface LimitUpEcologyResp {
   blown: LimitUpEntry[]
 }
 
+// ── 热点板块相关性（GET /api/v1/board-mac/hotspot-correlation） ──────────────
+
+export interface HotspotCorrelationResp {
+  status: 'ready' | 'building' | 'error'
+  progress?: number
+  error?: string
+  /** 入阵板块（按上榜次数降序），matrix 行列与之对齐 */
+  boards?: Array<{ code: string; name: string; days_in: number }>
+  /** Pearson 相关系数矩阵（-1~1，null = 样本不足） */
+  matrix?: Array<Array<number | null>>
+  days?: number
+}
+
 // ── 市场情绪（/market/sentiment/*，盘中逐分钟采样 + vipdoc 涨停史回补） ─────
 
 export interface SentimentSample {

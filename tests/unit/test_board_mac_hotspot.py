@@ -327,3 +327,55 @@ def test_hotspot_missing_kline_board_excluded():
         data, _ = _wait_ready(client, fake)
     assert data["total_boards"] == 2
     assert all(r["code"] != "881101" for r in data["rows"])
+
+
+def test_hotspot_correlation_matrix_ready():
+    """缓存就绪：相关矩阵直接可算，完全同向的两板块相关系数 = 1。"""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from easy_tdx.web.routers import board_mac
+
+    board_mac._hotspot_history_cache["HY"] = (
+        "2030-01-01",
+        {
+            "axis": ["2026-08-10", "2026-08-11", "2026-08-12"],
+            "pct": {
+                "881100": {"2026-08-10": 5.0, "2026-08-11": 3.0, "2026-08-12": 1.0},
+                "881200": {"2026-08-10": 4.0, "2026-08-11": 2.0, "2026-08-12": 0.0},
+            },
+            "names": {"881100": "甲板块", "881200": "乙板块"},
+        },
+    )
+    fake = _FakeHotspotMacClient()
+    try:
+        with TestClient(_hotspot_app(fake)) as client:
+            resp = client.get(
+                "/api/v1/board-mac/hotspot-correlation",
+                params={"board_type": "HY", "days": 5, "per_day": 2},
+            )
+    finally:
+        board_mac._hotspot_history_cache.clear()
+
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["status"] == "ready"
+    assert [b["code"] for b in data["boards"]] == ["881100", "881200"]
+    assert data["matrix"][0][0] == 1.0
+    assert data["matrix"][0][1] == pytest.approx(1.0, abs=0.01)  # 完全线性同向
+    assert data["matrix"][1][0] == data["matrix"][0][1]
+
+
+def test_hotspot_correlation_building_passthrough():
+    """无缓存：与 hotspot 相同的 building 状态透传，前端轮询即可。"""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    fake = _FakeHotspotMacClient()
+    with TestClient(_hotspot_app(fake)) as client:
+        resp = client.get("/api/v1/board-mac/hotspot-correlation", params={"board_type": "HY"})
+    assert resp.status_code == 200
+    body = resp.json()["data"]
+    assert body["status"] in ("building", "error", "ready")  # 单机假客户端极快时可能已完成
+    if body["status"] == "building":
+        assert 0.0 <= body["progress"] <= 1.0

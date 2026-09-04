@@ -6,13 +6,14 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import echarts, { DOWN_COLOR, UP_COLOR } from '../echarts-setup'
 import {
+  fetchBars,
   fetchLimitUpHistory,
   fetchMarketStat,
   fetchSentimentHistory,
   fetchSentimentToday,
   formatError,
 } from '../api'
-import { fmtAmount } from '../format'
+import { fmtAmount, fmtPctSigned } from '../format'
 import type { LimitUpHistoryRow, MarketStat, SentimentDay, SentimentSample } from '../types'
 
 const today = ref<{ date: number; count?: number; samples: SentimentSample[] } | null>(null)
@@ -202,12 +203,112 @@ function renderHistory() {
 function onResize() {
   todayChart?.resize()
   histChart?.resize()
+  volChart?.resize()
+}
+
+// ── ⑧ 量能仪表盘：两市累计成交额（最近交易日）vs 近 5 日同期均值 ─────────────
+
+const volEl = ref<HTMLDivElement>()
+let volChart: echarts.ECharts | null = null
+const volRatio = ref<number | null>(null)
+const volDate = ref('')
+
+async function loadVolume() {
+  try {
+    const start = new Date(Date.now() - 14 * 86400_000).toISOString().slice(0, 10)
+    const [sh, sz] = await Promise.all([
+      fetchBars('SH', '000001', 'MIN_5', start),
+      fetchBars('SZ', '399001', 'MIN_5', start),
+    ])
+    // 按日期聚合两市场 5 分钟 amount（元）
+    const byDate = new Map<string, Map<string, number>>()
+    for (const b of [...sh, ...sz]) {
+      const d = b.datetime.slice(0, 10)
+      const t = b.datetime.slice(11, 16)
+      if (!d || !t) continue
+      const slot = byDate.get(d) ?? new Map<string, number>()
+      slot.set(t, (slot.get(t) ?? 0) + Number(b.amount ?? 0))
+      byDate.set(d, slot)
+    }
+    const dates = [...byDate.keys()].sort()
+    if (dates.length < 2) return
+    volDate.value = dates[dates.length - 1]
+    const cur = byDate.get(volDate.value)!
+    const prevDates = dates.slice(-6, -1)
+    const times = [...cur.keys()].sort()
+
+    const cumAt = (m: Map<string, number>, upto: number): number => {
+      let s = 0
+      for (let i = 0; i <= upto; i++) s += m.get(times[i]) ?? 0
+      return s / 1e12 // 万亿
+    }
+    const todayCurve = times.map((_, i) => cumAt(cur, i))
+    const baseCurve = times.map((_, i) => {
+      let s = 0
+      let n = 0
+      for (const d of prevDates) {
+        const m = byDate.get(d)
+        if (!m) continue
+        s += cumAt(m, i)
+        n += 1
+      }
+      return n ? s / n : null
+    })
+
+    const lastT = todayCurve[todayCurve.length - 1]
+    const lastB = baseCurve[baseCurve.length - 1]
+    volRatio.value = lastB && lastB > 0 ? ((lastT - lastB) / lastB) * 100 : null
+
+    volChart ??= echarts.init(volEl.value!, 'dark')
+    volChart.setOption(
+      {
+        backgroundColor: 'transparent',
+        tooltip: {
+          trigger: 'axis',
+          valueFormatter: (v: number | string) => fmtAmount(Number(v) * 1e12),
+        },
+        legend: { data: ['最近交易日累计', '近 5 日同期均值'], top: 0 },
+        grid: { left: 60, right: 20, top: 30, bottom: 30 },
+        xAxis: { type: 'category', data: times },
+        yAxis: {
+          type: 'value',
+          name: '万亿',
+          scale: true,
+          splitLine: { lineStyle: { color: '#2a2e3a' } },
+          axisLabel: { formatter: (v: number) => v.toFixed(1) },
+        },
+        series: [
+          {
+            name: '最近交易日累计',
+            type: 'line',
+            data: todayCurve,
+            showSymbol: false,
+            lineStyle: { color: UP_COLOR, width: 2 },
+            itemStyle: { color: UP_COLOR },
+            areaStyle: { color: 'rgba(239,65,70,0.08)' },
+          },
+          {
+            name: '近 5 日同期均值',
+            type: 'line',
+            data: baseCurve,
+            showSymbol: false,
+            lineStyle: { color: '#8b919e', width: 1.5, type: 'dashed' },
+            itemStyle: { color: '#8b919e' },
+          },
+        ],
+      },
+      true,
+    )
+  } catch {
+    volRatio.value = null // 量能图独立降级
+  }
 }
 
 let timer = 0
 
 onMounted(async () => {
   await load()
+  loadVolume()
   timer = window.setInterval(() => {
     if (document.hidden) return
     load()
@@ -219,6 +320,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
   todayChart?.dispose()
   histChart?.dispose()
+  volChart?.dispose()
 })
 </script>
 
@@ -273,6 +375,17 @@ onBeforeUnmount(() => {
           <div v-if="(today?.samples?.length ?? 0) === 0" class="empty-hint dim">
             今日尚无采样数据。采样器在交易时段每分钟落一条，服务持续运行后曲线自动成形。
           </div>
+        </div>
+      </div>
+
+      <!-- 量能仪表盘 -->
+      <div class="section">
+        <div class="sec-title">
+          量能 · 两市累计成交额（最近交易日{{ volDate ? ` ${volDate.slice(5)}` : '' }} vs 近 5 日同期均值
+          <span v-if="volRatio !== null" :class="volRatio > 0 ? 'up' : 'down'">{{ fmtPctSigned(volRatio) }}</span>）
+        </div>
+        <div class="card chart-card">
+          <div ref="volEl" class="chart"></div>
         </div>
       </div>
 

@@ -6,6 +6,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { fetchBoardHotspot, formatError } from '../api'
 import BoardDialog from '../components/BoardDialog.vue'
+import HotspotCorrelation from '../components/HotspotCorrelation.vue'
 import HotspotMatrix from '../components/HotspotMatrix.vue'
 import HotspotStatStrip from '../components/HotspotStatStrip.vue'
 import type { HotspotResp, HotspotRow } from '../types'
@@ -20,6 +21,7 @@ type SortKey = 'days_in' | 'sum_pct' | 'first_date'
 const boardType = ref<'HY' | 'GN' | 'FG'>(props.boardType ?? 'HY')
 const days = ref<number>(20)
 const mode = ref<'top' | 'bottom'>('top')
+const viewMode = ref<'matrix' | 'corr'>('matrix')
 
 watch(
   () => props.boardType,
@@ -227,6 +229,10 @@ function openBoard(r: HotspotRow) {
         <button :class="{ on: mode === 'top' }" @click="setMode('top')">领涨</button>
         <button :class="{ on: mode === 'bottom' }" @click="setMode('bottom')">领跌</button>
       </span>
+      <span class="seg">
+        <button :class="{ on: viewMode === 'matrix' }" @click="viewMode = 'matrix'">热点矩阵</button>
+        <button :class="{ on: viewMode === 'corr' }" @click="viewMode = 'corr'">相关性</button>
+      </span>
       <label class="tb-label">排序
         <select v-model="sortKey">
           <option value="days_in">上榜次数</option>
@@ -267,8 +273,8 @@ function openBoard(r: HotspotRow) {
 
     <div v-else-if="loading" class="loading">加载中…</div>
 
-    <!-- 主区：统计卡 + 图例 + 矩阵 -->
-    <template v-else-if="resp">
+    <!-- 主区：统计卡 + 图例 + 矩阵 / 相关性 -->
+    <template v-else-if="resp && viewMode === 'matrix'">
       <HotspotStatStrip :rows="resp.rows ?? []" :dates="dates" :mode="mode" @select="openBoard" />
 
       <div class="legend">
@@ -294,6 +300,11 @@ function openBoard(r: HotspotRow) {
           @select="openBoard"
         />
       </div>
+    </template>
+
+    <!-- 相关性视图：活跃板块两两日涨跌幅相关系数 -->
+    <template v-else-if="viewMode === 'corr'">
+      <HotspotCorrelation :board-type="boardType" :days="days" :per-day="PER_DAY" />
     </template>
 
     <BoardDialog
