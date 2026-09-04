@@ -687,6 +687,54 @@ export interface LimitUpEcologyResp {
   blown: LimitUpEntry[]
 }
 
+// ── 市场情绪（/market/sentiment/*，盘中逐分钟采样 + vipdoc 涨停史回补） ─────
+
+export interface SentimentSample {
+  date: number
+  minute: number
+  ts: number
+  up_count: number
+  down_count: number
+  neutral_count: number
+  total_count: number
+  limit_up_count: number
+  limit_down_count: number
+  total_amount: number
+  up_ratio: number
+}
+
+export interface SentimentTodayResp {
+  /** 交易日 YYYYMMDD；0 = 尚无采样 */
+  date: number
+  count: number
+  samples: SentimentSample[]
+}
+
+export interface SentimentDay {
+  date: number
+  /** 当日样本数（<10 视为不完整交易日，曲线渲染时可忽略） */
+  n: number
+  limit_up_peak: number
+  up_count: number
+  down_count: number
+  limit_up_close: number
+  limit_down_close: number
+  amount_close: number
+  up_ratio: number
+}
+
+export interface SentimentHistoryResp {
+  count: number
+  days: SentimentDay[]
+}
+
+/** vipdoc 回补的逐日涨停/跌停家数（无需采样积累）。 */
+export interface LimitUpHistoryRow {
+  date: number
+  limit_up: number
+  limit_down: number
+}
+
 // ── Walk-Forward 样本外验证（v1.27 POST /backtest/wf/run/async）──────────────
 
 export interface WalkForwardWindow {

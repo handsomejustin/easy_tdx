@@ -14,6 +14,7 @@ import type {
   DataFrameResponse,
   HotspotResp,
   LimitUpEcologyResp,
+  LimitUpHistoryRow,
   LlmChatResponse,
   LlmChatContext,
   LlmHistoryResponse,
@@ -32,6 +33,8 @@ import type {
   SavedStrategyCreate,
   SavedStrategyListResponse,
   SecurityQuote,
+  SentimentHistoryResp,
+  SentimentTodayResp,
   ServerHostInfo,
   ServerHostListResponse,
   ServerSwitchResult,
@@ -841,6 +844,32 @@ export async function fetchLimitUpEcology(): Promise<LimitUpEcologyResp> {
   if (!resp.ok) await throwError(resp)
   const body = (await resp.json()) as { data: LimitUpEcologyResp }
   return body.data
+}
+
+/** 当日情绪分钟曲线（采样器逐分钟落库；date=0 表示尚无采样）。 */
+export async function fetchSentimentToday(): Promise<SentimentTodayResp> {
+  const resp = await fetch(`${BASE}/market/sentiment/today`)
+  if (!resp.ok) await throwError(resp)
+  const body = (await resp.json()) as { data: SentimentTodayResp }
+  return body.data
+}
+
+/** 逐日情绪聚合（收盘快照上涨占比 + 涨跌停家数，依赖采样积累）。 */
+export async function fetchSentimentHistory(days = 60): Promise<SentimentHistoryResp> {
+  const params = new URLSearchParams({ days: String(days) })
+  const resp = await fetch(`${BASE}/market/sentiment/history?${params}`)
+  if (!resp.ok) await throwError(resp)
+  const body = (await resp.json()) as { data: SentimentHistoryResp }
+  return body.data
+}
+
+/** 涨停/跌停家数逐日历史（vipdoc 离线回补，服务端缓存 10 分钟）。 */
+export async function fetchLimitUpHistory(days = 60): Promise<LimitUpHistoryRow[]> {
+  const params = new URLSearchParams({ days: String(days) })
+  const resp = await fetch(`${BASE}/market/limitup-history?${params}`)
+  if (!resp.ok) await throwError(resp)
+  const body = (await resp.json()) as { data: { count: number; days: LimitUpHistoryRow[] } }
+  return body.data.days
 }
 
 /** 中金所成交持仓排名：品种列表（含科普元数据）。 */

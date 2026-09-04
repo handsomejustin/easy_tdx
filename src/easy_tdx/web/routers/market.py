@@ -23,6 +23,8 @@ router = APIRouter(tags=["market"])
 # 涨停生态结果缓存（vipdoc 盘中随通达信客户端落盘更新，60s 足够新鲜）
 _limitup_cache: tuple[float, dict[str, Any]] | None = None
 _LIMITUP_TTL = 60.0
+# 涨停逐日历史缓存（历史数据不变，10 分钟；按 days 分键）
+_limitup_history_cache: dict[int, tuple[float, dict[str, Any]]] = {}
 
 
 def _df_response(df: Any) -> DataFrameResponse:
@@ -127,6 +129,69 @@ async def limitup_ecology(
 
     payload = await asyncio.to_thread(_scan)
     _limitup_cache = (now, payload)
+    return DictResponse.from_dict(payload)
+
+
+@router.get("/market/sentiment/today", response_model=DictResponse)
+async def sentiment_today(
+    date: int | None = Query(None, description="交易日 YYYYMMDD，缺省=最近有采样的日期"),
+) -> DictResponse:
+    """当日情绪分钟曲线（上涨/下跌/涨停/跌停家数、上涨占比、总成交额）。
+
+    数据来自 :class:`easy_tdx.web.sentiment_sampler.SentimentSampler` 的盘中
+    逐分钟采样——服务重启不丢（SQLite 持久化），但首次上线前无历史。
+    """
+    from easy_tdx.web.sentiment_store import get_sentiment_store
+
+    store = get_sentiment_store()
+    d = date or store.latest_date()
+    if not d:
+        return DictResponse.from_dict({"date": 0, "count": 0, "samples": []})
+    rows = store.day_samples(d)
+    for r in rows:
+        denom = max(r["up_count"] + r["down_count"], 1)
+        r["up_ratio"] = round(100.0 * r["up_count"] / denom, 1)
+    return DictResponse.from_dict({"date": d, "count": len(rows), "samples": rows})
+
+
+@router.get("/market/sentiment/history", response_model=DictResponse)
+async def sentiment_history(
+    days: int = Query(60, ge=5, le=250, description="聚合天数"),
+) -> DictResponse:
+    """逐日情绪聚合（收盘快照的上涨占比/涨跌停家数/成交额 + 涨停峰值）。
+
+    同样依赖采样器的积累；涨停/跌停家数的"无采样历史"可用
+    ``/market/limitup-history``（vipdoc 离线回补）替代。
+    """
+    from easy_tdx.web.sentiment_store import get_sentiment_store
+
+    rows = get_sentiment_store().daily_history(days)
+    return DictResponse.from_dict({"count": len(rows), "days": rows})
+
+
+@router.get("/market/limitup-history", response_model=DictResponse)
+async def limitup_history(
+    days: int = Query(60, ge=5, le=250, description="回补交易日数"),
+    vipdoc: str | None = Query(None, description="离线数据目录（默认自动检测）"),
+) -> DictResponse:
+    """涨停/跌停家数逐日历史（本地 vipdoc 离线回补，无需采样积累）。
+
+    全市场扫描约需数十秒，结果缓存 10 分钟。日期覆盖受 vipdoc 数据范围限制。
+    """
+    global _limitup_history_cache
+    now = time.monotonic()
+    cached = _limitup_history_cache.get(days)
+    if cached is not None and now - cached[0] < 600:
+        return DictResponse.from_dict(cached[1])
+
+    def _scan() -> dict[str, Any]:
+        from easy_tdx.screen.limitup import compute_limitup_history
+
+        rows = compute_limitup_history(vipdoc, days=days)
+        return {"count": len(rows), "days": rows}
+
+    payload = await asyncio.to_thread(_scan)
+    _limitup_history_cache[days] = (now, payload)
     return DictResponse.from_dict(payload)
 
 

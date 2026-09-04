@@ -173,7 +173,31 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             ex_client = None
     app.state.ex_client = ex_client
 
+    # --- 市场情绪采样器（交易时段每分钟落一条广度快照，供 /market/sentiment/*） ---
+    # 依赖标准 TDX 客户端（get_market_stat），mock 模式缩短间隔让曲线快速成形。
+    app.state.sentiment_sampler = None
+    try:
+        from easy_tdx.web.sentiment_sampler import SentimentSampler
+
+        sampler = SentimentSampler(
+            client.get_market_stat,
+            interval=5.0 if mock_mode else 60.0,
+        )
+        sampler.start()
+        app.state.sentiment_sampler = sampler
+        logger.info("SentimentSampler 已启动")
+    except Exception:
+        logger.warning("SentimentSampler 启动失败 — 情绪采样不可用", exc_info=True)
+
     yield
+
+    # --- 停止市场情绪采样器 ---
+    sampler_svc = getattr(app.state, "sentiment_sampler", None)
+    if sampler_svc is not None:
+        try:
+            await sampler_svc.stop()
+        except Exception:
+            logger.warning("SentimentSampler stop failed", exc_info=True)
 
     # --- 关闭实时行情推送器 ---
     streamer_svc = getattr(app.state, "quote_streamer", None)

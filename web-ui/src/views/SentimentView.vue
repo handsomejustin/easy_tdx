@@ -1,0 +1,416 @@
+<script setup lang="ts">
+// 市场情绪（/sentiment）：盘中宽度分时 + 涨停家数历史，回答"今天市场冷还是热"。
+// 数据两层：采样器分钟快照（/market/sentiment/*，随使用逐渐积累）
+//          + vipdoc 离线回补的逐日涨停/跌停家数（/market/limitup-history，即时可用）。
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+
+import echarts, { DOWN_COLOR, UP_COLOR } from '../echarts-setup'
+import {
+  fetchLimitUpHistory,
+  fetchMarketStat,
+  fetchSentimentHistory,
+  fetchSentimentToday,
+  formatError,
+} from '../api'
+import { fmtAmount } from '../format'
+import type { LimitUpHistoryRow, MarketStat, SentimentDay, SentimentSample } from '../types'
+
+const today = ref<{ date: number; count?: number; samples: SentimentSample[] } | null>(null)
+const histDays = ref<SentimentDay[]>([])
+const luHistory = ref<LimitUpHistoryRow[]>([])
+const stat = ref<MarketStat | null>(null)
+const error = ref('')
+const loading = ref(false)
+const lastRefresh = ref('')
+
+async function load() {
+  loading.value = today.value === null
+  error.value = ''
+  try {
+    const [t, h, lu, st] = await Promise.all([
+      fetchSentimentToday(),
+      fetchSentimentHistory(60),
+      fetchLimitUpHistory(60),
+      fetchMarketStat().catch(() => null),
+    ])
+    today.value = t
+    histDays.value = h.days
+    luHistory.value = lu
+    stat.value = st
+    lastRefresh.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+  } catch (e) {
+    error.value = formatError(e)
+  } finally {
+    loading.value = false
+  }
+  // loading 复位触发 v-else-if 切换后，图表容器才挂载到 DOM
+  await nextTick()
+  render()
+}
+
+// ── 温度卡（今日实时 = /market/stat；缺省回退最后一条采样） ───────────────────
+
+const latest = computed(() => {
+  const s = today.value?.samples ?? []
+  return s.length > 0 ? s[s.length - 1] : null
+})
+
+const upRatio = computed(() => {
+  const s = stat.value
+  if (s && s.up_count + s.down_count > 0) {
+    return (100 * s.up_count) / (s.up_count + s.down_count)
+  }
+  return latest.value?.up_ratio ?? null
+})
+
+const limitUpNow = computed(() => stat.value?.limit_up_count ?? latest.value?.limit_up_count ?? null)
+const limitDownNow = computed(
+  () => stat.value?.limit_down_count ?? latest.value?.limit_down_count ?? null,
+)
+const amountNow = computed(() => stat.value?.total_amount ?? latest.value?.total_amount ?? null)
+
+/** 情绪判定：上涨占比 + 涨跌停差 粗分五档 */
+const mood = computed(() => {
+  const r = upRatio.value
+  if (r === null) return { label: '—', cls: 'flat' }
+  if (r >= 70) return { label: '普涨 · 情绪高潮', cls: 'up' }
+  if (r >= 55) return { label: '偏暖', cls: 'up' }
+  if (r > 45) return { label: '均衡', cls: 'flat' }
+  if (r > 30) return { label: '偏冷', cls: 'down' }
+  return { label: '普跌 · 情绪冰点', cls: 'down' }
+})
+
+// ── 图表 ─────────────────────────────────────────────────────────────────────
+
+const todayEl = ref<HTMLDivElement>()
+const histEl = ref<HTMLDivElement>()
+let todayChart: echarts.ECharts | null = null
+let histChart: echarts.ECharts | null = null
+
+function hm(minute: number): string {
+  return `${String(Math.floor(minute / 100)).padStart(2, '0')}:${String(minute % 100).padStart(2, '0')}`
+}
+
+function render() {
+  renderToday()
+  renderHistory()
+}
+
+function renderToday() {
+  if (!todayEl.value) return
+  todayChart ??= echarts.init(todayEl.value, 'dark')
+  const samples = today.value?.samples ?? []
+  const x = samples.map((s) => hm(s.minute))
+  todayChart.setOption(
+    {
+      backgroundColor: 'transparent',
+      tooltip: { trigger: 'axis' },
+      legend: { data: ['上涨家数', '下跌家数', '涨停家数'], top: 0 },
+      grid: { left: 60, right: 60, top: 30, bottom: 30 },
+      xAxis: { type: 'category', data: x, boundaryGap: false },
+      yAxis: [
+        { type: 'value', name: '家数', scale: true, splitLine: { lineStyle: { color: '#2a2e3a' } } },
+        { type: 'value', name: '涨停', scale: true, position: 'right', splitLine: { show: false } },
+      ],
+      series: [
+        {
+          name: '上涨家数',
+          type: 'line',
+          data: samples.map((s) => s.up_count),
+          showSymbol: false,
+          lineStyle: { color: UP_COLOR, width: 2 },
+          itemStyle: { color: UP_COLOR },
+          areaStyle: { color: 'rgba(239,65,70,0.08)' },
+        },
+        {
+          name: '下跌家数',
+          type: 'line',
+          data: samples.map((s) => s.down_count),
+          showSymbol: false,
+          lineStyle: { color: DOWN_COLOR, width: 2 },
+          itemStyle: { color: DOWN_COLOR },
+        },
+        {
+          name: '涨停家数',
+          type: 'line',
+          yAxisIndex: 1,
+          data: samples.map((s) => s.limit_up_count),
+          showSymbol: false,
+          lineStyle: { color: '#f5a623', width: 1.5, type: 'dashed' },
+          itemStyle: { color: '#f5a623' },
+        },
+      ],
+    },
+    true,
+  )
+}
+
+function renderHistory() {
+  if (!histEl.value) return
+  histChart ??= echarts.init(histEl.value, 'dark')
+  // 基底 = vipdoc 回补的逐日涨跌停；采样聚合有值的日期叠加上涨占比线
+  const lu = luHistory.value
+  const sampled = new Map(histDays.value.map((d) => [d.date, d]))
+  const x = lu.map((r: LimitUpHistoryRow) => String(r.date).replace(/^(\d{4})(\d{2})(\d{2})$/, '$2-$3'))
+  const ratios = lu.map((r) => {
+    const d = sampled.get(r.date)
+    return d && d.n >= 10 ? d.up_ratio : null // 样本不足的交易日不画占比线
+  })
+  histChart.setOption(
+    {
+      backgroundColor: 'transparent',
+      tooltip: { trigger: 'axis' },
+      legend: { data: ['涨停家数', '跌停家数', '上涨占比%'], top: 0 },
+      grid: { left: 50, right: 55, top: 30, bottom: 30 },
+      xAxis: { type: 'category', data: x },
+      yAxis: [
+        { type: 'value', name: '家数', splitLine: { lineStyle: { color: '#2a2e3a' } } },
+        { type: 'value', name: '上涨占比%', position: 'right', max: 100, splitLine: { show: false } },
+      ],
+      series: [
+        {
+          name: '涨停家数',
+          type: 'bar',
+          data: lu.map((r) => r.limit_up),
+          itemStyle: { color: UP_COLOR },
+          barMaxWidth: 8,
+        },
+        {
+          name: '跌停家数',
+          type: 'bar',
+          data: lu.map((r) => -r.limit_down),
+          itemStyle: { color: DOWN_COLOR },
+          barMaxWidth: 8,
+          tooltip: { valueFormatter: (v: number) => String(Math.abs(Number(v))) },
+        },
+        {
+          name: '上涨占比%',
+          type: 'line',
+          yAxisIndex: 1,
+          data: ratios,
+          connectNulls: false,
+          showSymbol: false,
+          lineStyle: { color: '#f5a623', width: 2 },
+          itemStyle: { color: '#f5a623' },
+        },
+      ],
+    },
+    true,
+  )
+}
+
+function onResize() {
+  todayChart?.resize()
+  histChart?.resize()
+}
+
+let timer = 0
+
+onMounted(async () => {
+  await load()
+  timer = window.setInterval(() => {
+    if (document.hidden) return
+    load()
+  }, 60_000)
+  window.addEventListener('resize', onResize)
+})
+onBeforeUnmount(() => {
+  window.clearInterval(timer)
+  window.removeEventListener('resize', onResize)
+  todayChart?.dispose()
+  histChart?.dispose()
+})
+</script>
+
+<template>
+  <div class="sentiment-view">
+    <div class="view-head">
+      <h2>市场情绪</h2>
+      <span class="dim head-sub">宽度 · 涨停温度计</span>
+      <span class="tb-spacer"></span>
+      <span v-if="lastRefresh" class="dim refresh-ts">{{ lastRefresh }}</span>
+      <button class="manual-refresh" @click="load">↻ 刷新</button>
+    </div>
+
+    <div v-if="error" class="err card">
+      加载失败：{{ error }}
+      <button @click="load">重试</button>
+    </div>
+    <div v-else-if="loading" class="loading">加载中…</div>
+
+    <template v-else>
+      <!-- 温度卡 -->
+      <div class="stat-strip">
+        <div class="stat-card card">
+          <div class="stat-title">上涨占比</div>
+          <div class="stat-main mono" :class="mood.cls">{{ upRatio === null ? '-' : upRatio.toFixed(1) + '%' }}</div>
+          <div class="stat-sub" :class="mood.cls">{{ mood.label }}</div>
+        </div>
+        <div class="stat-card card">
+          <div class="stat-title">涨停 / 跌停</div>
+          <div class="stat-main">
+            <span class="up">{{ limitUpNow ?? '-' }}</span>
+            <span class="dim"> / </span>
+            <span class="down">{{ limitDownNow ?? '-' }}</span>
+          </div>
+        </div>
+        <div class="stat-card card">
+          <div class="stat-title">今日总成交</div>
+          <div class="stat-main">{{ fmtAmount(amountNow) }}</div>
+        </div>
+        <div class="stat-card card">
+          <div class="stat-title">今日采样点</div>
+          <div class="stat-main">{{ today?.count ?? 0 }} <span class="unit">个</span></div>
+          <div class="stat-sub dim">交易时段每分钟一条 · 持续积累</div>
+        </div>
+      </div>
+
+      <!-- 今日宽度分时 -->
+      <div class="section">
+        <div class="sec-title">今日宽度分时</div>
+        <div class="card chart-card">
+          <div ref="todayEl" class="chart"></div>
+          <div v-if="(today?.samples?.length ?? 0) === 0" class="empty-hint dim">
+            今日尚无采样数据。采样器在交易时段每分钟落一条，服务持续运行后曲线自动成形。
+          </div>
+        </div>
+      </div>
+
+      <!-- 近 60 日情绪 -->
+      <div class="section">
+        <div class="sec-title">近 60 日 · 涨停/跌停家数（vipdoc 回补）与上涨占比（采样积累）</div>
+        <div class="card chart-card">
+          <div ref="histEl" class="chart-lg"></div>
+          <div v-if="luHistory.length === 0" class="empty-hint dim">
+            未检测到本地 vipdoc 数据，历史涨停家数不可用。
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+</template>
+
+<style scoped>
+.sentiment-view {
+  height: 100%;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.view-head,
+.stat-strip,
+.err,
+.loading,
+.section {
+  flex-shrink: 0;
+}
+.view-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.view-head h2 {
+  font-size: 17px;
+  font-weight: 700;
+}
+.head-sub {
+  font-size: 12px;
+}
+.tb-spacer {
+  flex: 1;
+}
+.refresh-ts {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.manual-refresh {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+.err {
+  color: var(--up);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.loading {
+  padding: 40px 0;
+  text-align: center;
+  color: var(--text-dim);
+}
+.stat-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.stat-card {
+  padding: 10px 14px;
+}
+.stat-title {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.stat-main {
+  font-size: 17px;
+  font-weight: 700;
+}
+.unit {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.stat-sub {
+  font-size: 11.5px;
+  margin-top: 2px;
+}
+.stat-sub.up,
+.stat-main.up {
+  color: var(--up);
+}
+.stat-sub.down,
+.stat-main.down {
+  color: var(--down);
+}
+.stat-sub.flat,
+.stat-main.flat {
+  color: var(--text-muted);
+}
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sec-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.chart-card {
+  padding: 8px;
+  position: relative;
+}
+.chart {
+  height: 260px;
+}
+.chart-lg {
+  height: 300px;
+}
+.empty-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  padding: 0 40px;
+  text-align: center;
+}
+@media (max-width: 1024px) {
+  .stat-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+</style>

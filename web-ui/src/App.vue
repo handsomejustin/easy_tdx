@@ -31,6 +31,7 @@ const sseLabel: Record<string, string> = {
           <RouterLink to="/hotspots" active-class="active">热点滚动</RouterLink>
           <RouterLink to="/calendar" active-class="active">大盘日历</RouterLink>
           <RouterLink to="/limitup" active-class="active">涨停生态</RouterLink>
+          <RouterLink to="/sentiment" active-class="active">市场情绪</RouterLink>
           <RouterLink to="/watchlist" active-class="active">自选行情</RouterLink>
           <RouterLink to="/ccpm" active-class="active">期货持仓排名</RouterLink>
           <div class="nav-group">分析</div>

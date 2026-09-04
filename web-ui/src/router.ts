@@ -12,6 +12,7 @@ import LlmHistoryView from './views/LlmHistoryView.vue'
 import LlmSettingsView from './views/LlmSettingsView.vue'
 import OptimizeView from './views/OptimizeView.vue'
 import PortfolioView from './views/PortfolioView.vue'
+import SentimentView from './views/SentimentView.vue'
 import ServerSettingsView from './views/ServerSettingsView.vue'
 import SignalRadarView from './views/SignalRadarView.vue'
 import StrategiesView from './views/StrategiesView.vue'
@@ -35,6 +36,8 @@ const routes = [
   { path: '/watchlist', name: 'watchlist', component: WatchlistView },
   // 涨停生态（连板天梯/炸板/跌停，本地 vipdoc 离线回算）
   { path: '/limitup', name: 'limitup', component: LimitUpView },
+  // 市场情绪（宽度分时 + 涨停温度计；采样器盘中逐分钟积累）
+  { path: '/sentiment', name: 'sentiment', component: SentimentView },
   { path: '/backtest', name: 'backtest', component: BacktestView },
   { path: '/portfolio', name: 'portfolio', component: PortfolioView },
   { path: '/optimize', name: 'optimize', component: OptimizeView },

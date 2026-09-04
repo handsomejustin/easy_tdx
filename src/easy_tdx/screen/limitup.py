@@ -26,12 +26,21 @@ from easy_tdx.offline.paths import resolve_vipdoc
 
 _A_STOCK_TYPES = frozenset({"SH_A_STOCK", "SZ_A_STOCK"})
 
-__all__ = ["LimitUpEntry", "LimitUpEcology", "compute_limitup_ecology"]
+__all__ = [
+    "LimitUpEntry",
+    "LimitUpEcology",
+    "compute_limitup_ecology",
+    "compute_limitup_history",
+]
 
 
 def _round_price(x: float) -> float:
     """四舍五入到分（Python round 是银行家舍入，交易所是四舍五入，不能混用）。"""
     return math.floor(x * 100 + 0.5) / 100
+
+
+def _eq_price(a: float, b: float) -> bool:
+    return abs(a - b) < 1e-4
 
 
 def _limit_ratio(code: str) -> float:
@@ -245,3 +254,79 @@ def compute_limitup_ecology(
     eco.limit_down.sort(key=lambda e: (-e.streak, e.pct))
     eco.blown.sort(key=lambda e: -e.pct)
     return eco
+
+
+def compute_limitup_history(
+    vipdoc_path: str | Path | None = None,
+    *,
+    days: int = 60,
+    max_files: int = 20000,
+) -> list[dict[str, int]]:
+    """逐日统计最近 ``days`` 个交易日的涨停/跌停家数（离线回补，无需采样积累）。
+
+    与 :func:`compute_limitup_ecology` 的"只看最新交易日"不同，本函数把每只股票
+    窗口内的每一根 bar 都按同一涨停判定规则计数——历史日期上它就是当时真实的
+    涨停家数（陈旧文件在此是合法的历史数据，无污染问题）。
+
+    Returns:
+        按 date 升序的 ``[{"date": YYYYMMDD, "limit_up": n, "limit_down": m}]``；
+        vipdoc 不可用时返回空列表。
+    """
+    try:
+        vipdoc = resolve_vipdoc(vipdoc_path)
+    except Exception:  # noqa: BLE001 — 路径不存在/自动检测失败：按空数据处理
+        return []
+
+    counts: dict[int, dict[str, int]] = {}
+    if not vipdoc.is_dir():
+        return []
+
+    n_files = 0
+    for exchange in ("sz", "sh"):
+        lday_dir = vipdoc / exchange / "lday"
+        if not lday_dir.is_dir():
+            continue
+        for filepath in sorted(lday_dir.glob("*.day")):
+            if _detect_security_type(filepath.name) not in _A_STOCK_TYPES:
+                continue
+            code = filepath.name.lower()[2:8]
+            try:
+                bars = read_daily_bars(filepath)
+            except Exception:  # noqa: BLE001 — 单文件损坏不阻塞整体
+                continue
+            tail = bars[-(days + 13) :]
+            if len(tail) < 2:
+                continue
+            n_files += 1
+            if n_files >= max_files:
+                break
+            up_ratio = _limit_ratio(code)
+            closes = [b.close for b in tail]
+            date_ints = [b.year * 10000 + b.month * 100 + b.day for b in tail]
+            for i in range(1, len(tail)):
+                p, c = closes[i - 1], closes[i]
+                if p <= 0:
+                    continue
+                st_applicable = up_ratio == 0.10 and p >= 3.0
+                d = date_ints[i]
+                bucket = counts.setdefault(d, {"limit_up": 0, "limit_down": 0})
+                if _eq_price(c, _round_price(p * (1 + up_ratio))) or (
+                    st_applicable and _eq_price(c, _round_price(p * 1.05))
+                ):
+                    bucket["limit_up"] += 1
+                elif _eq_price(c, _round_price(p * (1 - up_ratio))) or (
+                    st_applicable and _eq_price(c, _round_price(p * 0.95))
+                ):
+                    bucket["limit_down"] += 1
+        if n_files >= max_files:
+            break
+
+    recent = sorted(counts)[-days:] if days > 0 else []
+    return [
+        {
+            "date": d,
+            "limit_up": counts[d]["limit_up"],
+            "limit_down": counts[d]["limit_down"],
+        }
+        for d in recent
+    ]
