@@ -9,10 +9,11 @@ import type {
   BoardOverviewResp,
   BoardRow,
   Category,
-  CoreLeaderRow,
   CcpmProductsResponse,
   CcpmRankResponse,
   DataFrameResponse,
+  HotspotResp,
+  LimitUpEcologyResp,
   LlmChatResponse,
   LlmChatContext,
   LlmHistoryResponse,
@@ -582,6 +583,29 @@ export async function fetchBoardOverview(
   return body.data
 }
 
+/** 市场热点滚动（交易日×板块涨跌矩阵 + 每日排名）。
+ *  首次请求某板块类型时后端后台构建，返回 status=building（附 progress），
+ *  前端 ~1s 轮询直至 ready；构建失败 status=error 稳定返回，retry=true 重建。 */
+export async function fetchBoardHotspot(
+  boardType: string,
+  days: number,
+  mode: 'top' | 'bottom',
+  perDay = 5,
+  retry = false,
+): Promise<HotspotResp> {
+  const params = new URLSearchParams({
+    board_type: boardType,
+    days: String(days),
+    mode,
+    per_day: String(perDay),
+  })
+  if (retry) params.set('retry', 'true')
+  const resp = await fetch(`${BASE}/board-mac/hotspot?${params}`)
+  if (!resp.ok) await throwError(resp)
+  const body = (await resp.json()) as { data: HotspotResp }
+  return body.data
+}
+
 /** 市场异动流（火箭发射/大笔买入/封涨停板/打开跌停板/快速反弹等）。 */
 export async function fetchUnusual(market: 'SH' | 'SZ', count = 50): Promise<Record<string, unknown>[]> {
   const params = new URLSearchParams({ market, count: String(count) })
@@ -810,12 +834,13 @@ export async function clearLlmHistory(): Promise<number> {
   return (await resp.json()).deleted as number
 }
 
-/** 核心龙头池（159 只）。 */
-export async function fetchCoreLeaders(): Promise<CoreLeaderRow[]> {
-  const resp = await fetch(`${BASE}/market/core-leaders`)
+/** 涨停生态（连板天梯/炸板/跌停，本地 vipdoc 离线回算，服务端缓存 60s）。
+ *  data_date 为 vipdoc 数据日期；name 字段需前端经 fetchSymbolName 补齐。 */
+export async function fetchLimitUpEcology(): Promise<LimitUpEcologyResp> {
+  const resp = await fetch(`${BASE}/limitup-ecology`)
   if (!resp.ok) await throwError(resp)
-  const body = (await resp.json()) as DataFrameResponse
-  return body.data as unknown as CoreLeaderRow[]
+  const body = (await resp.json()) as { data: LimitUpEcologyResp }
+  return body.data
 }
 
 /** 中金所成交持仓排名：品种列表（含科普元数据）。 */

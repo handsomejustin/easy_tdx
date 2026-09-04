@@ -41,3 +41,13 @@ export function dirClass(v: number | null | undefined): string {
   if (v === null || v === undefined || !Number.isFinite(v) || v === 0) return 'flat'
   return v > 0 ? 'up' : 'down'
 }
+
+/** 涨跌幅 → 红涨绿跌背景样式（|pct| 分 5 档透明度，与板块热力图/热点矩阵同规）。 */
+export function pctCellStyle(pct: number | null | undefined): Record<string, string> {
+  if (pct === null || pct === undefined || !Number.isFinite(pct)) return { background: 'transparent' }
+  if (pct === 0) return { background: 'var(--bg-elevated)', color: 'var(--text-muted)' }
+  const mag = Math.abs(pct)
+  const tier = mag > 3 ? 0.82 : mag > 2 ? 0.62 : mag > 1 ? 0.42 : mag > 0.5 ? 0.26 : 0.14
+  const base = pct > 0 ? '239, 65, 70' : '24, 160, 88' // var(--up) / var(--down) 的 rgb
+  return { background: `rgba(${base}, ${tier})`, color: '#fff' }
+}

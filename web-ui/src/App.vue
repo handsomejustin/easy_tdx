@@ -28,8 +28,10 @@ const sseLabel: Record<string, string> = {
           <RouterLink to="/" exact-active-class="active">市场看板</RouterLink>
           <RouterLink to="/industries" active-class="active">行业总览</RouterLink>
           <RouterLink to="/concepts" active-class="active">概念总览</RouterLink>
+          <RouterLink to="/hotspots" active-class="active">热点滚动</RouterLink>
+          <RouterLink to="/calendar" active-class="active">大盘日历</RouterLink>
+          <RouterLink to="/limitup" active-class="active">涨停生态</RouterLink>
           <RouterLink to="/watchlist" active-class="active">自选行情</RouterLink>
-          <RouterLink to="/leaders" active-class="active">龙头池</RouterLink>
           <RouterLink to="/ccpm" active-class="active">期货持仓排名</RouterLink>
           <div class="nav-group">分析</div>
           <RouterLink to="/backtest" active-class="active">单标的回测</RouterLink>

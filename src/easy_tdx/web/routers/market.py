@@ -1,7 +1,10 @@
-"""市场信息路由：证券列表、实时行情、市场统计、资金流向。"""
+"""市场信息路由：证券列表、实时行情、市场统计、资金流向、涨停生态。"""
 
 from __future__ import annotations
 
+import asyncio
+import time
+from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
@@ -11,10 +14,15 @@ from easy_tdx.web.deps import get_client
 from easy_tdx.web.schemas import (
     CountResponse,
     DataFrameResponse,
+    DictResponse,
     QuoteRequest,
 )
 
 router = APIRouter(tags=["market"])
+
+# 涨停生态结果缓存（vipdoc 盘中随通达信客户端落盘更新，60s 足够新鲜）
+_limitup_cache: tuple[float, dict[str, Any]] | None = None
+_LIMITUP_TTL = 60.0
 
 
 def _df_response(df: Any) -> DataFrameResponse:
@@ -88,20 +96,38 @@ async def market_session() -> dict[str, Any]:
     return session_info()
 
 
-@router.get("/market/core-leaders", response_model=DataFrameResponse)
-async def core_leaders() -> DataFrameResponse:
-    """核心龙头池（159 只，按东方财富全行业龙头名单整理）。
+@router.get("/limitup-ecology", response_model=DictResponse)
+async def limitup_ecology(
+    vipdoc: str | None = Query(None, description="离线数据目录（默认自动检测）"),
+) -> DictResponse:
+    """涨停生态：连板天梯 / 首板二板分布 / 炸板 / 跌停（本地 vipdoc 日线离线回算）。
 
-    数据资产供前端展示/导出；扫描场景走 ``universe="core"``（screen scan
-    与 /market/strength 均支持）。
+    结果的 ``data_date`` 为 vipdoc 数据日期——数据新鲜度取决于本机通达信客户端
+    的盘后下载/盘中落盘，前端必须明示该日期。全市场扫描约需数秒，结果缓存 60s。
+    涨停判定按代码段：主板 10%（含 5% 疑似 ST 标记）、创业板/科创板 20%；
+    .day 文件无名称，name 由前端经批量报价补齐。
     """
-    from easy_tdx.screen.universe import CORE_LEADERS
+    global _limitup_cache
+    now = time.monotonic()
+    if _limitup_cache is not None and now - _limitup_cache[0] < _LIMITUP_TTL:
+        return DictResponse.from_dict(_limitup_cache[1])
 
-    rows = [
-        {"code": code, "name": name, "market": "SH" if code.startswith(("6", "9")) else "SZ"}
-        for code, name in CORE_LEADERS.items()
-    ]
-    return DataFrameResponse(data=rows, count=len(rows))
+    def _scan() -> dict[str, Any]:
+        from easy_tdx.screen.limitup import compute_limitup_ecology
+
+        eco = compute_limitup_ecology(vipdoc)
+        return {
+            "data_date": eco.data_date,
+            "total": eco.total,
+            "summary": eco.summary(),
+            "limit_up": [asdict(e) for e in eco.limit_up],
+            "limit_down": [asdict(e) for e in eco.limit_down],
+            "blown": [asdict(e) for e in eco.blown],
+        }
+
+    payload = await asyncio.to_thread(_scan)
+    _limitup_cache = (now, payload)
+    return DictResponse.from_dict(payload)
 
 
 @router.get("/fund-flow", response_model=DataFrameResponse)

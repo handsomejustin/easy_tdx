@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 风险提示组件：prominent=true 用于语义重点页（龙头池/AI 解读历史等），
+// 风险提示组件：prominent=true 用于语义重点页（AI 解读历史等），
 // 默认紧凑样式。文案可通过默认插槽整体替换。
 withDefaults(defineProps<{ prominent?: boolean }>(), { prominent: false })
 </script>

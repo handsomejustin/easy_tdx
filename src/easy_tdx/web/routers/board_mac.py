@@ -1,13 +1,17 @@
-"""板块分析路由：板块列表、成分、归属、摘要、涨幅排名、N日涨幅。"""
+"""板块分析路由：板块列表、成分、归属、摘要、涨幅排名、N日涨幅、热点滚动。"""
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
+from datetime import datetime
 from typing import Any
 
+import pandas as pd
 from fastapi import APIRouter, Depends, Query
 
+from easy_tdx.mac.enums import Adjust, Period
 from easy_tdx.web.convert import (
     board_sort_from_str,
     board_type_from_str,
@@ -17,6 +21,8 @@ from easy_tdx.web.convert import (
 )
 from easy_tdx.web.deps import get_mac_client
 from easy_tdx.web.schemas import DataFrameResponse, DictResponse
+
+_logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["board-mac"])
 
@@ -228,3 +234,276 @@ async def board_overview(
     payload = {"board_type": bt.name, "ts": int(time.time()), "count": len(rows), "rows": rows}
     _overview_cache[cache_key] = (_now() + _OVERVIEW_TTL, payload)
     return DictResponse.from_dict(payload)
+
+
+# ---------------------------------------------------------------------------
+# 热点滚动（/board-mac/hotspot）：交易日 × 板块 每日涨跌矩阵 + 每日排名
+#
+# 两段式数据合成：
+# - 历史矩阵：逐板块拉板块指数日K（get_stock_kline），close 逐日环比得涨跌幅，
+#   收盘后不可变 → 按日历日缓存全天有效；days 参数只做切片，不进缓存键。
+# - 今日列：实时报价 price/pre_close-1（与 overview 同口径）；全市场无一移动
+#   （盘前/休市/节假日）则不追加今日列，避免出现全 0 的假列。
+#
+# AsyncMacClient 是单连接串行，概念板块（~500 个）首次构建需数十秒：
+# 构建放 asyncio 后台任务 + 进度轮询，避免占住请求线程并拖死同连接的其他页面。
+# ---------------------------------------------------------------------------
+
+# 历史矩阵最大窗口（days 参数在其内切片）与多拉的缓冲 bar（窗口首日前收 + 节假日）
+_HOTSPOT_MAX_DAYS = 60
+_HOTSPOT_FETCH_BUFFER = 12
+_HOTSPOT_KLINE_COUNT = _HOTSPOT_MAX_DAYS + _HOTSPOT_FETCH_BUFFER
+_HOTSPOT_MAX_ROWS = 60  # 返回行数上限（行集合按上榜次数截断）
+_HOTSPOT_KLINE_CONCURRENCY = 8  # 单连接实际串行，信号量只做秩序与背压
+
+# board_type 名 -> (日历日, {axis: 日期轴, pct: {code: {日期: 涨跌幅}}, names: {code: 名称}})
+_hotspot_history_cache: dict[str, tuple[str, dict[str, Any]]] = {}
+# board_type 名 -> 构建状态 {"status": "building"|"ready"|"error", "progress", "task", "error"}
+_hotspot_builds: dict[str, dict[str, Any]] = {}
+
+
+def _today_str() -> str:
+    """当日日历日（缓存失效键；单测可 monkeypatch）。"""
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+async def _hotspot_build(board_key: str, bt: Any, client: Any) -> None:
+    """后台构建板块历史日度涨跌矩阵，结果写入 _hotspot_history_cache。"""
+    state = _hotspot_builds[board_key]
+    try:
+        boards_df = await client.get_board_list(board_type=bt, count=5000)
+        if boards_df is None or boards_df.empty:
+            raise ValueError("板块列表为空，无法构建热点矩阵")
+        entries = [
+            (str(rec["code"]), int(rec.get("market") or 1))
+            for rec in boards_df.to_dict(orient="records")
+        ]
+        names = {
+            str(rec["code"]): str(rec.get("name") or rec["code"])
+            for rec in boards_df.to_dict(orient="records")
+        }
+        total = len(entries)
+        sem = asyncio.Semaphore(_HOTSPOT_KLINE_CONCURRENCY)
+        done = 0
+
+        async def fetch_one(code: str, market: int) -> tuple[str, pd.DataFrame | None]:
+            nonlocal done
+            async with sem:
+                try:
+                    df = await client.get_stock_kline(
+                        market=market,
+                        code=code,
+                        period=Period.DAILY,
+                        count=_HOTSPOT_KLINE_COUNT,
+                        adjust=Adjust.NONE,
+                    )
+                except Exception:  # noqa: BLE001 — 单板块缺K线不阻塞整体
+                    df = None
+            done += 1
+            state["progress"] = round(done / total, 4)
+            return code, df
+
+        fetched = await asyncio.gather(*(fetch_one(code, market) for code, market in entries))
+
+        pct_map: dict[str, dict[str, float]] = {}
+        for code, df in fetched:
+            if df is None or df.empty or len(df) < 2 or "datetime" not in df.columns:
+                continue
+            kline = df.sort_values("datetime")
+            dates = pd.to_datetime(kline["datetime"]).dt.strftime("%Y-%m-%d").reset_index(drop=True)
+            close = pd.to_numeric(kline["close"], errors="coerce").reset_index(drop=True)
+            pct = (close / close.shift(1) - 1.0) * 100.0
+            series: dict[str, float] = {}
+            for d, p in zip(dates.iloc[1:], pct.iloc[1:]):  # 首根无前收，跳过
+                if pd.notna(p):
+                    series[str(d)] = round(float(p), 3)
+            if series:
+                pct_map[code] = series
+        if not pct_map:
+            raise ValueError("全部板块日K获取失败，无法构建热点矩阵")
+
+        # 交易日轴 = 数据最全板块的日期序列（全市场板块共享交易日历）
+        axis = sorted(max(pct_map.values(), key=len).keys())
+        _hotspot_history_cache[board_key] = (
+            _today_str(),
+            {"axis": axis, "pct": pct_map, "names": names},
+        )
+        state["status"] = "ready"
+        state["progress"] = 1.0
+    except Exception as exc:  # noqa: BLE001 — 构建失败转可轮询的 error 状态，不抛出
+        state["status"] = "error"
+        state["error"] = str(exc)
+        _logger.warning("热点矩阵构建失败 (%s): %s", board_key, exc)
+
+
+@router.get("/board-mac/hotspot", response_model=DictResponse)
+async def board_hotspot(
+    board_type: str = Query("HY", description="板块类型: HY/HY2/GN/FG/DQ"),
+    days: int = Query(20, ge=1, le=_HOTSPOT_MAX_DAYS, description="窗口交易日数（1=仅今日）"),
+    mode: str = Query("top", description="top=领涨(每日最强入选) / bottom=领跌(每日最弱入选)"),
+    per_day: int = Query(5, ge=2, le=10, description="每日入选名次阈值"),
+    retry: bool = Query(False, description="上次构建失败后强制重建"),
+    client: Any = Depends(get_mac_client),
+) -> DictResponse:
+    """市场热点滚动：交易日 × 板块 每日涨跌矩阵 + 当日排名。
+
+    首次请求某板块类型时启动后台构建，返回 ``{"status": "building", "progress": 0~1}``，
+    前端 ~1s 轮询直至 ``ready``。构建失败返回 ``{"status": "error", "error": ...}``
+    并保持稳定（轮询不会自动重建，避免错误被冲掉）；带 ``retry=1`` 再次请求即重建。
+    ``session`` 为 ``live`` 表示最后一列是盘中实时值。
+
+    行集合 = 窗口内「每日 mode 方向前 per_day 名」板块的并集（按上榜次数截断至
+    ``_HOTSPOT_MAX_ROWS`` 行）。``rank`` 为当日全类型排名：mode=top 时 1=涨幅最大，
+    mode=bottom 时 1=跌幅最大。``sum_pct`` 为窗口内逐日复利累计。
+    """
+    mode_norm = mode.strip().lower()
+    if mode_norm not in ("top", "bottom"):
+        raise ValueError(f"mode 仅支持 top/bottom，got {mode}")
+
+    bt = board_type_from_str(board_type)
+    key = bt.name
+
+    cached = _hotspot_history_cache.get(key)
+    if cached is None or cached[0] != _today_str():
+        state = _hotspot_builds.get(key)
+        running = state is not None and state.get("task") is not None and not state["task"].done()
+        # 需要新建：无状态 / 上次成功但缓存已过期 / 显式重试。
+        # error 状态保持稳定不自动重建，保证失败原因能被前端读到。
+        if not running and (retry or state is None or state.get("status") == "ready"):
+            state = {"status": "building", "progress": 0.0, "task": None, "error": ""}
+            _hotspot_builds[key] = state
+            state["task"] = asyncio.create_task(_hotspot_build(key, bt, client))
+            running = True
+        if running:
+            return DictResponse.from_dict(
+                {"status": "building", "progress": state.get("progress", 0.0)}
+            )
+        return DictResponse.from_dict(
+            {"status": "error", "error": state.get("error") or "热点矩阵构建失败", "progress": 1.0}
+        )
+
+    history = cached[1]
+    axis_all: list[str] = history["axis"]
+    pct_map: dict[str, dict[str, float]] = history["pct"]
+    names: dict[str, str] = dict(history["names"])
+
+    # 窗口切片：剔除今日（今日列一律来自实时报价，避免日K盘中未完成 bar 混入）
+    today = _today_str()
+    window = [d for d in axis_all if d != today][-days:]
+
+    # 今日列：实时报价（1–2 页，廉价）。全市场无一移动（盘前/休市）则不追加
+    live_df = await client.get_board_list(board_type=bt, count=5000)
+    live_change: dict[str, float] = {}
+    any_moved = False
+    if live_df is not None and not live_df.empty:
+        for rec in live_df.to_dict(orient="records"):
+            code = str(rec["code"])
+            if rec.get("name"):
+                names[code] = str(rec["name"])
+            price = float(rec.get("price") or 0.0)
+            pre = float(rec.get("pre_close") or 0.0)
+            if price > 0 and pre > 0:
+                chg = round((price / pre - 1.0) * 100.0, 3)
+                live_change[code] = chg
+                if abs(chg) > 1e-9:
+                    any_moved = True
+    col_pct: list[dict[str, float]] = [
+        {code: m[d] for code, m in pct_map.items() if d in m} for d in window
+    ]
+    # 周末/节假日隔夜：TDX 的 pre_close 尚未滚动，实时涨跌会与历史末列几乎完全
+    # 重合（都是上一交易日的涨幅）——重合度过高则不追加，避免出现重复的假今日列。
+    # 交易日盘中实时值与昨日收盘涨幅必然大面积偏离，不受此判定影响。
+    if any_moved and window:
+        last_col = col_pct[-1]
+        same = diff = 0
+        for code, chg in live_change.items():
+            prev = last_col.get(code)
+            if prev is None:
+                continue
+            if abs(chg - prev) <= 0.05:
+                same += 1
+            else:
+                diff += 1
+        append_live = (same + diff) > 0 and diff / (same + diff) >= 0.5
+    else:
+        append_live = False
+    if append_live:
+        col_pct.append(live_change)
+
+    dates = window + ([today] if append_live else [])
+
+    # 每列全类型排名（mode 方向；1 = 最强/最弱）
+    col_rank: list[dict[str, int]] = []
+    for col in col_pct:
+        ordered = sorted(col.items(), key=lambda kv: kv[1], reverse=(mode_norm == "top"))
+        col_rank.append({code: i + 1 for i, (code, _) in enumerate(ordered)})
+
+    # 行集合 = 每日前 per_day 名的并集；行内元数据在完整窗口（含今日列）上统计
+    in_top: list[set[str]] = [{c for c, r in rank.items() if r <= per_day} for rank in col_rank]
+    candidates: set[str] = set().union(*in_top) if in_top else set()
+
+    rows_out: list[dict[str, Any]] = []
+    for code in candidates:
+        pct_arr = [col.get(code) for col in col_pct]
+        rank_arr = [rank.get(code) for rank in col_rank]
+        top_flags = [r is not None and r <= per_day for r in rank_arr]
+        best: int | None = None
+        comp = 1.0
+        has_data = False
+        for p, r in zip(pct_arr, rank_arr):
+            if p is not None:
+                has_data = True
+                comp *= 1.0 + p / 100.0
+            if r is not None and (best is None or r < best):
+                best = r
+        first_date = next((dates[i] for i, f in enumerate(top_flags) if f), None)
+        rows_out.append(
+            {
+                "code": code,
+                "name": names.get(code, code),
+                "pct": pct_arr,
+                "rank": rank_arr,
+                "days_in": sum(top_flags),
+                "streak": _trailing_streak(top_flags),
+                "best_rank": best,
+                "sum_pct": round((comp - 1.0) * 100.0, 2) if has_data else None,
+                "first_date": first_date,
+            }
+        )
+    rows_out.sort(
+        key=lambda r: (
+            -r["days_in"],
+            -(r["sum_pct"] or 0.0),
+            r["best_rank"] if r["best_rank"] else 9999,
+        )
+    )
+    rows_out = rows_out[:_HOTSPOT_MAX_ROWS]
+
+    from easy_tdx.realtime.session import is_trading_time
+
+    payload: dict[str, Any] = {
+        "status": "ready",
+        "board_type": bt.name,
+        "days": days,
+        "mode": mode_norm,
+        "per_day": per_day,
+        "generated_at": int(time.time()),
+        "session": "live" if (append_live and is_trading_time()) else "closed",
+        "dates": dates,
+        "today_index": (len(dates) - 1) if append_live else None,
+        "total_boards": len(pct_map),
+        "rows": rows_out,
+    }
+    return DictResponse.from_dict(payload)
+
+
+def _trailing_streak(flags: list[bool]) -> int:
+    """从末尾向前数连续 True（末位为 False 时对齐"当前连榜"语义返 0）。"""
+    if not flags or not flags[-1]:
+        return 0
+    n = 0
+    for f in reversed(flags):
+        if not f:
+            break
+        n += 1
+    return n

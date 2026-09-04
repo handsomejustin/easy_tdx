@@ -612,6 +612,81 @@ export interface BoardFlipEvent {
   change_pct: number
 }
 
+// ── 市场热点滚动（GET /api/v1/board-mac/hotspot，交易日×板块涨跌矩阵） ──────
+
+/** 热点滚动行：窗口内至少一次进入「每日前 per_day」的板块。 */
+export interface HotspotRow {
+  code: string
+  name: string
+  /** 对齐 dates 的每日涨跌幅（%），null = 当日无数据 */
+  pct: Array<number | null>
+  /** 对齐 dates 的当日全类型排名（top: 1=涨幅最大；bottom: 1=跌幅最大） */
+  rank: Array<number | null>
+  /** 上榜天数（进入每日前 per_day） */
+  days_in: number
+  /** 截至最后一列的连续上榜天数 */
+  streak: number
+  best_rank: number | null
+  /** 窗口内逐日复利累计涨跌（%） */
+  sum_pct: number | null
+  /** 窗口内首次上榜日期（YYYY-MM-DD） */
+  first_date: string | null
+}
+
+export interface HotspotResp {
+  /** ready=有数据；building=后台构建中（progress 0~1）；error=构建失败（error 字段） */
+  status: 'ready' | 'building' | 'error'
+  progress?: number
+  error?: string
+  board_type?: string
+  days?: number
+  mode?: 'top' | 'bottom'
+  per_day?: number
+  /** 数据生成时刻（epoch 秒） */
+  generated_at?: number
+  /** live = 最后一列为盘中实时值 */
+  session?: 'live' | 'closed'
+  /** 交易日轴（升序），最后一格可能为今日实时列 */
+  dates?: string[]
+  today_index?: number | null
+  total_boards?: number
+  rows?: HotspotRow[]
+}
+
+// ── 涨停生态（GET /api/v1/limitup-ecology，本地 vipdoc 离线回算） ────────────
+
+/** 单只涨停/跌停/炸板股票（vipdoc 回算口径；name 由前端批量补齐）。 */
+export interface LimitUpEntry {
+  code: string
+  market: string // SH / SZ
+  pct: number // 最新交易日涨跌幅（%）
+  /** 连续涨停/跌停天数（截至数据日） */
+  streak: number
+  /** 主板按 5% 判定（疑似 ST） */
+  st: boolean
+  /** 炸板：曾触及涨停未封住 */
+  blown: boolean
+}
+
+export interface LimitUpEcologyResp {
+  /** vipdoc 数据日期 YYYYMMDD —— 新鲜度取决于本机通达信客户端 */
+  data_date: number
+  total: number
+  summary: {
+    limit_up_count: number
+    limit_down_count: number
+    blown_count: number
+    blown_rate: number | null
+    max_streak: number
+    first_board: number
+    second_board: number
+    plus3: number
+  }
+  limit_up: LimitUpEntry[]
+  limit_down: LimitUpEntry[]
+  blown: LimitUpEntry[]
+}
+
 // ── Walk-Forward 样本外验证（v1.27 POST /backtest/wf/run/async）──────────────
 
 export interface WalkForwardWindow {
@@ -821,13 +896,6 @@ export interface LlmHistoryItem {
 export interface LlmHistoryResponse {
   items: LlmHistoryItem[]
   count: number
-}
-
-/** 核心龙头池条目（GET /api/v1/market/core-leaders）。 */
-export interface CoreLeaderRow {
-  code: string
-  name: string
-  market: string
 }
 
 // ── 中金所成交持仓排名（GET /api/v1/ccpm/*） ─────────────────────────────────
