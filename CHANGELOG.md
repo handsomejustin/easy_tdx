@@ -2,6 +2,27 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.32.1] — 2026-09-04
+
+**行业/概念总览上线：WebUI 新增板块全景双栏目**——此前板块信息只有首页两张「热/冷」小榜单（各 ~10 条、仅当日涨跌幅），想看全部行业/概念的强弱全景、多周期走势与板块间轮动，只能逐个点开。本版在左侧导航新增「行业总览」（/industries，行业一级/二级可切）与「概念总览」（/concepts）两个栏目：全部板块一屏尽览（一级行业 128 / 概念 269 / 二级行业 345），热力图+表格双视图、板块广度统计与涨跌幅分布直方图、涨幅/跌幅/涨速异动三榜、翻红/翻绿轮动时间线；点击板块复用首页弹窗（左分时/日K、右成分股涨跌榜，可再叠个股弹窗）。
+
+### 新增
+
+- **`GET /api/v1/board-mac/overview` 板块总览聚合端点**（[board_mac.py](src/easy_tdx/web/routers/board_mac.py)）：一次返回全部板块的当日涨跌幅（严格 `price/pre_close-1` 口径，规避 Issue #53 CHANGE_PCT 值槽恒 0）+ 领涨股（代码/名称/涨幅）+ 涨速/3日/5日/20日/YTD 多周期指标（按各排序键的 `sort_value` 归并）。服务端并发拉取后按板块代码归并、未请求的指标补 null（行结构稳定），结果缓存 15s（TTL）——前端 30s 轮询每次只打 1 个请求（否则需 6~12 次 `/board-mac/list`），休市时段前端自动停刷。
+- **行业总览 / 概念总览页**（[BoardOverviewView.vue](web-ui/src/views/BoardOverviewView.vue)，双路由共用组件、路由 props 区分 HY/GN）：
+  - **顶部统计条**（[BoardStatStrip.vue](web-ui/src/components/BoardStatStrip.vue)）：板块广度（上涨/下跌/平盘家数）、板块涨幅中位数、全市场涨停/跌停家数（`/market/stat`）、板块涨跌幅分布直方图（±1% 一档、±3% 截断两端）。
+  - **热力图 / 表格双视图**（[BoardTiles.vue](web-ui/src/components/BoardTiles.vue)）：热力图等宽色块、红涨绿跌 5 档色阶、悬停看详情（价格/涨速/领涨股）、单击开板块弹窗；表格含最新价/涨跌幅/涨速/3日/5日/20日/YTD/领涨股列，表头点击排序（null 沉底）；搜索框按名称/代码实时过滤（概念页 269 块全量渲染无压力）。
+  - **右栏榜单与轮动**（[BoardRankRail.vue](web-ui/src/components/BoardRankRail.vue)）：涨幅榜/跌幅榜/异动·涨速 Top10（按 |涨速| 降序，急拉急杀都算，|涨速|≥0.5% 橙色闪烁）+ **翻红/翻绿轮动时间线**（前端对相邻两次快照按涨跌幅符号 diff，负转正记翻红、正转负记翻绿，保留最近 30 条）。
+  - 行业页一级（HY）/二级（HY2）切换；**板块弹窗复用 BoardDialog**：左分时（`/minute`）/日K（`/bars`，MA/BOLL/MACD/KDJ/RSI），右成分股涨跌榜（可切升降序、点成分股叠开 StockDialog），头部 SSE 实时报价 + 加/移自选。
+  - 刷新与偏好：30s 轮询 + 交易时段门控（09:15~11:30 / 13:00~15:05，可关成全天候模式）+ 页面不可见暂停 + 手动刷新；视图模式/门控开关持久化 localStorage，与首页同款交互。
+- 设计文档 [board-overview-design.md](docs/board-overview-design.md)：现状盘点、功能/UI 设计、接口 schema、分期计划（P2 资金榜/轮动标签/加自选等后续迭代）。
+
+### 测试
+
+- 后端新增 6 例（[test_board_mac_overview.py](tests/unit/test_board_mac_overview.py)）：多排序键归并与涨跌幅口径（`price/pre_close-1`）、未请求指标置 null、TTL 缓存命中（可注入时钟）、缓存键按 board_type 隔离、非法指标 400、空列表与零 pre_close 降级（涨跌幅为 null 而非除零）。
+- 真机验证：一级行业 128 / 概念 269 / 二级行业 345 板块全量返回且指标齐全，缓存命中后响应 ~0.3s；Playwright 截图逐页验收热力图、表格、统计条、右栏榜单、板块弹窗与二级切换。
+- 全量回归：pytest 1635 通过、ruff/ruff format/mypy 全绿、前端 `node --test` 通过、Playwright E2E 9/9。
+
 ## [1.31.3] — 2026-09-04
 
 **紧急修复盘中分时数据错乱（v1.31.2 回归），并包含 CLI 分析能力对齐**——v1.31.2 引入的"盘中走实时分时命令"路径存在解析错位：实时分时命令（0x0c1b）响应每条记录实际 2 个字段，解析器按 3 字段读取，从第二条起全部错位——个股与指数**盘中**分时出现天文价格（如科创50 出现 67008）与负成交量（如 -2296）。实测确认历史分时接口盘中查"当日"即返回已成交分钟（午休 12:33 时返回上午 120 条，尾价与实时行情现价吻合），实时命令本无必要。本版同时包含此前合入 main 的 CLI 分析能力对齐与寻优指标缓存修复。
