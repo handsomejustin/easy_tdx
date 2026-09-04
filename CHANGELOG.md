@@ -2,6 +2,23 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [未发布]
+
+**CLI 对齐 WebUI/Python SDK 的分析能力**——补齐 CLI 此前缺失的三块：一键参数寻优、内置策略列表、组合级 WF/一条龙。引擎层全部复用现成实现（`ParamGridOptimizer`/`STRATEGY_PRESETS`/`evaluate_portfolio`/`PortfolioWalkForwardEngine`），CLI、Web API（`/backtest/optimize`、`/backtest/evaluate` 等）与 Python SDK 三条通路能力对等。
+
+### 新增
+
+- **`easy-tdx optimize` 参数网格寻优命令**（[backtest/cli.py](src/easy_tdx/backtest/cli.py)）：单策略网格搜索（`--strategy ma_cross` 用该策略预设网格，或 `--param fast=5,10,15 --param slow=20,60` 自定义），以及 `--all` 一键寻优所有内置策略——逐策略按 `STRATEGY_PRESETS` 预设网格寻优后按总收益率全局排名（对齐 Web UI /optimize 页与 `/backtest/optimize-all/run/async`）。支持 `--workers N` 进程级并行、`--table` 排名表 / JSON 全量输出（含热力图矩阵）。`--strategy` 与 `--param` 在联网取数前前置校验（未知策略/未知参数/网格超限快速失败）。
+- **`easy_tdx.backtest.optimizer.optimize_all_strategies` Python API**（[optimizer.py](src/easy_tdx/backtest/optimizer.py)）：一键全策略寻优的规范实现（`_optimize_strategy_best` 模块级 worker 可 pickle，主进程解析 label、跨策略 ProcessPool 并行），CLI 与后续 Web 端可共用；`presets` 参数支持注入子集网格（测试用）。
+- **`easy-tdx strategies` 内置策略列表命令**：列出注册表全部策略（名称/中文标签/参数默认值/预设寻优网格点数/说明），`--output json` 输出与 Web API `GET /backtest/strategies` 同构的完整 schema。
+- **`easy-tdx portfolio --evaluate / --wf`**：组合级一条龙评估（组合回测 + 组合 WF + 跨标的适配性体检 + 综合评分 + 组合评级 + 等权买入持有基准对比，调 `evaluate_portfolio`）与组合级 Walk-Forward（`PortfolioWalkForwardEngine`），输出与 Web UI /portfolio 页同构；同时补上 `--auto-fees` 品种感知费率旗标。
+
+### 测试
+
+- 新增 12 例：`optimize` 命令互斥/未知策略/未知参数/畸形参数校验（联网前快速失败）、`strategies` 表格与 JSON 输出、`portfolio --help` 新旗标、`optimize_all_strategies` 排名序/label/skipped/JSON 原生类型。
+- 实测验证：`strategies` 列出 54 策略；`optimize --strategy`（3×3 网格）与 `optimize --all --workers 4`（54 策略 316 网格点）真实行情跑通；`portfolio --evaluate`（完整报告含评分/评级/WF/基准）与 `--wf` 真实跑通。
+- 全量回归：pytest 1611 通过（`test_optimizer_cache_reuse_across_grid_points` 为 main 既有失败，与本次无关）、ruff/ruff format/mypy 全绿。
+
 ## [1.31.2] — 2026-09-04
 
 **分时接口全场景修复：盘前/休市不再为空，指数从无到有**——`/api/v1/minute`（今日分时）此前固定用"今天的日期"走历史分时接口，而历史分时的当日数据要收盘后才生成：盘前、周末、节假日调用必然拿到 `{"data":[],"count":0}`，WebUI 分时图一片空白；指数（上证指数 000001、创业板指 399006、880 板块指数等）则**任何时候都为空**——旧实现从未适配指数。本版以「最新一根日 K 的日期」锚定最近交易日，个股与指数全场景有数。

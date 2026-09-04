@@ -22,6 +22,9 @@
   - [交易记录](#交易记录)
   - [序列化输出](#序列化输出)
 - [CLI 命令行](#cli-命令行)
+  - [内置策略列表（strategies）](#内置策略列表strategies)
+  - [参数网格寻优（optimize）](#参数网格寻优optimize)
+  - [组合级分析（portfolio）](#组合级分析portfolio)
 - [进阶用法](#进阶用法)
   - [预计算指标列](#预计算指标列)
   - [缠论结果注入](#缠论结果注入)
@@ -437,6 +440,65 @@ easy-tdx backtest SZ 000001 --strategy-file my_strategy.py --table
 | `--indicators` | — | 预计算指标（逗号分隔） |
 | `--table` | False | 表格输出 |
 | `--output` | json | 输出格式：json / table / csv |
+| `--wf` | False | 附加 Walk-Forward 样本外验证 |
+| `--wf-windows` | 7 | Walk-Forward 窗口数 |
+| `--evaluate` | False | 一条龙评估（回测+WF+适配性+评分+评级+基准对比） |
+| `--auto-fees` | False | 按标的品种自动解析费率 |
+
+### 内置策略列表（strategies）
+
+```bash
+# 表格列出全部内置策略（名称/参数/预设寻优网格）
+easy-tdx strategies
+
+# JSON 输出（含完整参数 schema，与 Web API GET /backtest/strategies 同构）
+easy-tdx strategies --output json
+```
+
+### 参数网格寻优（optimize）
+
+对注册表内置策略的 1-2 个参数做网格搜索，按总收益率排名：
+
+```bash
+# 单策略：用该策略的预设寻优网格（见 strategies 命令）
+easy-tdx optimize SZ 000001 --strategy ma_cross
+
+# 单策略：自定义网格（--param 参数名=值1,值2，可多次指定）
+easy-tdx optimize SZ 000001 --strategy ma_cross --param fast=5,10,15 --param slow=20,60
+
+# 一键寻优所有内置策略：逐策略按预设网格寻优后全局排名
+easy-tdx optimize SZ 000001 --all
+
+# 并行加速（2+ 进程级并行；1 = 串行 + 指标缓存复用）
+easy-tdx optimize SZ 000001 --all --workers 4
+```
+
+**optimize 参数**：
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--strategy` | — | 注册表策略名（与 `--all` 二选一） |
+| `--all` | False | 一键寻优所有内置策略（STRATEGY_PRESETS 预设网格） |
+| `--param` | 预设网格 | 自定义参数网格，如 `fast=5,10,15`（最多 2 个参数，笛卡尔积 ≤ 200） |
+| `--cash` | 1000000 | 初始资金 |
+| `--commission` | 0.0003 | 佣金率 |
+| `--slippage` | 0.0 | 滑点 |
+| `--workers` | 1 | 并行进程数 |
+| `--top` | 15 | 表格输出显示前 N 行 |
+
+Python API 同名能力：`easy_tdx.backtest.optimizer.ParamGridOptimizer`（单策略）与
+`easy_tdx.backtest.optimizer.optimize_all_strategies`（一键全策略）。
+
+### 组合级分析（portfolio）
+
+```bash
+# 组合级 Walk-Forward 样本外验证（全部标的日期并集切窗，每窗独立开仓）
+easy-tdx portfolio --stocks SZ:000001,SH:600519     --strategy-file strategies/ma_cross.py --wf --wf-windows 7
+
+# 组合级一条龙评估：组合回测 + 组合WF + 跨标的适配性 + 综合评分
+# + 组合评级 + 等权买入持有基准对比（与 Web UI /portfolio 页同构）
+easy-tdx portfolio --stocks SZ:000001,SH:600519     --strategy-file strategies/ma_cross.py --evaluate
+```
 
 ---
 

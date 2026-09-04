@@ -393,6 +393,20 @@ easy-tdx backtest SZ 300308 --strategy-file strategies/expma_cross.py --evaluate
 > 不构成投资建议。实际交易需考虑滑点、流动性、涨跌停无法成交等因素。
 > 请在充分理解策略逻辑后谨慎使用。
 
+**参数网格寻优（optimize）与内置策略列表（strategies）：**
+
+```bash
+# 列出全部内置策略（名称/参数默认值/预设寻优网格）
+easy-tdx strategies
+
+# 单策略网格寻优（预设网格或 --param 自定义，--workers 4 进程并行）
+easy-tdx optimize SZ 000001 --strategy ma_cross
+easy-tdx optimize SZ 000001 --strategy ma_cross --param fast=5,10,15 --param slow=20,60
+
+# 一键寻优所有内置策略：逐策略按预设网格寻优后全局排名（对应 Web UI /optimize 页）
+easy-tdx optimize SZ 000001 --all --workers 4 --table
+```
+
 **全策略批量对比（CLI）：**
 
 `easy-tdx run-all` 一行命令跑完 `strategies/` 下所有策略并排名：
@@ -478,6 +492,12 @@ easy-tdx portfolio --stocks SZ:000001,SH:600519,SH:600036 \
 # 搭配缠论桥接
 easy-tdx portfolio --stocks SZ:000001,SH:600519 \
   --strategy-file strategies/chanlun_strategy.py --chanlun-level DAILY --table
+
+# 组合级 Walk-Forward / 一条龙评估（与 Web UI /portfolio 页同构）
+easy-tdx portfolio --stocks SZ:000001,SH:600519 \
+  --strategy-file strategies/ma_cross.py --wf --wf-windows 7
+easy-tdx portfolio --stocks SZ:000001,SH:600519 \
+  --strategy-file strategies/ma_cross.py --evaluate
 ```
 
 输出示例：

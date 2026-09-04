@@ -100,6 +100,10 @@ def backtest(
 
       easy-tdx backtest SZ 000001 --strategy-file chanlun_strategy.py --chanlun-level DAILY
 
+      easy-tdx backtest SZ 300308 --strategy-file ma_cross.py --wf --wf-windows 7
+
+      easy-tdx backtest SZ 300308 --strategy-file ma_cross.py --evaluate
+
       easy-tdx backtest SZ 000001 \
         --combo-strategies strategies/macd_cross.py,strategies/rsi_reversal.py \
         --combo-mode MAJORITY --table
@@ -394,6 +398,20 @@ def _print_table(result: Any) -> None:
     default=None,
     help="自动计算缠论分析并注入策略（如 DAILY/30MIN）",
 )
+@click.option(
+    "--auto-fees",
+    "auto_fees",
+    is_flag=True,
+    help="按标的品种自动解析费率（ETF/可转债免印花税等；显式 --commission 优先）",
+)
+@click.option("--wf", "walk_forward", is_flag=True, help="附加组合级 Walk-Forward 样本外验证")
+@click.option("--wf-windows", "wf_windows", default=7, type=int, help="Walk-Forward 窗口数")
+@click.option(
+    "--evaluate",
+    "full_evaluate",
+    is_flag=True,
+    help="组合级一条龙评估：组合回测+组合WF+适配性+综合评分+组合评级+等权买入持有基准对比（覆盖常规输出）",
+)
 @click.option("--table", "use_table", is_flag=True, help="表格输出")
 @click.option("--output", "output_fmt", type=click.Choice(["json", "table", "csv"]), default="json")
 def portfolio(
@@ -407,6 +425,10 @@ def portfolio(
     count: int,
     allocation: str,
     chanlun_level: str | None,
+    auto_fees: bool,
+    walk_forward: bool,
+    wf_windows: int,
+    full_evaluate: bool,
     use_table: bool,
     output_fmt: str,
 ) -> None:
@@ -423,6 +445,12 @@ def portfolio(
 
       easy-tdx portfolio --stocks SZ:000001,SH:600519 \\
         --strategy-file chanlun_strat.py --chanlun-level DAILY
+
+      easy-tdx portfolio --stocks SZ:000001,SH:600519 \\
+        --strategy-file ma_cross.py --wf --wf-windows 7
+
+      easy-tdx portfolio --stocks SZ:000001,SH:600519 \\
+        --strategy-file ma_cross.py --evaluate
     """
     import json
 
@@ -465,7 +493,41 @@ def portfolio(
             )
             stock_data_list.append(StockData(code=code, market=mkt_str, df=df))
 
-    # 4. 创建引擎并运行
+    # 4. 组合级一条龙评估：覆盖常规输出（含组合回测本身，无需重复跑）
+    if full_evaluate:
+        from .benchmark import evaluate_portfolio
+
+        report = evaluate_portfolio(
+            strategy=strategy_cls,
+            stocks=stock_data_list,
+            total_cash=cash,
+            commission=commission,
+            execution=execution,
+            chanlun_level=chanlun_level,
+            auto_fees=auto_fees,
+            n_windows=wf_windows,
+        )
+        click.echo(json.dumps(report, ensure_ascii=False, default=str))
+        return
+
+    # 5. 组合级 Walk-Forward 样本外验证（--wf）
+    if walk_forward:
+        from .walkforward import PortfolioWalkForwardEngine
+
+        wf = PortfolioWalkForwardEngine(
+            strategy=strategy_cls,
+            stocks=stock_data_list,
+            n_windows=wf_windows,
+            total_cash=cash,
+            commission=commission,
+            execution=execution,
+            chanlun_level=chanlun_level,
+            auto_fees=auto_fees,
+        )
+        click.echo(json.dumps({"walkforward": wf.run().to_dict()}, ensure_ascii=False, default=str))
+        return
+
+    # 6. 常规组合回测
     engine = PortfolioBacktestEngine(
         strategy=strategy_cls,
         stocks=stock_data_list,
@@ -474,10 +536,11 @@ def portfolio(
         commission=commission,
         execution=execution,
         chanlun_level=chanlun_level,
+        auto_fees=auto_fees,
     )
     result = engine.run()
 
-    # 5. 输出结果
+    # 7. 输出结果
     fmt = "table" if use_table else output_fmt
     if fmt == "table":
         _print_portfolio_table(result)
@@ -508,3 +571,291 @@ def _print_portfolio_table(result: Any) -> None:
             f"交易={sp.get('total_trades', 0)}"
         )
     click.echo()
+
+
+# ── strategies 内置策略列表命令 ──────────────────────────────────────────────
+
+
+@click.command("strategies")
+@click.option("--output", "output_fmt", type=click.Choice(["json", "table"]), default="table")
+def strategies(output_fmt: str) -> None:
+    """列出内置策略注册表：名称、参数定义与预设寻优网格。
+
+    策略名可直接用于 optimize --strategy / Web API /backtest/run 的 strategy 字段。
+
+    示例：
+
+      easy-tdx strategies
+
+      easy-tdx strategies --output json
+    """
+    import json
+
+    from .strategies import get_registry
+
+    entries = get_registry().all()
+
+    if output_fmt == "json":
+        click.echo(json.dumps([e.to_schema() for e in entries], ensure_ascii=False, indent=2))
+        return
+
+    click.echo(f"=== 内置策略（{len(entries)} 个）===\n")
+    for entry in entries:
+        schema = entry.to_schema()
+        params_desc = ", ".join(f"{p['name']}={p['default']}" for p in schema["params"])
+        grid = schema.get("preset_grid") or {}
+        points = 1
+        for vals in grid.values():
+            points *= len(vals)
+        grid_desc = " × ".join(f"{k}:{len(v)}" for k, v in grid.items()) if grid else "无"
+        click.echo(f"  {entry.name}  —  {entry.label}")
+        click.echo(f"    参数: {params_desc or '无'}")
+        click.echo(f"    预设网格: {grid_desc}（{points} 点）")
+        if entry.description:
+            click.echo(f"    说明: {entry.description}")
+        click.echo()
+
+
+# ── optimize 参数网格寻优命令 ────────────────────────────────────────────────
+
+
+def _coerce_param_value(raw: str) -> Any:
+    """把字符串参数值尽量转为 int/float，失败保留字符串。"""
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        return float(raw)
+    except ValueError:
+        return raw
+
+
+def _parse_param_grid(pairs: tuple[str, ...]) -> dict[str, list[Any]]:
+    """解析 --param fast=5,10,15 形式的自定义网格。"""
+    grid: dict[str, list[Any]] = {}
+    for item in pairs:
+        name, sep, raw = item.partition("=")
+        values = [_coerce_param_value(v.strip()) for v in raw.split(",") if v.strip()]
+        if not sep or not name.strip() or not values:
+            click.echo(f"错误: --param 格式应为 参数名=值1,值2，收到: {item}", err=True)
+            raise SystemExit(1)
+        grid[name.strip()] = values
+    return grid
+
+
+@click.command()
+@click.argument("market")
+@click.argument("code")
+@click.option(
+    "--strategy",
+    "strategy_name",
+    default=None,
+    help="注册表策略名（见 strategies 命令；网格取 --param 或该策略预设）",
+)
+@click.option(
+    "--all",
+    "optimize_all",
+    is_flag=True,
+    help="一键寻优所有内置策略：逐策略按预设网格寻优，输出全局排名",
+)
+@click.option(
+    "--param",
+    "param_pairs",
+    multiple=True,
+    help="自定义参数网格，如 --param fast=5,10,15 --param slow=20,60（覆盖预设）",
+)
+@click.option("--cash", default=1_000_000.0, type=float, help="初始资金")
+@click.option("--commission", default=0.0003, type=float, help="佣金率")
+@click.option("--slippage", default=0.0, type=float, help="滑点")
+@click.option(
+    "--execution",
+    default="next_open",
+    type=click.Choice(["next_open", "next_close"]),
+    help="成交价规则",
+)
+@click.option(
+    "--workers",
+    default=1,
+    type=int,
+    help="并行进程数：1=串行+指标缓存（默认）；2+=进程级并行",
+)
+@click.option("--period", default="DAILY", help="K线周期")
+@click.option("--adjust", default="NONE", help="复权: NONE/QFQ/HFQ")
+@click.option("--count", default=500, type=int, help="K线数量")
+@click.option("--top", default=15, type=int, help="表格输出显示前 N 行")
+@click.option("--table", "use_table", is_flag=True, help="表格输出")
+@click.option("--output", "output_fmt", type=click.Choice(["json", "table"]), default="json")
+def optimize(
+    market: str,
+    code: str,
+    strategy_name: str | None,
+    optimize_all: bool,
+    param_pairs: tuple[str, ...],
+    cash: float,
+    commission: float,
+    slippage: float,
+    execution: str,
+    workers: int,
+    period: str,
+    adjust: str,
+    count: int,
+    top: int,
+    use_table: bool,
+    output_fmt: str,
+) -> None:
+    """参数网格寻优：单策略网格搜索，或 --all 一键寻优所有内置策略。
+
+    示例：
+
+      easy-tdx optimize SZ 000001 --strategy ma_cross
+
+      easy-tdx optimize SZ 000001 --strategy ma_cross \\
+        --param fast=5,10,15 --param slow=20,60
+
+      easy-tdx optimize SZ 000001 --all --workers 4 --table
+    """
+    from ..cli.conn import get_mac_client
+    from ..cli.parsers import parse_adjust, parse_market, parse_period
+    from .strategies import get_registry
+    from .strategies.presets import get_preset
+
+    registry = get_registry()
+
+    # 1. 校验模式与策略（联网取数之前，快速失败）
+    if optimize_all == (strategy_name is not None):
+        click.echo("错误: --all 与 --strategy 二选一", err=True)
+        raise SystemExit(1)
+
+    custom_grid = _parse_param_grid(param_pairs) if param_pairs else None
+    if not optimize_all:
+        assert strategy_name is not None
+        try:
+            entry = registry.get(strategy_name)
+        except KeyError as exc:
+            click.echo(f"错误: {exc}", err=True)
+            raise SystemExit(1) from None
+        if custom_grid is not None:
+            declared = {p.name for p in entry.params}
+            unknown = set(custom_grid) - declared
+            if unknown:
+                click.echo(
+                    f"错误: 未知参数 {sorted(unknown)}，"
+                    f"'{strategy_name}' 可用参数: {sorted(declared)}",
+                    err=True,
+                )
+                raise SystemExit(1)
+        else:
+            custom_grid = get_preset(strategy_name)
+            if not custom_grid:
+                first_param = entry.params[0].name if entry.params else "参数名"
+                click.echo(
+                    f"错误: 策略 '{strategy_name}' 未登记预设网格，请用 --param 指定（如 "
+                    f"--param {first_param}=5,10,20）",
+                    err=True,
+                )
+                raise SystemExit(1)
+
+    # 2. 获取数据
+    mkt = parse_market(market)
+    with get_mac_client() as client:
+        df = client.get_stock_kline(
+            mkt,
+            code,
+            period=parse_period(period),
+            start=0,
+            count=count,
+            adjust=parse_adjust(adjust),
+        )
+
+    # 3. 寻优
+    fmt = "table" if use_table else output_fmt
+    import json
+
+    if optimize_all:
+        from .optimizer import optimize_all_strategies
+
+        report = optimize_all_strategies(
+            df,
+            cash=cash,
+            commission=commission,
+            slippage=slippage,
+            execution=execution,
+            workers=workers,
+        )
+        if fmt == "table":
+            _print_optimize_all_table(report, top)
+        else:
+            click.echo(json.dumps(report, ensure_ascii=False, default=str))
+        return
+
+    from .optimizer import ParamGridOptimizer
+
+    assert strategy_name is not None and custom_grid is not None
+    optimizer = ParamGridOptimizer(
+        strategy_name=strategy_name,
+        param_grid=custom_grid,
+        df=df,
+        cash=cash,
+        commission=commission,
+        slippage=slippage,
+        execution=execution,
+        workers=workers,
+    )
+    result = optimizer.run()
+    if fmt == "table":
+        _print_optimize_table(result.to_dict(), top)
+    else:
+        click.echo(json.dumps(result.to_dict(), ensure_ascii=False, default=str))
+
+
+def _fmt_grid_point(params: dict[str, Any]) -> str:
+    """把参数字典格式化为 fast=10, slow=20 形式。"""
+    return ", ".join(f"{k}={v}" for k, v in params.items())
+
+
+def _print_optimize_table(report: dict[str, Any], top: int) -> None:
+    """以表格形式输出单策略寻优结果。"""
+    results = report.get("results") or []
+    best = report.get("best")
+    click.echo(f"=== 参数寻优: {report.get('strategy')}（{len(results)} 个有效网格点）===\n")
+    click.echo(
+        f"{'排名':<4} {'参数':<28} {'总收益率':>8} {'夏普':>6} {'最大回撤':>8} "
+        f"{'交易':>4} {'胜率':>6}"
+    )
+    for i, r in enumerate(results[:top], 1):
+        click.echo(
+            f"{i:<4} {_fmt_grid_point(r['params']):<28} {r['total_return']:>8.2%} "
+            f"{r['sharpe']:>6.2f} {r['max_drawdown']:>8.2%} "
+            f"{r['total_trades']:>4} {r['win_rate']:>6.1%}"
+        )
+    if best:
+        click.echo(f"\n最佳参数: {_fmt_grid_point(best['params'])}")
+    if len(results) > top:
+        click.echo(f"（仅显示前 {top} 行，完整结果用 --output json）")
+
+
+def _print_optimize_all_table(report: dict[str, Any], top: int) -> None:
+    """以表格形式输出 --all 全策略寻优排名。"""
+    ranking = report.get("ranking") or []
+    click.echo(
+        f"=== 一键寻优所有策略（{len(ranking)} 个策略，"
+        f"共 {report.get('total_grid_points', 0)} 网格点）===\n"
+    )
+    click.echo(
+        f"{'排名':<4} {'策略':<20} {'最佳参数':<28} {'总收益率':>8} {'夏普':>6} "
+        f"{'最大回撤':>8} {'交易':>4} {'胜率':>6}"
+    )
+    for i, r in enumerate(ranking[:top], 1):
+        label = f"{r['strategy']} {r.get('strategy_label', '')}"
+        click.echo(
+            f"{i:<4} {label:<20} {_fmt_grid_point(r['params']):<28} "
+            f"{r['total_return']:>8.2%} {r['sharpe']:>6.2f} "
+            f"{r['max_drawdown']:>8.2%} {r['total_trades']:>4} {r['win_rate']:>6.1%}"
+        )
+    if report.get("skipped"):
+        click.echo(f"\n跳过（未注册）: {', '.join(report['skipped'])}")
+    if ranking:
+        click.echo(f"\n全局最优: {ranking[0]['strategy']} {_fmt_grid_point(ranking[0]['params'])}")
+    if len(ranking) > top:
+        click.echo(f"（仅显示前 {top} 行，完整结果用 --output json）")

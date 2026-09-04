@@ -326,6 +326,128 @@ class ParamGridOptimizer:
         return {"x_name": x_name, "y_name": y_name, "x": x_vals, "y": y_vals, "data": data}
 
 
+def _optimize_strategy_best(job: tuple[Any, ...]) -> dict[str, Any] | None:
+    """单策略网格寻优，返回该策略最优点摘要（模块级，可 pickle）。
+
+    job = (strategy_name, param_grid, df, cash, commission, min_commission,
+           stamp_tax, slippage, execution)
+
+    策略类在 worker 内经 ``registry.get(name).build()`` 构造，从不跨进程传递；
+    返回纯 dict（JSON 原生类型），可安全 pickle 回主进程。网格超限或无有效
+    结果返回 None（调用方跳过）。
+    """
+    (name, grid, df, cash, commission, min_commission, stamp_tax, slippage, execution) = job
+    try:
+        optimizer = ParamGridOptimizer(
+            strategy_name=name,
+            param_grid=grid,
+            df=df,
+            cash=cash,
+            commission=commission,
+            min_commission=min_commission,
+            stamp_tax=stamp_tax,
+            slippage=slippage,
+            execution=execution,
+        )
+    except ValueError:
+        return None
+
+    result = optimizer.run()
+    if result.best is None:
+        return None
+    best = result.best
+    return {
+        "strategy": name,
+        "params": dict(best.params),
+        "total_return": best.total_return,
+        "sharpe": best.sharpe,
+        "max_drawdown": best.max_drawdown,
+        "total_trades": best.total_trades,
+        "win_rate": best.win_rate,
+        "profit_factor": best.profit_factor,
+        "grid_points": len(result.results),
+    }
+
+
+def optimize_all_strategies(
+    df: pd.DataFrame,
+    *,
+    cash: float = 1_000_000.0,
+    commission: float = 0.0003,
+    min_commission: float = 5.0,
+    stamp_tax: float = 0.001,
+    slippage: float = 0.0,
+    execution: str = "next_open",
+    workers: int = 1,
+    presets: dict[str, dict[str, list[Any]]] | None = None,
+) -> dict[str, Any]:
+    """一键寻优所有内置策略：逐策略用预设网格寻优，取各策略最优点全局排名。
+
+    遍历 ``STRATEGY_PRESETS``（可用 ``presets`` 覆盖，如测试传小子集），
+    每个策略跑一次 :class:`ParamGridOptimizer`，取其 best 组装排名。
+    未注册的策略名跳过并记录在 ``skipped``。
+
+    Args:
+        df: OHLCV DataFrame（所有策略、所有网格点共用）。
+        cash / commission / min_commission / stamp_tax / slippage / execution:
+            透传给每个网格点的回测引擎（所有策略同口径）。
+        workers: ≥2 时用 ProcessPoolExecutor 跨策略进程级并行（每策略内部
+            串行）；0/1 串行。
+        presets: 覆盖预设网格表（默认 ``STRATEGY_PRESETS``）。
+
+    Returns:
+        {"ranking": [最优点摘要（按 total_return 降序，含 strategy_label）],
+         "best": ranking[0] | None, "total_grid_points": int, "skipped": [..]}
+    """
+    from easy_tdx.backtest.strategies import get_registry
+    from easy_tdx.backtest.strategies.presets import STRATEGY_PRESETS
+
+    if presets is None:
+        presets = STRATEGY_PRESETS
+
+    registry = get_registry()
+    # label 必须在主进程解析，避免子进程各自 import 产生不一致
+    jobs: list[tuple[str, dict[str, list[Any]]]] = []
+    labels: dict[str, str] = {}
+    skipped: list[str] = []
+    for name, grid in presets.items():
+        if name not in registry.names():
+            skipped.append(name)
+            continue
+        labels[name] = registry.get(name).label
+        jobs.append((name, grid))
+
+    job_tuples = [
+        (name, grid, df, cash, commission, min_commission, stamp_tax, slippage, execution)
+        for name, grid in jobs
+    ]
+
+    raw: list[dict[str, Any]] = []
+    if workers >= 2:
+        import concurrent.futures
+
+        with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as pool:
+            for r in pool.map(_optimize_strategy_best, job_tuples, chunksize=1):
+                if r is not None:
+                    raw.append(r)
+    else:
+        for job in job_tuples:
+            r = _optimize_strategy_best(job)
+            if r is not None:
+                raw.append(r)
+
+    for r in raw:
+        r["strategy_label"] = labels[r["strategy"]]
+    raw.sort(key=lambda r: r["total_return"], reverse=True)
+
+    return {
+        "ranking": raw,
+        "best": raw[0] if raw else None,
+        "total_grid_points": sum(r["grid_points"] for r in raw),
+        "skipped": skipped,
+    }
+
+
 def _optimize_grid_point(job: tuple[Any, ...]) -> GridPointResult | None:
     """进程池 worker：在子进程内评估单个网格点（模块级，可 pickle）。
 

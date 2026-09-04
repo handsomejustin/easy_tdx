@@ -215,3 +215,58 @@ class TestStrategyPresets:
         for name, grid in STRATEGY_PRESETS.items():
             size = math.prod(len(v) for v in grid.values()) if grid else 1
             assert size <= 200, f"{name}: 预设网格 {size} 点超上限"
+
+
+class TestOptimizeAllStrategies:
+    """一键寻优所有内置策略."""
+
+    def test_ranking_sorted_and_labeled(self) -> None:
+        """排名按 total_return 降序，best 是 ranking[0]，附中文 label。"""
+        from easy_tdx.backtest.optimizer import optimize_all_strategies
+
+        presets = {
+            "ma_cross": {"fast": [5, 10], "slow": [20, 30]},
+            "donchian": {"n": [10, 20]},
+        }
+        report = optimize_all_strategies(_make_df(), presets=presets)
+        assert report["skipped"] == []
+        assert report["total_grid_points"] == sum(r["grid_points"] for r in report["ranking"])
+        returns = [r["total_return"] for r in report["ranking"]]
+        assert returns == sorted(returns, reverse=True)
+        assert report["best"] == report["ranking"][0]
+        for r in report["ranking"]:
+            assert r["strategy_label"]
+            assert set(r) >= {
+                "strategy",
+                "strategy_label",
+                "params",
+                "total_return",
+                "sharpe",
+                "max_drawdown",
+                "total_trades",
+                "win_rate",
+                "profit_factor",
+                "grid_points",
+            }
+
+    def test_unregistered_preset_skipped(self) -> None:
+        """预设里指向未注册策略的条目应进 skipped，不中断整体寻优。"""
+        from easy_tdx.backtest.optimizer import optimize_all_strategies
+
+        presets = {
+            "ma_cross": {"fast": [5], "slow": [20]},
+            "no_such_strat": {"n": [10]},
+        }
+        report = optimize_all_strategies(_make_df(), presets=presets)
+        assert report["skipped"] == ["no_such_strat"]
+        assert [r["strategy"] for r in report["ranking"]] == ["ma_cross"]
+
+    def test_json_native_values(self) -> None:
+        """结果应为 JSON 原生类型（可直供 CLI/REST 序列化）。"""
+        import json
+
+        from easy_tdx.backtest.optimizer import optimize_all_strategies
+
+        presets = {"ma_cross": {"fast": [5, 10], "slow": [20]}}
+        report = optimize_all_strategies(_make_df(), presets=presets)
+        json.dumps(report, allow_nan=False)  # NaN/Inf 抛 ValueError

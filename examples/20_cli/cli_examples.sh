@@ -454,3 +454,172 @@ echo "=== 38. 常用指标快速参考 ==="
 # CCI:   easy-tdx indicator CCI -m SH -c 600519 --table
 # BIAS:  easy-tdx indicator BIAS -m SZ -c 000001 --table
 # OBV:   easy-tdx indicator OBV -m SZ -c 000001 --table
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 回测系列（backtest / portfolio / strategies / optimize / run-all）
+# 策略文件可用仓库自带的 strategies/ 目录（expma_cross.py 等），
+# 也可参考 docs/backtest_usage.md 自己编写（继承 Strategy 基类）。
+# ═══════════════════════════════════════════════════════════════════════════
+
+echo "=== 39. 回测 - 单策略 ==="
+# 加载 Python 策略文件跑回测，--table 输出绩效概要（默认 JSON 全量）。
+# 参数: <市场> <代码> --strategy-file <路径> --cash N --commission F --count N --adjust <复权>
+# 绩效含 25 项指标：收益/回撤/夏普 + Ulcer/VaR(95%)/CVaR(95%)/SQN/最大连胜连亏（深度风险）
+# easy-tdx backtest SZ 000001 --strategy-file strategies/expma_cross.py --count 250 --table
+# 输出:
+# === 回测绩效概要 ===
+# 总收益率: -0.79%
+# 年化收益: -0.80%
+# 最大回撤: 8.54%
+# 夏普比率: -0.41
+# 胜率: 0.00%
+# 交易次数: 3
+# Ulcer 指数: 0.0406
+# 日 VaR(95%): 0.91%
+# 日 CVaR(95%): 1.23%
+# SQN 系统质量: -16.49
+# 最大连胜/连亏: 0 / 3
+#
+# === 配置参数 ===
+# 初始资金: 100000.00
+# 佣金率: 0.0003
+# 成交规则: next_open
+#
+# === 最近交易记录 ===
+#   [2025-11-21 00:00:00] 买入 数量=8400 价格=11.80 盈亏=0.00 [成交]
+#   [2025-12-04 00:00:00] 卖出 数量=8400 价格=11.55 盈亏=-2255.86 [成交]
+#   ...
+
+echo "=== 40. 回测 - 成本模拟（滑点/自动费率/成交规则）==="
+# --slippage F       固定滑点（元/股），让回测更贴近实盘
+# --auto-fees        按标的品种自动解析费率（ETF/可转债免印花税等；显式 --commission 优先）
+# --execution        成交价规则: next_open(默认) / next_close
+# --chanlun-level    缠论自动桥接：引擎计算缠论并注入策略 self.chanlun（如 DAILY/30MIN）
+# easy-tdx backtest SZ 000001 --strategy-file strategies/expma_cross.py --slippage 0.01 --auto-fees
+# easy-tdx backtest SH 600519 --strategy-file my_strategy.py --execution next_close
+# easy-tdx backtest SZ 000001 --strategy-file strategies/chanlun_strategy.py --chanlun-level DAILY --table
+
+echo "=== 41. 回测 - Walk-Forward 样本外验证 ==="
+# 全样本收益好 ≠ 策略好。--wf 把时间轴切成 N 个连续窗口逐窗独立回测
+# （每窗从空仓开始、窗口结束强制了结），检验策略在不同时段是否稳定盈利。
+# consistency（盈利窗占比）是 WF 稳定性的核心指标。
+# easy-tdx backtest SZ 000001 --strategy-file strategies/expma_cross.py --wf --wf-windows 5
+# 输出（回测 JSON 之后附加 walkforward JSON）:
+# {
+#   "walkforward": {
+#     "n_windows": 5,
+#     "warmup_ratio": 0.3,
+#     "consistency": 0.2,
+#     "chained_return": -0.0045,
+#     "worst_window": -0.0719,
+#     "best_window": 0.0726,
+#     "windows": [
+#       {"index": 0, "start": "2025-12-17", "end": "2026-02-05", "bars": 35,
+#        "total_return": 0.0, "sharpe": 0.0, "max_drawdown": 0.0,
+#        "total_trades": 0, "win_rate": 0.0, "performance": {...}},
+#       ...
+#     ]
+#   }
+# }
+
+echo "=== 42. 回测 - 一条龙评估 ==="
+# --evaluate 一条龙：回测 + WF + 适配性体检 + 综合评分 + S-D 评级 + 买入持有基准对比，
+# 覆盖常规输出，直接给完整报告 JSON（与 WebUI 一条龙面板同构）。
+# fitness.pass_ratio: 适配性体检通过率；grade: S-D 评级（不看收益，看净值质量）；
+# benchmark.excess_return: 相对买入持有的超额收益。
+# easy-tdx backtest SZ 000001 --strategy-file strategies/expma_cross.py --evaluate
+# 输出:
+# {
+#   "performance": {...25 项绩效指标...},
+#   "score":    {"total": 17.3, "components": {...}, ...},
+#   "grade":    {"grade": "D", "score": 45.9, ...},
+#   "walkforward": {...同上 --wf...},
+#   "fitness":  {"pass_ratio": ..., "checks": [...], "segments": [...], ...},
+#   "benchmark": {"buy_hold": {"total_return": -0.0343, ...}, "excess_return": 0.0264, ...},
+#   "config":   {"symbol": "SZ:000001", "n_windows": 7, ...}
+# }
+
+echo "=== 43. 回测 - 多因子组合 ==="
+# 多个策略文件合成一组信号：AND(全部看多) / OR(任一看多) / MAJORITY(多数，默认)。
+# 至少 2 个策略文件，逗号分隔。
+# easy-tdx backtest SZ 000001 \
+#   --combo-strategies strategies/macd_cross.py,strategies/rsi_reversal.py \
+#   --combo-mode MAJORITY --table
+
+echo "=== 44. 回测 - 多标的组合回测（portfolio）==="
+# 多只股票共享资金池、均等分配、统一仓位管理。
+# 参数: --stocks "市场:代码,..." --strategy-file <路径> --cash N --allocation equal
+# easy-tdx portfolio --stocks SZ:000001,SH:600519 --strategy-file strategies/expma_cross.py --table
+# 输出:
+# === 组合回测绩效概要 ===
+# 标的数量: 2.0
+# 总资金: 200,000
+# 组合收益率: -0.40%
+# 组合年化: -0.40%
+#
+# ── 各标的详情 ──
+#   SZ000001: 收益=-0.79% 夏普=-0.41 回撤=8.54% 分配=50% 交易=3
+#   SH600519: 收益=0.00% 夏普=0.00 回撤=0.00% 分配=50% 交易=0
+
+echo "=== 45. 回测 - 组合级 WF / 一条龙 ==="
+# portfolio 也支持样本外验证与一条龙评估（全部标的日期并集切窗）：
+# --wf / --wf-windows  组合级 Walk-Forward
+# --evaluate           组合级一条龙（组合回测+组合WF+跨标的适配性+评分+组合评级+等权买入持有基准）
+# --auto-fees          按各标的品种自动解析费率
+# easy-tdx portfolio --stocks SZ:000001,SH:600519 \
+#   --strategy-file strategies/expma_cross.py --wf --wf-windows 5
+# easy-tdx portfolio --stocks SZ:000001,SH:600519 \
+#   --strategy-file strategies/expma_cross.py --evaluate
+
+echo "=== 46. 回测 - 内置策略列表（strategies）==="
+# 列出注册表全部内置策略：名称、参数默认值、预设寻优网格、说明。
+# 策略名可直接用于 optimize --strategy 与 Web API /backtest/run 的 strategy 字段。
+# easy-tdx strategies
+# 输出:
+# === 内置策略（54 个）===
+#
+#   ma_cross  —  双均线交叉
+#     参数: fast=5, slow=20
+#     预设网格: fast:6 × slow:6（36 点）
+#     说明: 快线上穿慢线买入，快线下穿慢线卖出。最经典的趋势跟随策略。
+#
+#   macd  —  MACD 金叉
+#     参数: short=12, long=26, signal=9
+#     预设网格: short:4 × long:4（16 点）
+#   ...
+# easy-tdx strategies --output json   # 完整参数 schema（含 min/max/choices）
+
+echo "=== 47. 回测 - 参数网格寻优（optimize）==="
+# 对内置策略的 1-2 个参数做网格搜索，按总收益率排名。
+# 不指定 --param 时自动用该策略的预设网格（见 strategies 命令）。
+# --workers N: 1=串行+指标缓存复用（默认）；2+=进程级并行。
+# easy-tdx optimize SZ 000001 --strategy ma_cross --param fast=5,10,20 --param slow=20,30,60 --table
+# 输出:
+# === 参数寻优: ma_cross（8 个有效网格点）===
+#
+# 排名   参数                           总收益率     夏普   最大回撤  交易   胜率
+# 1    fast=10, slow=30                 0.54%  -0.19   11.92%    4  25.0%
+# 2    fast=20, slow=60                 0.06%  -0.33    8.88%    2   0.0%
+# 3    fast=5, slow=30                 -5.29%  -0.76   15.54%    6   0.0%
+# ...
+#
+# 最佳参数: fast=10, slow=30
+# easy-tdx optimize SZ 000001 --strategy ma_cross   # JSON 输出全量结果（含 2 参数热力图矩阵）
+
+echo "=== 48. 回测 - 一键寻优所有策略 + 批量对比 ==="
+# --all: 逐个内置策略按预设网格寻优，取各自最优点做全局排名（对应 WebUI /optimize 页）。
+# easy-tdx optimize SZ 000001 --all --count 120 --workers 4 --table
+# 输出:
+# === 一键寻优所有策略（54 个策略，共 316 网格点）===
+#
+# 排名   策略                        最佳参数                      总收益率    夏普   最大回撤  交易   胜率
+# 1    kdj_cross KDJ 金叉          n=5                          18.59%   2.82    2.79%    7  71.4%
+# 2    fisher_cross FISHER 费雪拐点  n=9                          16.94%   2.58    5.04%    7  57.1%
+# 3    sar_follow SAR 抛物线跟随     af_step=0.03                 16.55%   2.53    4.69%    4  75.0%
+# ...
+#
+# 全局最优: kdj_cross n=5
+#
+# run-all: 另一种批量方式——跑 strategies/ 目录下所有 .py 策略文件并排名（--combo 做组合）。
+# easy-tdx run-all SZ 300308 --count 2000 --cash 1000000 --adjust QFQ
+# easy-tdx run-all SZ 300308 --combo 2 --combo-mode MAJORITY
