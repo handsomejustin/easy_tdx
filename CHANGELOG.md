@@ -2,6 +2,20 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.32.3] — 2026-09-04
+
+**WebUI 回测/寻优体验补强：策略库保存名称带股票名 + 参数寻优新增「买入持有」基准对比**——两处均来自用户反馈：保存策略时只有「策略 · 代码」看不出标的是哪家公司；参数寻优只有策略自己的收益，没有「拿着不动」的参照，看不出策略到底有没有创造超额。
+
+### 新增
+
+- **保存策略默认名称挂股票名**（[BacktestView.vue](web-ui/src/views/BacktestView.vue)）：保存弹窗打开时经 `/mac/symbol-info` 异步查询标的中文定名，默认名称由「双均线交叉 · 002163」补全为「双均线交叉 · 002163 · 海南发展」，弹窗底部摘要行同步携带。查询失败/市场不支持（如北交所）静默保持原名称；等待期间用户已手动改名则不覆盖。复用自选页同款查询通路，零新增接口。
+- **参数寻优「买入持有」基准对比**（[backtest.py](src/easy_tdx/web/routers/backtest.py)、[OptimizeView.vue](web-ui/src/views/OptimizeView.vue)）：`/backtest/optimize/run/async` 与 `/backtest/optimize-all/run/async` 两个寻优接口在结果中新增 `buy_hold` 字段——复用 [benchmark.py](src/easy_tdx/backtest/benchmark.py) 现成的 `run_buy_hold_benchmark`，与回测页「一条龙评估」的基准**完全同口径**（同区间/同费率/同资金/按成交价模式首根买入持有到末根），计算开销仅一次极简回测。前端在单策略「最优结果」与「一键寻优全局最佳」的总收益旁展示 `[买入持有：xx.xx%]`：标签与括号灰色弱化不抢焦点，百分比按 A 股惯例涨红跌绿（`--up`/`--down`），与排名表总收益列同规则；字段缺省（旧版后端）自动不显示。
+
+### 测试
+
+- Playwright E2E 适配（[strategies.spec.ts](web-ui/e2e/strategies.spec.ts)）：保存弹窗预填名预期值更新为「双均线交叉 · 000001 · 平安银行」（`toHaveValue` 自动重试等待异步补全），9/9 通过。
+- 全量回归：pytest 1654 通过、ruff / ruff format / mypy（261 文件）全绿、前端 `vue-tsc` + `node --test` 通过。
+
 ## [1.32.2] — 2026-09-04
 
 **baostock 自动兜底数据源：TDX 全部路径失败时的最后一级回退**——通达信协议依赖第三方行情服务器（且非官方授权），存在被封锁/改协议/服务中断的结构性风险。本版引入 [baostock](https://pypi.org/project/baostock/)（BSD，2026 年恢复活跃维护）作为最后一级**自动**回退：平时一次都不调用，MAC 协议与标准协议两条 TDX 路径全部失败或返回空时才启用——部分兜底、总好过全挂。至此形成完整灾备链：**TDX 双协议多主机 → baostock EOD 第二源 → 本地 DuckDB 仓库**。
