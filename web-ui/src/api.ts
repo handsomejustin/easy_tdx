@@ -6,6 +6,7 @@ import type {
   BacktestRequest,
   BacktestResult,
   Bar,
+  BoardFundDay,
   BoardOverviewResp,
   BoardRow,
   Category,
@@ -610,15 +611,6 @@ export async function fetchBoardHotspot(
   return body.data
 }
 
-/** 市场异动流（火箭发射/大笔买入/封涨停板/打开跌停板/快速反弹等）。 */
-export async function fetchUnusual(market: 'SH' | 'SZ', count = 50): Promise<Record<string, unknown>[]> {
-  const params = new URLSearchParams({ market, count: String(count) })
-  const resp = await fetch(`${BASE}/mac/unusual?${params}`)
-  if (!resp.ok) await throwError(resp)
-  const body = (await resp.json()) as DataFrameResponse
-  return body.data
-}
-
 /** 排行榜（MAC 排行行情）。
  *  MAC 协议价格列是 close（无 price/change_pct），这里统一归一化为
  *  price/change_pct，渲染端不再做多候选探测。sortBy 对应后端 SortType。 */
@@ -863,6 +855,15 @@ export async function fetchHotspotCorrelation(
   if (!resp.ok) await throwError(resp)
   const body = (await resp.json()) as { data: HotspotCorrelationResp }
   return body.data
+}
+
+/** 行业主力净流入逐日排行（FundFlowSampler 每交易日 14:45 后采样，需积累）。 */
+export async function fetchBoardFundHistory(days = 15): Promise<BoardFundDay[]> {
+  const params = new URLSearchParams({ days: String(days) })
+  const resp = await fetch(`${BASE}/market/board-fund/history?${params}`)
+  if (!resp.ok) await throwError(resp)
+  const body = (await resp.json()) as { data: { count: number; days: BoardFundDay[] } }
+  return body.data.days
 }
 
 /** 当日情绪分钟曲线（采样器逐分钟落库；date=0 表示尚无采样）。 */

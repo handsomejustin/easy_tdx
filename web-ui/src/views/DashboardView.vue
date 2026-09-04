@@ -10,7 +10,6 @@ import {
   fetchIndexBars,
   fetchMarketStat,
   fetchRankList,
-  fetchUnusual,
   fetchMinute,
   formatError,
 } from '../api'
@@ -310,43 +309,6 @@ function barWidth(pct: number, list: BoardRow[]): string {
   return `${Math.min(100, (Math.abs(pct) / maxAbs) * 100)}%`
 }
 
-// ── 异动事件流（轮询 60s） ───────────────────────────────────────────────────
-
-interface UnusualRow {
-  time: string
-  code: string
-  name: string
-  desc: string
-  value: string
-  market: string
-}
-
-const unusualRows = ref<UnusualRow[]>([])
-const unusualError = ref('')
-
-function normalizeUnusual(rows: Record<string, unknown>[], market: 'SH' | 'SZ'): UnusualRow[] {
-  return rows.map((r) => ({
-    time: String(r.time ?? '').slice(0, 8),
-    code: String(r.code ?? ''),
-    name: String(r.name ?? ''),
-    desc: String(r.desc ?? ''),
-    value: String(r.value ?? ''),
-    market,
-  }))
-}
-
-async function loadUnusual() {
-  unusualError.value = ''
-  try {
-    const [sh, sz] = await Promise.all([fetchUnusual('SH', 60), fetchUnusual('SZ', 60)])
-    const merged = [...normalizeUnusual(sh, 'SH'), ...normalizeUnusual(sz, 'SZ')]
-    merged.sort((a, b) => (a.time < b.time ? 1 : a.time > b.time ? -1 : 0))
-    unusualRows.value = merged.slice(0, 80)
-  } catch (e) {
-    unusualError.value = formatError(e)
-  }
-}
-
 // ── 排行榜（涨幅/跌幅/成交额/换手 四 tab，轮询 60s） ───────────────────────
 
 const gainers = ref<RankRow[]>([])
@@ -442,7 +404,6 @@ const sessionLabel = computed(() => {
 function refreshAll() {
   loadStat()
   loadBoards()
-  loadUnusual()
   loadRanks()
   loadIdxSparks()
   loadIndexContext()
@@ -458,7 +419,6 @@ function tickIfActive() {
 
 function slowTickIfActive() {
   if (autoPaused.value) return
-  loadUnusual()
   loadRanks()
   loadBoards()
   loadIdxSparks()
@@ -731,29 +691,6 @@ function openBoard(code: string | undefined, name: string | undefined) {
         </div>
       </div>
 
-      <!-- 异动事件流 -->
-      <div class="card unusual-card">
-        <h3>异动雷达</h3>
-        <div v-if="unusualError" class="err">{{ unusualError }}</div>
-        <table v-else class="qtable">
-          <thead>
-            <tr>
-              <th>时间</th>
-              <th style="text-align: left">股票</th>
-              <th style="text-align: left">异动</th>
-              <th>数值</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(r, i) in unusualRows" :key="i" @click="openDialog(r.code, r.name, r.market)">
-              <td class="dim">{{ r.time }}</td>
-              <td style="text-align: left">{{ r.name }}</td>
-              <td style="text-align: left"><span class="tag">{{ r.desc }}</span></td>
-              <td class="mono">{{ r.value }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
     </div>
 
     <StockDialog
@@ -872,10 +809,6 @@ function openBoard(code: string | undefined, name: string | undefined) {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 10px;
-}
-.unusual-card {
-  grid-column: 1 / -1;
-  max-height: 320px;
 }
 .dist-card {
   min-height: 220px;
@@ -1078,10 +1011,6 @@ function openBoard(code: string | undefined, name: string | undefined) {
 }
 
 /* 涨跌幅榜 */
-.unusual-card tr,
-.card table tr {
-  cursor: pointer;
-}
 
 /* 异动 */
 .tag {

@@ -55,15 +55,3 @@ async def auction(
     """获取集合竞价数据。"""
     df = await client.get_auction(market=market_value_from_str(market), code=code)
     return _df_resp(df)
-
-
-@router.get("/mac/unusual", response_model=DataFrameResponse)
-async def unusual(
-    market: str = Query(..., description="市场: SZ, SH"),
-    start: int = Query(0, ge=0, description="分页起始位置"),
-    count: int = Query(50, ge=1, le=500, description="返回数量"),
-    client: Any = Depends(get_mac_client),
-) -> DataFrameResponse:
-    """获取市场异动行情数据。"""
-    df = await client.get_unusual(market=market_value_from_str(market), start=start, count=count)
-    return _df_resp(df)
