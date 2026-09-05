@@ -491,6 +491,7 @@ async def board_hotspot(
             -r["days_in"],
             -(r["sum_pct"] or 0.0),
             r["best_rank"] if r["best_rank"] else 9999,
+            r["code"],  # 全并列时按代码兜底：candidates 来自 set，迭代序跨进程不稳定
         )
     )
     rows_out = rows_out[:_HOTSPOT_MAX_ROWS]
@@ -552,7 +553,9 @@ async def board_hotspot_correlation(
         for c in s:
             days_in[c] = days_in.get(c, 0) + 1
 
-    chosen = sorted(days_in, key=lambda c: -days_in[c])[:top]
+    # 排序必须确定性：days_in 并列时按代码兜底——set 迭代序受哈希随机化影响，
+    # 跨进程不稳定，会导致相关矩阵行列顺序在服务重启后随机互换
+    chosen = sorted(days_in, key=lambda c: (-days_in[c], c))[:top]
     if len(chosen) < 2:
         return DictResponse.from_dict(
             {"status": "ready", "boards": [], "matrix": [], "days": len(window)}
