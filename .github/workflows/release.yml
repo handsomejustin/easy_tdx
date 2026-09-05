@@ -81,7 +81,7 @@ jobs:
           body: |
             ## 下载使用
 
-            1. 下载下方 `easy-tdx-*-windows.exe`（约 80-150MB）
+            1. 下载下方 `easy-tdx-*-windows.exe`（约 40-50MB）
             2. 双击运行
             3. 浏览器会自动打开回测界面（地址 `http://localhost:8000`）
 
@@ -93,3 +93,17 @@ jobs:
             2. 点击 **仍要运行**
 
             Phase 2 将引入代码签名消除此提示。
+
+            ## 🛡️ 杀软误报说明（Windows Defender 报毒？请先读这里）
+
+            部分 Windows Defender 用户会看到 `Trojan:Win32/Wacatac.C!ml` 报警。
+            `.exe` 由 GitHub Actions 在公开的 tag 提交上从源码构建（本文件即构建脚本），
+            为**未签名的 PyInstaller 单文件**打包——"自解压 + 无签名"特征是杀软
+            机器学习引擎（`!ml` 后缀即 ML 判定）的经典误报源头，v1.32.1 起各版本
+            构建方式相同。自行核验：
+
+            1. 核对 Release 说明中公布的 SHA256（PowerShell：`Get-FileHash *.exe`）
+            2. 可上传 [VirusTotal](https://www.virustotal.com/) 交叉验证：典型误报特征是
+               少数 ML 启发式引擎报警、主流特征码引擎（Kaspersky/ESET/BitDefender 等）不报
+            3. 哈希一致仍想加速白名单，可向微软提交误报申诉：
+               [microsoft.com/en-us/wdsi/filesubmission](https://www.microsoft.com/en-us/wdsi/filesubmission)（选"软件开发者"）
