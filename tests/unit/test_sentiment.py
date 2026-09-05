@@ -130,9 +130,7 @@ def vipdoc_factory(tmp_path):
             exchange = filename[:2]
             lday = tmp_path / exchange / "lday"
             lday.mkdir(parents=True, exist_ok=True)
-            data = b"".join(
-                _day(d, c) for d, c in zip(spec["dates"], spec["closes"])
-            )
+            data = b"".join(_day(d, c) for d, c in zip(spec["dates"], spec["closes"]))
             (lday / f"{filename}.day").write_bytes(data)
         return tmp_path
 
@@ -176,9 +174,7 @@ def test_limitup_history_endpoint_cache(vipdoc_factory, monkeypatch):
     from easy_tdx.web.errors import register_exception_handlers
     from easy_tdx.web.routers import market as market_mod
 
-    v = vipdoc_factory(
-        {"sh600100": {"dates": [20260801, 20260802], "closes": [10.0, 11.0]}}
-    )
+    v = vipdoc_factory({"sh600100": {"dates": [20260801, 20260802], "closes": [10.0, 11.0]}})
     calls = {"n": 0}
     real = limitup_mod.compute_limitup_history
 

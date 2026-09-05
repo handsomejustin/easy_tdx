@@ -2,6 +2,34 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.32.4] — 2026-09-05
+
+**盘面洞察系列：六栏目 + AI 复盘 + 资金日历**——从"热点滚动"出发，把"快速理解盘面"做成一个系列：交易日×板块涨跌矩阵看热点轮动、指数红绿日历看全年情绪、连板天梯看涨停生态、宽度分时+涨停温度计看市场冷热、相关性热力图看抱团与跷跷板、量能曲线看放量缩量，最后一键交给 AI 生成盘面复盘。另含成分股排序/截断两个真实 bug 修复与龙头池下线。
+
+### 新增
+
+- **热点滚动**（`/hotspots`，[HotspotView.vue](web-ui/src/views/HotspotView.vue)、[board_mac.py](src/easy_tdx/web/routers/board_mac.py)）：交易日 × 板块涨跌矩阵（行业/概念/风格 FG、领涨/领跌镜像、今日~30 日窗口），每日名次徽标 + 连板/累计/首次上榜统计 + 窗口统计卡（领涨王/持续热点/新面孔/一日游，可点击展开成员）；后端 `/board-mac/hotspot` 两段式数据（历史日K矩阵当日缓存 + 今日实时列，周末 pre_close 未滚动去重），单连接约束下后台构建 + 进度轮询；新增「相关性」视图——活跃板块两两日涨跌幅 Pearson 相关热力图（红=抱团、绿=跷跷板），排序确定性修复（set 迭代序跨重启随机互换）。
+- **大盘日历**（`/calendar`）：上证/深成/创业板全年红绿热力图（GitHub 贡献图风格），方框大小编码成交额（年内四分位），悬停浮框显示收盘/涨跌幅/成交额，年涨幅与最长连涨连跌统计。
+- **涨停生态**（`/limitup`）：本地 vipdoc 日线离线回算连板天梯/首板二板分布/炸板率/跌停；仅统计最后一根 bar 等于全市场最新交易日的股票（防停牌/退市陈旧文件污染），主板 5% ST 判定带低价护栏；vipdoc 目录可在页内配置（KV 持久化，保存即校验+清缓存），`/settings/vipdoc` GET/PUT。
+- **市场情绪**（`/sentiment`）：SentimentSampler 交易时段每分钟采样全市场广度落 SQLite（重启不丢），今日宽度分时（上涨/下跌/涨停三线）+ 近 60 日涨停跌停家数（vipdoc 离线回补，无需积累）+ 上涨占比线；量能仪表盘：两市累计成交额 vs 近 5 日同期均值（偏离百分比直读）；AI 盘面复盘：一键汇总情绪/量能/涨停数据生成 200~400 字复盘，自动归档「AI 解读历史」。
+- **板块主力资金日历**：FundFlowSampler 每交易日 14:45 后采样行业主力净流入 Top10（涨幅前 50 名口径），逐日日历视图。
+
+### 修复
+
+- **板块成分股/排行报价分页合并顺序颠倒**（[mac/client.py](src/easy_tdx/mac/client.py)）：`BoardMembersQuotesCmd` 分页合并曾用前插，而协议 start=0 返回排序后最前一页——成分股超 80 只的板块弹窗涨跌幅从第 81 名开头；4 处统一改按页序追加。
+- **板块弹窗成分股写死 120 只截断**（[BoardDialog.vue](web-ui/src/components/BoardDialog.vue)）：CPO 205 只/半导体 185 只被截断，改全量拉取（单页 80 自动翻页）。
+- **市场情绪页空态提示层铺满全页拦截鼠标**（[SentimentView.vue](web-ui/src/views/SentimentView.vue)）：`.fund-card` 缺 `position:relative`，absolute 空态层以视口为基准铺满全页。
+
+### 移除
+
+- **龙头池栏目下线**（页面/路由/导航/`/market/core-leaders` 端点）；screen 模块 `universe=core` 选股口径保留。
+
+### 测试
+
+- 新增 66 例：热点矩阵/相关性（[test_board_mac_hotspot.py](tests/unit/test_board_mac_hotspot.py)）、涨停生态与 vipdoc 设置（[test_limitup_ecology.py](tests/unit/test_limitup_ecology.py)、[test_vipdoc_settings.py](tests/unit/test_vipdoc_settings.py)）、情绪采样与历史回补（[test_sentiment.py](tests/unit/test_sentiment.py)）、成分股分页合并顺序回归（[test_board_members_pagination.py](tests/unit/test_board_members_pagination.py)）。
+- `test_ex_reconnect` 密闭化：屏蔽跨主机故障转移的真实网络探测（login 计数曾依赖运行环境），并补故障转移阶段 re-login 语义测试。
+- 全量回归：pytest 1663 通过、ruff / ruff format 全绿、前端 `vue-tsc` 构建通过。
+
 ## [1.32.3] — 2026-09-04
 
 **WebUI 回测/寻优体验补强：策略库保存名称带股票名 + 参数寻优新增「买入持有」基准对比**——两处均来自用户反馈：保存策略时只有「策略 · 代码」看不出标的是哪家公司；参数寻优只有策略自己的收益，没有「拿着不动」的参照，看不出策略到底有没有创造超额。

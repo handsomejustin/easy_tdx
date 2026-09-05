@@ -564,14 +564,9 @@ async def board_hotspot_correlation(
     frame = pd.DataFrame({c: pct_map[c] for c in chosen}).T  # 板块 × 交易日，缺失为 NaN
     corr = frame.T.corr(min_periods=max(3, len(window) // 2))
 
-    boards = [
-        {"code": c, "name": names.get(c, c), "days_in": days_in[c]} for c in chosen
-    ]
+    boards = [{"code": c, "name": names.get(c, c), "days_in": days_in[c]} for c in chosen]
     matrix: list[list[float | None]] = [
-        [
-            None if pd.isna(corr.loc[a, b]) else round(float(corr.loc[a, b]), 2)
-            for b in chosen
-        ]
+        [None if pd.isna(corr.loc[a, b]) else round(float(corr.loc[a, b]), 2) for b in chosen]
         for a in chosen
     ]
     return DictResponse.from_dict(
