@@ -672,6 +672,8 @@ export interface LimitUpEcologyResp {
   /** vipdoc 数据日期 YYYYMMDD —— 新鲜度取决于本机通达信客户端 */
   data_date: number
   total: number
+  /** 实际生效的 vipdoc 目录（自动检测或已存设置），未检测到为 null */
+  vipdoc_path?: string | null
   summary: {
     limit_up_count: number
     limit_down_count: number

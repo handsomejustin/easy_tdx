@@ -4,7 +4,7 @@
 // 单击任意股票打开 StockDialog。120s 轮询 + 手动刷新。
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
-import { fetchLimitUpEcology, fetchSymbolName, formatError } from '../api'
+import { fetchLimitUpEcology, fetchSymbolName, fetchVipdocSetting, formatError, saveVipdocSetting } from '../api'
 import StockDialog from '../components/StockDialog.vue'
 import type { LimitUpEntry } from '../types'
 
@@ -13,11 +13,46 @@ const loading = ref(false)
 const error = ref('')
 const lastRefresh = ref('')
 
+const vipdocStored = ref<string | null>(null)
+const vipdocResolved = ref<string | null>(null)
+const vipdocInput = ref('')
+const vipdocBusy = ref(false)
+const vipdocMsg = ref('')
+
+async function loadVipdocSetting() {
+  try {
+    const r = await fetchVipdocSetting()
+    vipdocStored.value = r.stored
+    vipdocResolved.value = r.resolved
+    vipdocInput.value = r.stored ?? ''
+  } catch {
+    // 设置读取失败不打扰主流程
+  }
+}
+
+async function saveVipdoc() {
+  vipdocBusy.value = true
+  vipdocMsg.value = ''
+  try {
+    const r = await saveVipdocSetting(vipdocInput.value.trim())
+    vipdocStored.value = r.stored || null
+    vipdocResolved.value = r.resolved
+    vipdocMsg.value = '已保存，正在按新路径重新扫描…'
+    await load()
+    vipdocMsg.value = '已保存'
+  } catch (e) {
+    vipdocMsg.value = formatError(e)
+  } finally {
+    vipdocBusy.value = false
+  }
+}
+
 async function load() {
   loading.value = resp.value === null
   error.value = ''
   try {
     resp.value = await fetchLimitUpEcology()
+    vipdocResolved.value = resp.value.vipdoc_path ?? vipdocResolved.value
     lastRefresh.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
     fillNames(allEntries.value)
   } catch (e) {
@@ -110,6 +145,7 @@ function tick() {
 }
 
 onMounted(() => {
+  loadVipdocSetting()
   load()
   timer = window.setInterval(tick, 120_000)
 })
@@ -137,6 +173,21 @@ function pctClass(pct: number): string {
       <button class="manual-refresh" @click="load">↻ 刷新</button>
     </div>
 
+    <div class="vipdoc-bar card">
+      <span class="dim">vipdoc 数据目录</span>
+      <input
+        v-model="vipdocInput"
+        class="vipdoc-input mono"
+        type="text"
+        :placeholder="vipdocResolved || '自动检测（TDX_HOME 或常见安装路径）'"
+        spellcheck="false"
+      />
+      <button :disabled="vipdocBusy" @click="saveVipdoc">{{ vipdocBusy ? '保存中…' : '保存' }}</button>
+      <button :disabled="vipdocBusy || !vipdocStored" title="清除已存路径，恢复自动检测" @click="vipdocInput = ''; saveVipdoc()">自动检测</button>
+      <span v-if="vipdocMsg" class="dim">{{ vipdocMsg }}</span>
+      <span v-else-if="vipdocResolved && !vipdocStored" class="dim">当前自动检测：{{ vipdocResolved }}</span>
+    </div>
+
     <div v-if="error" class="err card">
       加载失败：{{ error }}
       <button @click="load">重试</button>
@@ -145,7 +196,7 @@ function pctClass(pct: number): string {
 
     <template v-else-if="resp">
       <div v-if="resp.total === 0" class="err card">
-        未检测到本地通达信 vipdoc 日线数据。请确认本机已安装通达信且
+        未检测到本地通达信 vipdoc 日线数据。可在上方填写安装目录（如 D:\new_tdx\vipdoc）后保存；或确认通达信已安装且
         <code> vipdoc/{sh,sz}/lday/*.day </code> 存在（自动检测失败时可在 CLI 侧指定路径）。
       </div>
 
@@ -245,6 +296,20 @@ function pctClass(pct: number): string {
 </template>
 
 <style scoped>
+.vipdoc-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  padding: 8px 12px;
+}
+.vipdoc-input {
+  flex: 1;
+  min-width: 260px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
 .limitup-view {
   height: 100%;
   overflow-y: auto;

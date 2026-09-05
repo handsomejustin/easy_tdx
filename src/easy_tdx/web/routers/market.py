@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
@@ -98,6 +99,61 @@ async def market_session() -> dict[str, Any]:
     return session_info()
 
 
+# 本地 vipdoc 路径设置（应用级 KV，重启不丢；涨停生态/涨停历史共用）
+_VIPDOC_KEY = "vipdoc"
+
+
+def _effective_vipdoc(explicit: str | None) -> str | None:
+    """vipdoc 解析优先级：显式参数 > 已存设置 > 自动检测（None）。"""
+    if explicit:
+        return explicit
+    from easy_tdx.web.app_settings_store import get_app_settings_store
+
+    return get_app_settings_store().get(_VIPDOC_KEY)
+
+
+@router.get("/settings/vipdoc")
+async def get_vipdoc_setting() -> dict[str, Any]:
+    """读取本地 vipdoc 路径设置（含自动检测的当前生效值，供涨停生态页配置）。"""
+    from easy_tdx.web.app_settings_store import get_app_settings_store
+
+    stored = get_app_settings_store().get(_VIPDOC_KEY)
+    effective = _effective_vipdoc(None)
+    try:
+        from easy_tdx.offline.paths import resolve_vipdoc
+
+        resolved = str(resolve_vipdoc(effective))
+    except Exception:  # noqa: BLE001 — 未检测到/路径无效
+        resolved = None
+    return {"stored": stored, "resolved": resolved}
+
+
+@router.put("/settings/vipdoc")
+async def set_vipdoc_setting(req: dict[str, Any]) -> dict[str, Any]:
+    """保存/清除本地 vipdoc 路径设置（空串 = 恢复自动检测）。
+
+    保存即校验目录存在；成功后清空涨停生态/历史缓存，下次扫描立用新路径。
+    """
+    from easy_tdx.offline.paths import resolve_vipdoc
+    from easy_tdx.web.app_settings_store import get_app_settings_store
+
+    path = str(req.get("path") or "").strip()
+    if path:
+        p = Path(path)
+        if not p.is_dir():
+            raise ValueError(f"路径不存在或不是目录: {p}")
+        get_app_settings_store().set(_VIPDOC_KEY, str(p))
+        resolved = str(resolve_vipdoc(str(p)))
+    else:
+        get_app_settings_store().delete(_VIPDOC_KEY)
+        resolved = None
+    # 路径变更后旧扫描结果作废
+    global _limitup_cache, _limitup_history_cache
+    _limitup_cache = None
+    _limitup_history_cache.clear()
+    return {"stored": path, "resolved": resolved}
+
+
 @router.get("/limitup-ecology", response_model=DictResponse)
 async def limitup_ecology(
     vipdoc: str | None = Query(None, description="离线数据目录（默认自动检测）"),
@@ -114,13 +170,23 @@ async def limitup_ecology(
     if _limitup_cache is not None and now - _limitup_cache[0] < _LIMITUP_TTL:
         return DictResponse.from_dict(_limitup_cache[1])
 
+    effective = _effective_vipdoc(vipdoc)
+
     def _scan() -> dict[str, Any]:
         from easy_tdx.screen.limitup import compute_limitup_ecology
 
-        eco = compute_limitup_ecology(vipdoc)
+        eco = compute_limitup_ecology(effective)
+        vipdoc_path = None
+        try:
+            from easy_tdx.offline.paths import resolve_vipdoc
+
+            vipdoc_path = str(resolve_vipdoc(effective))
+        except Exception:  # noqa: BLE001 — 未检测到时前端展示配置入口
+            pass
         return {
             "data_date": eco.data_date,
             "total": eco.total,
+            "vipdoc_path": vipdoc_path,
             "summary": eco.summary(),
             "limit_up": [asdict(e) for e in eco.limit_up],
             "limit_down": [asdict(e) for e in eco.limit_down],
@@ -187,7 +253,7 @@ async def limitup_history(
     def _scan() -> dict[str, Any]:
         from easy_tdx.screen.limitup import compute_limitup_history
 
-        rows = compute_limitup_history(vipdoc, days=days)
+        rows = compute_limitup_history(_effective_vipdoc(vipdoc), days=days)
         return {"count": len(rows), "days": rows}
 
     payload = await asyncio.to_thread(_scan)

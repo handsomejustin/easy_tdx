@@ -831,6 +831,24 @@ export async function clearLlmHistory(): Promise<number> {
   return (await resp.json()).deleted as number
 }
 
+/** 读取本地 vipdoc 路径设置（stored=已保存；resolved=当前自动检测生效值）。 */
+export async function fetchVipdocSetting(): Promise<{ stored: string | null; resolved: string | null }> {
+  const resp = await fetch(`${BASE}/settings/vipdoc`)
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()) as { stored: string | null; resolved: string | null }
+}
+
+/** 保存/清除本地 vipdoc 路径设置（空串 = 恢复自动检测；服务端随之清空涨停缓存）。 */
+export async function saveVipdocSetting(path: string): Promise<{ stored: string; resolved: string | null }> {
+  const resp = await fetch(`${BASE}/settings/vipdoc`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  })
+  if (!resp.ok) await throwError(resp)
+  return (await resp.json()) as { stored: string; resolved: string | null }
+}
+
 /** 涨停生态（连板天梯/炸板/跌停，本地 vipdoc 离线回算，服务端缓存 60s）。
  *  data_date 为 vipdoc 数据日期；name 字段需前端经 fetchSymbolName 补齐。 */
 export async function fetchLimitUpEcology(): Promise<LimitUpEcologyResp> {
