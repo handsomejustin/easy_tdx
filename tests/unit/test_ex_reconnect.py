@@ -19,6 +19,20 @@ from easy_tdx.ex.mac_client import AsyncMacExClient, MacExClient
 from easy_tdx.exceptions import TdxConnectionError
 
 
+@pytest.fixture(autouse=True)
+def _no_failover():
+    """屏蔽跨主机故障转移：select_best_host_* 会真实探测网络（密闭性），
+    且找到新主机时会多一轮 connect+login，使重试阶段的计数断言依赖网络环境。
+    需要验证故障转移语义的测试可在用例内再覆盖此 patch。"""
+    with (
+        patch("easy_tdx.ex.client.select_best_host_sync", return_value=None),
+        patch("easy_tdx.ex.client.select_best_host_async", new=AsyncMock(return_value=None)),
+        patch("easy_tdx.ex.mac_client.select_best_host_sync", return_value=None),
+        patch("easy_tdx.ex.mac_client.select_best_host_async", new=AsyncMock(return_value=None)),
+    ):
+        yield
+
+
 class TestExTdxClientReconnect:
     def test_reconnect_succeeds_on_second_attempt(self) -> None:
         """首次抛 TdxConnectionError，重连后第 1 次重试成功。"""
@@ -78,7 +92,7 @@ class TestMacExClientReconnect:
             assert mock_login.call_count == 1
 
     def test_all_retries_relogin_each_time(self) -> None:
-        """4 次重试全失败时，每次重连都应 _login()（共 4 次）。"""
+        """4 次重试全失败时，每次重连都应 _login()（共 4 次；故障转移已被屏蔽）。"""
         with patch("easy_tdx.ex.mac_client.ExTdxConnection") as mock_conn_cls:
             mock_conn = MagicMock()
             mock_conn.execute.side_effect = TdxConnectionError("always down")
@@ -92,6 +106,24 @@ class TestMacExClientReconnect:
                 with pytest.raises(TdxConnectionError):
                     client._execute(GetExMarketsCmd())
             assert mock_login.call_count == len(_RETRY_DELAYS)
+
+    def test_failover_stage_relogs_in_and_raises(self) -> None:
+        """跨主机故障转移找到新主机时也必须 _login()；仍失败则抛出（共 5 次）。"""
+        with patch("easy_tdx.ex.mac_client.ExTdxConnection") as mock_conn_cls:
+            mock_conn = MagicMock()
+            mock_conn.execute.side_effect = TdxConnectionError("always down")
+            mock_conn_cls.return_value = mock_conn
+
+            client = MacExClient("1.1.1.1", auto_reconnect=True)
+            with (
+                patch("easy_tdx.ex.mac_client.time.sleep"),
+                patch.object(client, "_login") as mock_login,
+                patch("easy_tdx.ex.mac_client.select_best_host_sync", return_value="2.2.2.2"),
+            ):
+                with pytest.raises(TdxConnectionError):
+                    client._execute(GetExMarketsCmd())
+            # 4 次退避重连 + 1 次故障转移 = 5 次 _login
+            assert mock_login.call_count == len(_RETRY_DELAYS) + 1
 
 
 class TestAsyncExTdxClientReconnect:
