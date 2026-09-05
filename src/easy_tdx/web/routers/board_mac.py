@@ -352,19 +352,23 @@ def _hotspot_history_or_build(
     cached = _hotspot_history_cache.get(key)
     if cached is not None and cached[0] == _today_str():
         return cached[1], None
-    state = _hotspot_builds.get(key)
-    running = state is not None and state.get("task") is not None and not state["task"].done()
+    state: dict[str, Any] | None = _hotspot_builds.get(key)
+    task: Any = state.get("task") if state else None
+    running = task is not None and not task.done()
     # 需要新建：无状态 / 上次成功但缓存已过期 / 显式重试
-    if not running and (retry or state is None or state.get("status") == "ready"):
-        state = {"status": "building", "progress": 0.0, "task": None, "error": ""}
-        _hotspot_builds[key] = state
-        state["task"] = asyncio.create_task(_hotspot_build(key, bt, client))
-        running = True
+    if not running:
+        need_build = retry or state is None or state.get("status") == "ready"
+        if need_build:
+            state = {"status": "building", "progress": 0.0, "task": None, "error": ""}
+            _hotspot_builds[key] = state
+            state["task"] = asyncio.create_task(_hotspot_build(key, bt, client))
+            running = True
+    assert state is not None  # running 分支的 state 必然存在；error 分支同理
     if running:
-        return None, {"status": "building", "progress": state.get("progress", 0.0)}
+        return None, {"status": "building", "progress": float(state.get("progress", 0.0))}
     return None, {
         "status": "error",
-        "error": state.get("error") or "热点矩阵构建失败",
+        "error": str(state.get("error") or "热点矩阵构建失败"),
         "progress": 1.0,
     }
 
@@ -397,8 +401,8 @@ async def board_hotspot(
     key = bt.name
 
     history, build_payload = _hotspot_history_or_build(key, bt, client, retry=retry)
-    if build_payload is not None:
-        return DictResponse.from_dict(build_payload)
+    if build_payload is not None or history is None:
+        return DictResponse.from_dict(build_payload or {"status": "error"})
     axis_all: list[str] = history["axis"]
     pct_map: dict[str, dict[str, float]] = history["pct"]
     names: dict[str, str] = dict(history["names"])
@@ -533,9 +537,8 @@ async def board_hotspot_correlation(
     key = bt.name
 
     history, build_payload = _hotspot_history_or_build(key, bt, client)
-    if build_payload is not None:
-        return DictResponse.from_dict(build_payload)
-
+    if build_payload is not None or history is None:
+        return DictResponse.from_dict(build_payload or {"status": "error"})
     axis_all: list[str] = history["axis"]
     pct_map: dict[str, dict[str, float]] = history["pct"]
     names: dict[str, str] = dict(history["names"])

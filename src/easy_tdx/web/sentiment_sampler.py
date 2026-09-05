@@ -46,7 +46,7 @@ class SentimentSampler:
         self._get_stat = client_get_stat
         self._store = store or get_sentiment_store()
         self._interval = interval
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
         self.samples = 0
         self.failures = 0
 
@@ -122,7 +122,7 @@ class FundFlowSampler:
         self._interval = interval
         self._top_n = top_n
         self._keep = keep
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
         if self._task is None or self._task.done():
