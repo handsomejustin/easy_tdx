@@ -60,7 +60,8 @@ class PerformanceAnalyzer:
             - total_return: 总收益率
             - annual_return: 年化收益率
             - max_drawdown: 最大回撤
-            - max_dd_duration: 最大回撤持续时间（bar 数）
+            - max_dd_duration: 最大回撤持续时间（最长水下期：峰值到重新
+              创新高的 bar 数，末日未修复则计到最后一根）
             - sharpe: 夏普比率
             - sortino: 索提诺比率
             - calmar: 卡玛比率
@@ -118,8 +119,8 @@ class PerformanceAnalyzer:
         drawdown_pct = self._equity_curve["drawdown_pct"].to_numpy()
         max_drawdown = float(np.max(drawdown_pct))
 
-        # 4. 最大回撤持续时间
-        max_dd_duration = self._compute_max_dd_duration(total, drawdown)
+        # 4. 最大回撤持续时间（最长水下期：峰值 → 重新创新高）
+        max_dd_duration = self._compute_max_dd_duration(drawdown)
 
         # 5. 夏普比率
         rf_daily = self._risk_free_rate / self.ANNUAL_DAYS
@@ -366,36 +367,36 @@ class PerformanceAnalyzer:
 
         return total_days, total_size
 
-    def _compute_max_dd_duration(self, total: NDArray, drawdown: NDArray) -> int:
-        """计算最大回撤持续时间。
+    def _compute_max_dd_duration(self, drawdown: NDArray) -> int:
+        """计算最大回撤持续时间（最长水下期）。
 
-        找到最大回撤点，然后计算从回撤前的高点到该点的 bar 数。
+        以创新高（drawdown == 0）为界切分水下区间，取「从峰值跌落到
+        重新回到前高」的最长一段 bar 数；末日仍未修复的区间计到最后一根。
+        与 glossary「最长一次套牢了多久」、grading 的 max_dd_duration 锚点
+        量纲（30 天/90 天/365 天…）以及前端 computeCombinedMetrics 同口径。
 
         Args:
-            total: 总权益数组
-            drawdown: 回撤数组
+            drawdown: 回撤数组（peak - total，与资金曲线等长）
 
         Returns:
-            最大回撤持续时间（bar 数）
+            最长水下期（bar 数）；全程无回撤时为 0
         """
         if len(drawdown) == 0:
             return 0
 
-        max_dd_idx: int = int(np.argmax(drawdown))
-        max_dd_value = drawdown[max_dd_idx]
-
-        # 如果没有回撤，返回 0
-        if max_dd_value == 0:
+        peak_hits = np.flatnonzero(drawdown == 0)
+        if peak_hits.size == 0:
             return 0
 
-        # 找到回撤前的高点
-        peak_idx: int = max_dd_idx
-        for i in range(max_dd_idx - 1, -1, -1):
-            if total[i] > total[max_dd_idx]:
-                peak_idx = i
-                break
+        # 相邻两个创新高点间隔 ≥2 根才夹着真实的水下段（间隔 1 为连续新高）
+        gaps = np.diff(peak_hits)
+        deep_gaps = gaps[gaps > 1]
+        longest = int(deep_gaps.max()) if deep_gaps.size > 0 else 0
 
-        return int(max_dd_idx - peak_idx)
+        # 末日仍在水下：从最后一次创新高计到最后一根
+        tail = len(drawdown) - 1 - int(peak_hits[-1])
+
+        return int(max(longest, tail))
 
     def _empty_metrics(self) -> dict[str, float]:
         """返回全零指标字典（数据不足时的默认返回值）。

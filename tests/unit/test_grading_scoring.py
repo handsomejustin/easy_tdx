@@ -189,7 +189,20 @@ def test_combined_metrics_with_drawdown():
         eq[i]["total"] *= 0.8
     m = compute_combined_metrics(eq)
     assert m.max_drawdown >= 0.19
-    assert m.max_dd_duration > 0
+    # 最长水下期：峰值 idx49 → 重新创新高 idx70 = 21 根
+    # （旧实现按「峰值→谷底」只算 20，且单标的侧旧 bug 恒为 1）
+    assert m.max_dd_duration == 21
+
+
+def test_combined_metrics_dd_duration_unclosed_counts_to_end():
+    """末日仍未修复的水下期应计到最后一点。"""
+    eq = _equity(120)
+    # 尾段砸 10% 的坑且不再收回
+    for i in range(100, 120):
+        eq[i]["total"] *= 0.9
+    m = compute_combined_metrics(eq)
+    # idx99 最后一次创新高 → 末日 idx119，共 20 根
+    assert m.max_dd_duration == 20
 
 
 def test_combined_metrics_insufficient_points():

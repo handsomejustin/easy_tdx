@@ -2,6 +2,20 @@
 
 本文件记录 easy-tdx 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.32.5] — 2026-09-06
+
+**回撤持续统计修复：不再恒为 1**——单标的回测「绩效指标 → 风险 → 回撤持续」此前无论什么股票都显示 1，本版修复计算错误，并把三处实现的口径统一为指标文档承诺的「最长水下期」：从净值峰值跌落到重新创新高的最长天数（末日仍未修复则计到最后一天），即"最长一次套牢了多久"。
+
+### 修复
+
+- **回撤持续恒为 1**（[performance.py](src/easy_tdx/backtest/performance.py)）：`_compute_max_dd_duration` 旧实现从最大回撤谷底向前找"第一根高于谷底的 bar"，下跌途中那几乎总是紧邻的上一根，导致任何股票该指标恒为 1；重写为以创新高（drawdown 归零）为界切分水下区间取最长段。单标的、组合、轮动回测共用此分析器，一并修复。
+- **组合视图/评级口径同步**（[grading.py](src/easy_tdx/backtest/grading.py)、[combinedMetrics.ts](web-ui/src/grading/combinedMetrics.ts)）：两处此前算的是"峰值→谷底"距离，与术语表及评级锚点量纲（30 天/90 天/365 天…）承诺的"峰值→重新创新高"不符，会低估持续天数、虚高风险维度得分；同步改为最长水下期口径，与 `performance.py` 三端口径一致。最大回撤数值不受影响。
+
+### 测试
+
+- 新增 3 例回归（[test_backtest_performance.py](tests/unit/test_backtest_performance.py)）：最长水下期取值、末日未修复计到最后一根、全程无回撤为 0；grading 组合指标用例加固为精确断言（[test_grading_scoring.py](tests/unit/test_grading_scoring.py)）。
+- 用真实数据（603519 日线 bbp_reversal 近 800 根）端到端核对：旧代码返回 1，修复后同一资金曲线算出 293 根（2024-06-26 峰值 → 2025-09-05 收复）。全量回归：pytest 1667 通过、ruff / ruff format / mypy 严格模式 / 前端 `vue-tsc` 全绿。
+
 ## [1.32.4] — 2026-09-05
 
 **盘面洞察系列：六栏目 + AI 复盘 + 资金日历**——从"热点滚动"出发，把"快速理解盘面"做成一个系列：交易日×板块涨跌矩阵看热点轮动、指数红绿日历看全年情绪、连板天梯看涨停生态、宽度分时+涨停温度计看市场冷热、相关性热力图看抱团与跷跷板、量能曲线看放量缩量，最后一键交给 AI 生成盘面复盘。另含成分股排序/截断两个真实 bug 修复与龙头池下线。

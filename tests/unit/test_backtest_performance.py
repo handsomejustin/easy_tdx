@@ -610,3 +610,37 @@ def test_avg_win_zero_when_no_cost_basis_column() -> None:
     # 无 cost_basis → 单笔收益率无法计算 → 记 0.0，不抛异常
     assert metrics["avg_win"] == 0.0
     assert metrics["max_win"] == 0.0
+
+
+# ── 回归测试：回撤持续 = 最长水下期 ─────────────────────────────────────────
+# 旧实现从最大回撤点向前找「第一根高于谷底的 bar」，下跌途中那几乎总是
+# 紧邻的上一根，导致单标的回测的回撤持续恒为 1。新口径（与 glossary、
+# grading 锚点量纲、前端 computeCombinedMetrics 一致）：从峰值跌落到重新
+# 创新高的最长 bar 数；末日仍未修复则计到最后一根。
+
+
+def test_max_dd_duration_longest_underwater_span() -> None:
+    """回撤持续应取最长水下期（峰值 → 重新创新高），而非恒为 1。
+
+    total=[100, 110, 105, 95, 90, 100, 110, 120, 115]：
+    idx1 峰值 110 → idx6 回到 110，水下 5 根（旧实现会返回 1）；
+    idx7 峰值 120 后回落，末日未修复，尾段 1 根。
+    """
+    metrics = _metrics_from_total([100, 110, 105, 95, 90, 100, 110, 120, 115])
+
+    assert metrics["max_dd_duration"] == 5
+
+
+def test_max_dd_duration_unclosed_counts_to_last_bar() -> None:
+    """末日仍未修复的水下期应计到最后一根。"""
+    metrics = _metrics_from_total([100, 95, 90, 92])
+
+    # idx0 峰值后再未回到 100，水下 3 根
+    assert metrics["max_dd_duration"] == 3
+
+
+def test_max_dd_duration_consecutive_peaks_not_counted() -> None:
+    """连续创新高（无水下 bar）不计入回撤持续，全程无回撤时为 0。"""
+    metrics = _metrics_from_total([100, 105, 110, 120])
+
+    assert metrics["max_dd_duration"] == 0

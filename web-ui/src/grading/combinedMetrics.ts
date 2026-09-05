@@ -113,39 +113,48 @@ export function computeCombinedMetrics(equity: EquityPoint[]): CombinedMetrics {
   // ── 最大回撤 & 持续天数 ─────────────────────────────────────────────────
   // 优先用后端已算好的 drawdown_pct（与图表一致），反推峰值&持续更准。
   // 若后端字段缺失，再退回从 totals 反推。
+  // 回撤持续 = 最长水下期：从峰值跌落到重新创新高的最长交易日数
+  // （末日仍未修复则计到最后一天），与 glossary / grading 锚点同口径。
   let maxDrawdown = 0
   let maxDdDuration = 0
 
   if (equity[0].drawdown_pct !== undefined) {
-    let curPeakIdx = 0
+    let lastPeakIdx = 0
     for (let i = 0; i < n; i++) {
       const dd = equity[i].drawdown_pct
       if (dd > maxDrawdown) {
         maxDrawdown = dd
-        maxDdDuration = i - curPeakIdx
       }
-      // 触及新峰值：重置当前峰值点
-      // 注意 drawdown_pct == 0 表示创新高
-      if (dd === 0) curPeakIdx = i
+      // 触及前高（drawdown_pct == 0）结算一段水下期；相邻新高不算回撤
+      if (dd === 0) {
+        if (i - lastPeakIdx > 1) {
+          maxDdDuration = Math.max(maxDdDuration, i - lastPeakIdx)
+        }
+        lastPeakIdx = i
+      }
     }
+    // 末日仍在水下：从最后一次创新高计到最后一天
+    maxDdDuration = Math.max(maxDdDuration, n - 1 - lastPeakIdx)
   } else {
     // 退化路径：从 totals 反推
     let runningPeak = totals[0]
-    let curPeakIdx = 0
+    let lastPeakIdx = 0
     for (let i = 0; i < n; i++) {
       if (totals[i] > runningPeak) {
         runningPeak = totals[i]
-        curPeakIdx = i
       }
-      if (runningPeak > 0) {
-        const dd = runningPeak - totals[i]
-        const ddPct = dd / runningPeak
-        if (ddPct > maxDrawdown) {
-          maxDrawdown = ddPct
-          maxDdDuration = i - curPeakIdx
+      const ddPct = runningPeak > 0 ? (runningPeak - totals[i]) / runningPeak : 0
+      if (ddPct > maxDrawdown) {
+        maxDrawdown = ddPct
+      }
+      if (ddPct === 0) {
+        if (i - lastPeakIdx > 1) {
+          maxDdDuration = Math.max(maxDdDuration, i - lastPeakIdx)
         }
+        lastPeakIdx = i
       }
     }
+    maxDdDuration = Math.max(maxDdDuration, n - 1 - lastPeakIdx)
   }
 
   // ── 卡玛比率 = 年化收益 / 最大回撤 ───────────────────────────────────────

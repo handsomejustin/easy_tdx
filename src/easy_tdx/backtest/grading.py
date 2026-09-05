@@ -460,30 +460,38 @@ def compute_combined_metrics(equity: list[dict[str, Any]]) -> CombinedMetrics:
     downside_std = float(np.sqrt(np.mean(downside**2))) if len(downside) else 0.0
     sortino = mean_r / downside_std * math.sqrt(_TRADING_DAYS_PER_YEAR) if downside_std > 0 else 0.0
 
-    # 最大回撤 & 持续：优先用 drawdown_pct（与前端一致），缺则从 totals 反推
+    # 最大回撤：优先用 drawdown_pct（与前端一致），缺则从 totals 反推。
+    # 持续 = 最长水下期（峰值 → 重新创新高；末日未修复则计到最后一点），
+    # 与 performance.py / combinedMetrics.ts / max_dd_duration 锚点量纲同口径。
     max_dd = 0.0
     max_dd_dur = 0
     if equity[0].get("drawdown_pct") is not None:
-        cur_peak = 0
+        last_peak = 0
         for i, e in enumerate(equity):
             dd = float(e.get("drawdown_pct") or 0.0)
             if dd > max_dd:
                 max_dd = dd
-                max_dd_dur = i - cur_peak
             if dd == 0:
-                cur_peak = i
+                # 间隔 ≥2 点才夹着真实的水下段（相邻新高不算回撤）
+                if i - last_peak > 1:
+                    max_dd_dur = max(max_dd_dur, i - last_peak)
+                last_peak = i
+        max_dd_dur = max(max_dd_dur, n - 1 - last_peak)
     else:
         running_peak = totals[0]
-        cur_peak = 0
+        last_peak = 0
         for i, v in enumerate(totals):
             if v > running_peak:
                 running_peak = v
-                cur_peak = i
             if running_peak > 0:
                 dd_pct = (running_peak - v) / running_peak
                 if dd_pct > max_dd:
                     max_dd = dd_pct
-                    max_dd_dur = i - cur_peak
+                if dd_pct == 0:
+                    if i - last_peak > 1:
+                        max_dd_dur = max(max_dd_dur, i - last_peak)
+                    last_peak = i
+        max_dd_dur = max(max_dd_dur, n - 1 - last_peak)
 
     if max_dd > 0:
         calmar = annual_return / max_dd
